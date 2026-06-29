@@ -9,6 +9,7 @@ const pool = new Pool({
   connectionString: workerData.connectionString,
   ssl: workerData.ssl ? { rejectUnauthorized: false } : false,
   max: Number(process.env.DATABASE_POOL_SIZE || 5),
+  connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10_000),
   application_name: 'restaurant-setup-pro'
 });
 let transactionClient = null;

@@ -23,10 +23,15 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(env, /DATABASE_URL=/);
   assert.match(ignore, /^\.env\.local$/m);
   assert.equal(packageJson.dependencies.pg.startsWith('^8.'), true);
+  assert.equal(packageJson.scripts.start, 'node src/server.mjs');
 });
 
 test('health check validates the database and returns the required payload', () => {
   const server = read('src/server.mjs');
   assert.match(server, /db\.prepare\('SELECT 1 AS ok'\)\.get\(\)/);
   assert.match(server, /json\(res, 200, \{ status: 'ok' \}\)/);
+  assert.match(server, /const port = Number\(process\.env\.PORT \|\| 3000\)/);
+  assert.match(server, /server\.listen\(port, host/);
+  assert.match(server, /Server listening on port \$\{port\}/);
+  assert.ok(server.indexOf('server.listen(port, host') < server.indexOf('setImmediate(initializeDatabase)'));
 });

@@ -17,13 +17,29 @@ const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
 
 let db;
-if (databaseUrl) {
-  db = new PostgresSyncDatabase(databaseUrl, { ssl: process.env.DATABASE_SSL !== 'false' });
-  if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
-} else {
-  mkdirSync(dirname(databasePath), { recursive: true });
-  db = new DatabaseSync(databasePath);
-  db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
+let databaseStatus = 'starting';
+let databaseInitializationError;
+
+function initializeDatabase() {
+  try {
+    if (databaseUrl) {
+      db = new PostgresSyncDatabase(databaseUrl, { ssl: process.env.DATABASE_SSL !== 'false' });
+      if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
+    } else {
+      mkdirSync(dirname(databasePath), { recursive: true });
+      db = new DatabaseSync(databasePath);
+      db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
+      ensureProductColumns();
+    }
+    seedDatabase();
+    databaseStatus = 'ready';
+    databaseInitializationError = undefined;
+    console.log(`Database ready (${databaseUrl ? 'PostgreSQL' : 'SQLite'})`);
+  } catch (error) {
+    databaseStatus = 'error';
+    databaseInitializationError = error;
+    console.error(`Database initialization failed: ${error.message}`);
+  }
 }
 
 function ensureProductColumns() {
@@ -43,8 +59,6 @@ function ensureProductColumns() {
     if (!existing.has(name)) db.exec(`ALTER TABLE products ADD COLUMN ${name} ${type}`);
   }
 }
-
-if (!databaseUrl) ensureProductColumns();
 
 const rolePermissions = Object.freeze({
   Admin: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'settings'],
@@ -275,8 +289,6 @@ function seedDatabase() {
 function makeCode(value) {
   return String(value).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
-
-seedDatabase();
 
 function json(res, status, payload, headers = {}) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
@@ -848,8 +860,14 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
     if (req.method === 'GET' && url.pathname === '/api/health') {
+      if (databaseStatus !== 'ready') {
+        return json(res, 503, { status: databaseStatus, error: databaseInitializationError ? 'database_unavailable' : undefined });
+      }
       db.prepare('SELECT 1 AS ok').get();
       return json(res, 200, { status: 'ok' });
+    }
+    if (url.pathname.startsWith('/api/') && databaseStatus !== 'ready') {
+      return json(res, 503, { error: 'Database is not ready.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/login') return await handlers.login(req, res);
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handlers.logout(req, res);
@@ -881,12 +899,13 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Restaurant Setup Pro is running at http://${host}:${port}`);
+  console.log(`Server listening on port ${port}`);
+  setImmediate(initializeDatabase);
 });
 
 function shutdown() {
   server.close(() => {
-    db.close();
+    if (db) db.close();
     process.exit(0);
   });
 }
