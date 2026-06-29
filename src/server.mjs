@@ -12,7 +12,8 @@ const publicDir = join(root, 'public');
 const databasePath = resolve(root, process.env.DATABASE_PATH || 'data/restaurant-setup-pro.db');
 const databaseUrl = process.env.DATABASE_URL;
 const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || '0.0.0.0';
+const host = '0.0.0.0';
+const databaseInitializationDelayMs = Number(process.env.DATABASE_INITIALIZATION_DELAY_MS || 2_000);
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
 
@@ -860,6 +861,9 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
     if (req.method === 'GET' && url.pathname === '/api/health') {
+      return json(res, 200, { status: 'ok' });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/ready') {
       if (databaseStatus !== 'ready') {
         return json(res, 503, { status: databaseStatus, error: databaseInitializationError ? 'database_unavailable' : undefined });
       }
@@ -899,8 +903,8 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Server listening on port ${port}`);
-  setImmediate(initializeDatabase);
+  console.log(`Server listening on ${host}:${port}`);
+  setTimeout(initializeDatabase, databaseInitializationDelayMs);
 });
 
 function shutdown() {

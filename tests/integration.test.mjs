@@ -15,7 +15,7 @@ let server;
 async function waitForServer() {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/ready`);
       if (response.ok) return;
     } catch {}
     await new Promise(resolveWait => setTimeout(resolveWait, 100));
