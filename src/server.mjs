@@ -28,6 +28,15 @@ const databaseDiagnostics = {
   tables: [],
   error: null
 };
+const systemEvents = [];
+
+function recordSystemEvent(level, message, details = null) {
+  const event = { timestamp: new Date().toISOString(), level, message, details };
+  systemEvents.push(event);
+  if (systemEvents.length > 100) systemEvents.shift();
+  const writer = level === 'error' ? console.error : console.log;
+  writer(message, details === null ? '' : JSON.stringify(details, null, level === 'error' ? 2 : 0));
+}
 
 function databaseTarget() {
   if (!databaseUrl) return { engine: 'sqlite', database: databasePath };
@@ -68,23 +77,23 @@ function initializeDatabase() {
   databaseInitializationInProgress = true;
   databaseStatus = 'starting';
   databaseDiagnostics.error = null;
-  console.log('Database initialization started:', JSON.stringify(databaseTarget()));
+  recordSystemEvent('info', 'Database initialization started', databaseTarget());
   try {
     if (!db && databaseUrl) {
-      console.log('Database connection: connecting to PostgreSQL');
+      recordSystemEvent('info', 'Database connection: connecting to PostgreSQL');
       db = new PostgresSyncDatabase(databaseUrl, { ssl: process.env.DATABASE_SSL !== 'false' });
       databaseDiagnostics.connected = true;
-      console.log('Database connection: PostgreSQL connected');
+      recordSystemEvent('info', 'Database connection: PostgreSQL connected');
     } else if (!db) {
-      console.log('Database connection: opening SQLite');
+      recordSystemEvent('info', 'Database connection: opening SQLite');
       mkdirSync(dirname(databasePath), { recursive: true });
       db = new DatabaseSync(databasePath);
       databaseDiagnostics.connected = true;
-      console.log('Database connection: SQLite connected');
+      recordSystemEvent('info', 'Database connection: SQLite connected');
     }
 
     if (databaseUrl) {
-      console.log(`Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
+      recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
       const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('001_initial_schema');
       databaseDiagnostics.migration = migration?.version === '001_initial_schema';
@@ -96,22 +105,22 @@ function initializeDatabase() {
       databaseDiagnostics.migration = true;
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
-    console.log(`Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
-    console.log('Database seed: started');
+    recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
+    recordSystemEvent('info', 'Database seed: started');
     seedDatabase();
-    console.log('Database seed: completed');
+    recordSystemEvent('info', 'Database seed: completed');
     databaseStatus = 'ready';
     databaseInitializationError = undefined;
     databaseDiagnostics.error = null;
-    console.log(`Database ready (${databaseUrl ? 'PostgreSQL' : 'SQLite'})`);
+    recordSystemEvent('info', `Database ready (${databaseUrl ? 'PostgreSQL' : 'SQLite'})`);
   } catch (error) {
     databaseStatus = 'error';
     databaseInitializationError = error;
     databaseDiagnostics.error = JSON.stringify(serializeDatabaseError(error));
-    console.error('Database initialization failed:', JSON.stringify(serializeDatabaseError(error), null, 2));
+    recordSystemEvent('error', 'Database initialization failed', serializeDatabaseError(error));
     clearTimeout(databaseRetryTimer);
     databaseRetryTimer = setTimeout(initializeDatabase, databaseRetryDelayMs);
-    console.error(`Database initialization retry scheduled in ${databaseRetryDelayMs}ms`);
+    recordSystemEvent('error', `Database initialization retry scheduled in ${databaseRetryDelayMs}ms`);
   } finally {
     databaseInitializationInProgress = false;
   }
@@ -136,8 +145,8 @@ function ensureProductColumns() {
 }
 
 const rolePermissions = Object.freeze({
-  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'settings'],
-  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'settings'],
+  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
+  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
   Sales: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation'],
   Designer: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'content-ai', 'core-foundation'],
   VA: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
@@ -954,6 +963,33 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/api/') && databaseStatus !== 'ready') {
       return json(res, 503, { error: 'Database is not ready.' });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/debug/system') {
+      const user = currentUser(req);
+      if (!requires(user, 'debug-center')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+      const memory = process.memoryUsage();
+      return json(res, 200, {
+        status: 'ok',
+        runtime: {
+          node: process.version,
+          platform: process.platform,
+          environment: process.env.NODE_ENV || 'development',
+          uptimeSeconds: Math.round(process.uptime()),
+          pid: process.pid,
+          memoryMb: {
+            rss: Math.round(memory.rss / 1024 / 1024),
+            heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+            heapTotal: Math.round(memory.heapTotal / 1024 / 1024)
+          }
+        },
+        http: { host: '0.0.0.0', port: Number(PORT), health: '/api/health', readiness: '/api/ready' },
+        database: { status: databaseStatus, ...databaseDiagnostics },
+        deployment: {
+          provider: process.env.RAILWAY_ENVIRONMENT_NAME ? 'Railway' : (process.env.RENDER_SERVICE_NAME ? 'Render' : 'Local'),
+          commit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || null
+        },
+        events: systemEvents.slice(-50).reverse()
+      });
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/login') return await handlers.login(req, res);
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handlers.logout(req, res);

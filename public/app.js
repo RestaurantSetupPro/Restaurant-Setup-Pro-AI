@@ -11,7 +11,8 @@ const state = {
   proposals: null,
   team: null,
   foundation: null,
-  foundationTab: 'configs'
+  foundationTab: 'configs',
+  debugCenter: null
 };
 
 const icons = {
@@ -26,6 +27,7 @@ const icons = {
   'content-ai': '<path d="M4 4h16v16H4V4Z"/><path d="M8 8h8M8 12h5M8 16h7"/><path d="m18 14 .7 1.3L20 16l-1.3.7L18 18l-.7-1.3L16 16l1.3-.7L18 14Z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   'core-foundation': '<path d="M4 5h7v6H4V5Zm9 0h7v6h-7V5ZM4 13h7v6H4v-6Zm9 0h7v6h-7v-6Z"/>',
+  'debug-center': '<path d="M9 3h6v3H9V3ZM8 8h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-5a4 4 0 0 1 4-4Z"/><path d="M9 13h.01M15 13h.01M9 17h6M4 13H2M22 13h-2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 8.5h18C21 15 18 15 18 8Z"/><path d="M10 20h4"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
@@ -71,6 +73,7 @@ const navItems = [
   { groupKey: 'common.growth', route: 'sales-ai', labelKey: 'nav.salesAi' },
   { groupKey: 'common.growth', route: 'content-ai', labelKey: 'nav.contentAi' },
   { groupKey: 'common.system', route: 'core-foundation', labelKey: 'nav.coreFoundation' },
+  { groupKey: 'common.system', route: 'debug-center', labelKey: 'nav.debugCenter' },
   { groupKey: 'common.system', route: 'settings', labelKey: 'nav.settings' }
 ];
 
@@ -262,6 +265,7 @@ async function navigate(route, replace = false) {
     'sales-ai': renderSalesAI,
     'content-ai': renderContentAI,
     'core-foundation': renderFoundation,
+    'debug-center': renderDebugCenter,
     settings: renderSettings
   };
   try {
@@ -840,13 +844,52 @@ async function saveFoundationForm(event) {
   }
 }
 
+async function renderDebugCenter() {
+  const data = state.debugCenter || await api('/api/debug/system');
+  state.debugCenter = data;
+  const databaseHealthy = data.database.connected && data.database.migration && !data.database.error;
+  $('#page').innerHTML = `
+    ${pageHeader(t('debug.title'), t('debug.subtitle'), `<button class="button button--primary" data-action="refresh-debug">${icon('debug-center')} ${t('debug.refresh')}</button>`)}
+    <section class="metrics-grid">
+      ${metricCard(t('debug.http'), data.status === 'ok' ? t('debug.healthy') : t('debug.error'), `${esc(data.http.host)}:${esc(data.http.port)}`, 'globe', data.status === 'ok' ? 'green' : 'gold', true)}
+      ${metricCard(t('debug.database'), databaseHealthy ? t('debug.connected') : t('debug.error'), esc(data.database.status), 'building', databaseHealthy ? 'green' : 'gold', true)}
+      ${metricCard(t('debug.migration'), data.database.migration ? t('debug.verified') : t('debug.missing'), t('debug.tableCount', { count: data.database.tables.length }), 'check', data.database.migration ? 'green' : 'gold', true)}
+      ${metricCard(t('debug.uptime'), `${data.runtime.uptimeSeconds}s`, `${esc(data.runtime.node)} · ${esc(data.deployment.provider)}`, 'sparkles', '', true)}
+    </section>
+    <section class="split-grid section-gap">
+      <div class="stack">
+        <article class="panel">
+          ${panelHeader(t('debug.runtime'), t('debug.runtimeSub'))}
+          <div class="table-scroll"><table class="data-table"><tbody>
+            <tr><td>${t('debug.environment')}</td><td class="money">${esc(data.runtime.environment)}</td></tr>
+            <tr><td>${t('debug.platform')}</td><td class="money">${esc(data.runtime.platform)}</td></tr>
+            <tr><td>${t('debug.process')}</td><td class="money">PID ${esc(data.runtime.pid)}</td></tr>
+            <tr><td>${t('debug.memory')}</td><td class="money">${esc(data.runtime.memoryMb.rss)} MB RSS · ${esc(data.runtime.memoryMb.heapUsed)} MB heap</td></tr>
+            <tr><td>${t('debug.commit')}</td><td class="money"><code>${esc(data.deployment.commit ? data.deployment.commit.slice(0, 12) : '—')}</code></td></tr>
+          </tbody></table></div>
+        </article>
+        <article class="panel">
+          ${panelHeader(t('debug.tables'), t('debug.tablesSub', { count: data.database.tables.length }))}
+          <div class="debug-table-list">${data.database.tables.map(table => `<code>${esc(table)}</code>`).join('') || `<span>${t('common.none')}</span>`}</div>
+        </article>
+      </div>
+      <article class="panel">
+        ${panelHeader(t('debug.events'), t('debug.eventsSub'))}
+        ${data.database.error ? `<div class="debug-error"><strong>${t('debug.latestError')}</strong><pre>${esc(data.database.error)}</pre></div>` : ''}
+        <div class="debug-events">
+          ${data.events.map(event => `<div class="debug-event"><span class="stage stage--${event.level === 'error' ? 'failed' : 'active'}">${esc(event.level)}</span><div><strong>${esc(event.message)}</strong><small>${formatDateTime(event.timestamp)}</small>${event.details ? `<pre>${esc(JSON.stringify(event.details, null, 2))}</pre>` : ''}</div></div>`).join('') || `<div class="empty-state">${t('debug.noEvents')}</div>`}
+        </div>
+      </article>
+    </section>`;
+}
+
 async function renderSettings() {
   const data = state.team || await api('/api/team');
   state.team = data;
   const roles = ['Admin', 'Owner', 'Sales', 'Designer', 'VA'];
   const permissions = [
     ['nav.dashboard', 'dashboard'], ['nav.products', 'products'], ['nav.imports', 'imports'], ['nav.images', 'images'], ['nav.proposals', 'proposals'],
-    ['nav.cases', 'cases'], ['nav.crm', 'crm'], ['nav.salesAi', 'sales-ai'], ['nav.contentAi', 'content-ai'], ['nav.coreFoundation', 'core-foundation'], ['nav.settings', 'settings']
+    ['nav.cases', 'cases'], ['nav.crm', 'crm'], ['nav.salesAi', 'sales-ai'], ['nav.contentAi', 'content-ai'], ['nav.coreFoundation', 'core-foundation'], ['nav.debugCenter', 'debug-center'], ['nav.settings', 'settings']
   ];
   $('#page').innerHTML = `
     ${pageHeader(t('settings.title'), t('settings.subtitle'), `<button class="button button--primary" data-action="invite-user">${icon('plus')} ${t('settings.invite')}</button>`)}
@@ -936,6 +979,10 @@ async function handleAction(action, node) {
     $('#profile-button').click();
   } else if (action === 'my-profile') {
     toast(t('shell.profileNext'));
+  } else if (action === 'refresh-debug') {
+    state.debugCenter = null;
+    await renderDebugCenter();
+    toast(t('debug.refreshed'));
   } else if (action === 'foundation-tab') {
     state.foundationTab = node.dataset.tab;
     await renderFoundation();

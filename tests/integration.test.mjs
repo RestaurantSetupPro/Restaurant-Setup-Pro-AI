@@ -67,7 +67,7 @@ test('admin login creates a session with full access', async () => {
   const admin = await login('admin@rspro.ai');
   assert.equal(admin.response.status, 200);
   assert.equal(admin.body.user.role, 'Admin');
-  assert.equal(admin.body.user.permissions.length, 12);
+  assert.equal(admin.body.user.permissions.length, 13);
 
   const dashboard = await fetch(`http://127.0.0.1:${port}/api/dashboard`, { headers: { Cookie: admin.cookie } });
   const dashboardBody = await dashboard.json();
@@ -76,6 +76,13 @@ test('admin login creates a session with full access', async () => {
 
   const team = await fetch(`http://127.0.0.1:${port}/api/team`, { headers: { Cookie: admin.cookie } });
   assert.equal(team.status, 200);
+
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } });
+  const debugBody = await debug.json();
+  assert.equal(debug.status, 200);
+  assert.equal(debugBody.database.connected, true);
+  assert.equal(debugBody.database.migration, true);
+  assert.ok(debugBody.events.some(event => event.message.includes('Database ready')));
 
   const products = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
   assert.ok(products.products.every(product => product.size && product.price_range && product.moq && product.tags));
@@ -178,6 +185,8 @@ test('sales access is scoped and cannot reach settings', async () => {
 
   const settings = await fetch(`http://127.0.0.1:${port}/api/team`, { headers: { Cookie: sales.cookie } });
   assert.equal(settings.status, 403);
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: sales.cookie } });
+  assert.equal(debug.status, 403);
 });
 
 test('designer cannot access product imports', async () => {

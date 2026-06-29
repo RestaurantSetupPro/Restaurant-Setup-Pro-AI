@@ -12,7 +12,7 @@ export default {
   nav: {
     dashboard: 'Dashboard', products: 'Product Knowledge Center', knowledgeDashboard: 'Knowledge Dashboard', imports: 'Product Import Center', images: 'AI Image Center',
     proposals: 'Proposal Builder', cases: 'Project Case Library', crm: 'Opportunity CRM', salesAi: 'AI Sales Center',
-    contentAi: 'AI Content Center', coreFoundation: 'Core Foundation Center', settings: 'Settings'
+    contentAi: 'AI Content Center', coreFoundation: 'Core Foundation Center', debugCenter: 'System Debug Center', settings: 'Settings'
   },
   login: {
     storyEyebrow: 'Built for hospitality projects', storyTitle: 'Turn furniture expertise into winning restaurant projects.',
@@ -152,6 +152,13 @@ export default {
     relatedModule: 'Related module', relatedRecordId: 'Related record ID', usageNote: 'Usage note', verified: 'Verified', aiGenerated: 'AI generated',
     version: 'Version', variables: 'Variables', promptContent: 'Prompt content', addTitle: 'Add foundation item', editTitle: 'Edit foundation item',
     activate: 'Activate item', deactivate: 'Deactivate item', saved: 'Foundation item saved.', duplicate: 'That name or code is already in use.'
+  },
+  debug: {
+    title: 'System Debug Center', subtitle: 'Inspect application health, database readiness, runtime resources, and recent system events.',
+    refresh: 'Refresh diagnostics', refreshed: 'Diagnostics refreshed.', healthy: 'Healthy', connected: 'Connected', verified: 'Verified', missing: 'Missing', error: 'Error',
+    http: 'HTTP service', database: 'Database', migration: 'Migration', uptime: 'Uptime', tableCount: '{{count}} tables',
+    runtime: 'Runtime details', runtimeSub: 'Current server process and deployment context', environment: 'Environment', platform: 'Platform', process: 'Process', memory: 'Memory', commit: 'Commit',
+    tables: 'Database tables', tablesSub: '{{count}} tables discovered', events: 'Recent system events', eventsSub: 'Latest startup and database activity', latestError: 'Latest database error', noEvents: 'No system events recorded.'
   },
   settings: {
     title: 'Settings', subtitle: 'Manage your organization, team access, and workspace standards.', invite: 'Invite team member',

@@ -1,5 +1,15 @@
 # Restaurant Setup Pro AI Platform Documentation
 
+## Project Documents
+
+- [Deployment](Deployment.md)
+- [Roadmap](Roadmap.md)
+- [Development](Development.md)
+- [Bug Log](Bug.md)
+- [Meeting Notes](Meeting.md)
+- [AI Rules](AI%20Rules.md)
+- [Modules](Modules.md)
+
 This directory indexes the accepted Module 01–04 delivery and deployment documentation.
 
 ## Module Delivery Documents

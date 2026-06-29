@@ -10,7 +10,7 @@ export default {
   roles: { Admin: '管理员', Owner: '老板', Sales: '外贸销售', Designer: '设计师', VA: 'VA 助理' },
   nav: {
     dashboard: '数据看板', products: '产品知识中心', knowledgeDashboard: '知识完整度看板', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
-    cases: '项目案例库', crm: '商机客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置中心', settings: '系统设置'
+    cases: '项目案例库', crm: '商机客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置中心', debugCenter: '系统调试中心', settings: '系统设置'
   },
   login: {
     storyEyebrow: '专为餐饮项目打造', storyTitle: '把家具专业能力转化为更多餐饮项目订单。',
@@ -135,6 +135,13 @@ export default {
     relatedModule: '关联模块', relatedRecordId: '关联记录 ID', usageNote: '使用说明', verified: '已验证', aiGenerated: 'AI 生成',
     version: '版本', variables: '变量', promptContent: '提示词内容', addTitle: '新增基础项目', editTitle: '编辑基础项目',
     activate: '启用项目', deactivate: '停用项目', saved: '基础项目已保存。', duplicate: '该名称或编码已被使用。'
+  },
+  debug: {
+    title: '系统调试中心', subtitle: '集中检查应用健康状态、数据库就绪情况、运行资源与最近系统事件。',
+    refresh: '刷新诊断', refreshed: '诊断信息已刷新。', healthy: '正常', connected: '已连接', verified: '已验证', missing: '缺失', error: '错误',
+    http: 'HTTP 服务', database: '数据库', migration: '数据库迁移', uptime: '运行时间', tableCount: '{{count}} 张表',
+    runtime: '运行环境', runtimeSub: '当前服务器进程与部署信息', environment: '环境', platform: '平台', process: '进程', memory: '内存', commit: '提交',
+    tables: '数据库表', tablesSub: '发现 {{count}} 张数据表', events: '最近系统事件', eventsSub: '最近的启动和数据库活动', latestError: '最新数据库错误', noEvents: '暂无系统事件。'
   },
   settings: {
     title: '系统设置', subtitle: '管理公司信息、团队权限与工作台标准。', invite: '邀请团队成员', teamMembers: '团队成员',
