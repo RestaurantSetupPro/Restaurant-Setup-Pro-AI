@@ -12,7 +12,6 @@ const publicDir = join(root, 'public');
 const databasePath = resolve(root, process.env.DATABASE_PATH || 'data/restaurant-setup-pro.db');
 const databaseUrl = process.env.DATABASE_URL;
 const port = Number(process.env.PORT || 3000);
-const host = '0.0.0.0';
 const databaseInitializationDelayMs = Number(process.env.DATABASE_INITIALIZATION_DELAY_MS || 2_000);
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
@@ -902,8 +901,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, host, () => {
-  console.log(`Server listening on ${host}:${port}`);
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Server listening on 0.0.0.0:${port}`);
   setTimeout(initializeDatabase, databaseInitializationDelayMs);
 });
 
