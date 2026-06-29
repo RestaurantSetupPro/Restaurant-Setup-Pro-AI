@@ -53,6 +53,11 @@ test.after(async () => {
 test('health check and application shell are available', async () => {
   const health = await fetch(`http://127.0.0.1:${port}/api/health`).then(response => response.json());
   assert.equal(health.status, 'ok');
+  const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
+  assert.equal(database.connected, true);
+  assert.equal(database.migration, true);
+  assert.equal(database.error, null);
+  assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
   assert.match(html, /Restaurant Setup Pro/);
   assert.match(html, /id="login-form"/);

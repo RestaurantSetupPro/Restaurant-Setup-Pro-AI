@@ -13,32 +13,107 @@ const databasePath = resolve(root, process.env.DATABASE_PATH || 'data/restaurant
 const databaseUrl = process.env.DATABASE_URL;
 const PORT = process.env.PORT || 3000;
 const databaseInitializationDelayMs = Number(process.env.DATABASE_INITIALIZATION_DELAY_MS || 2_000);
+const databaseRetryDelayMs = Number(process.env.DATABASE_RETRY_DELAY_MS || 30_000);
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
 
 let db;
 let databaseStatus = 'starting';
 let databaseInitializationError;
+let databaseRetryTimer;
+let databaseInitializationInProgress = false;
+const databaseDiagnostics = {
+  connected: false,
+  migration: false,
+  tables: [],
+  error: null
+};
+
+function databaseTarget() {
+  if (!databaseUrl) return { engine: 'sqlite', database: databasePath };
+  try {
+    const parsed = new URL(databaseUrl);
+    return {
+      engine: 'postgresql',
+      host: parsed.hostname,
+      port: parsed.port || '5432',
+      database: parsed.pathname.replace(/^\//, '') || 'postgres',
+      ssl: process.env.DATABASE_SSL !== 'false'
+    };
+  } catch {
+    return { engine: 'postgresql', host: 'invalid_DATABASE_URL' };
+  }
+}
+
+function serializeDatabaseError(error) {
+  if (!error) return null;
+  return Object.fromEntries(Object.entries({
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    detail: error.detail,
+    hint: error.hint,
+    position: error.position,
+    where: error.where,
+    schema: error.schema,
+    table: error.table,
+    column: error.column,
+    constraint: error.constraint,
+    stack: error.stack
+  }).filter(([, value]) => value !== undefined));
+}
 
 function initializeDatabase() {
+  if (databaseInitializationInProgress || databaseStatus === 'ready') return;
+  databaseInitializationInProgress = true;
+  databaseStatus = 'starting';
+  databaseDiagnostics.error = null;
+  console.log('Database initialization started:', JSON.stringify(databaseTarget()));
   try {
-    if (databaseUrl) {
+    if (!db && databaseUrl) {
+      console.log('Database connection: connecting to PostgreSQL');
       db = new PostgresSyncDatabase(databaseUrl, { ssl: process.env.DATABASE_SSL !== 'false' });
-      if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
-    } else {
+      databaseDiagnostics.connected = true;
+      console.log('Database connection: PostgreSQL connected');
+    } else if (!db) {
+      console.log('Database connection: opening SQLite');
       mkdirSync(dirname(databasePath), { recursive: true });
       db = new DatabaseSync(databasePath);
+      databaseDiagnostics.connected = true;
+      console.log('Database connection: SQLite connected');
+    }
+
+    if (databaseUrl) {
+      console.log(`Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
+      if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('001_initial_schema');
+      databaseDiagnostics.migration = migration?.version === '001_initial_schema';
+      if (!databaseDiagnostics.migration) throw new Error('Migration 001_initial_schema was not recorded.');
+      databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
+    } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
       ensureProductColumns();
+      databaseDiagnostics.migration = true;
+      databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
+    console.log(`Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
+    console.log('Database seed: started');
     seedDatabase();
+    console.log('Database seed: completed');
     databaseStatus = 'ready';
     databaseInitializationError = undefined;
+    databaseDiagnostics.error = null;
     console.log(`Database ready (${databaseUrl ? 'PostgreSQL' : 'SQLite'})`);
   } catch (error) {
     databaseStatus = 'error';
     databaseInitializationError = error;
-    console.error(`Database initialization failed: ${error.message}`);
+    databaseDiagnostics.error = JSON.stringify(serializeDatabaseError(error));
+    console.error('Database initialization failed:', JSON.stringify(serializeDatabaseError(error), null, 2));
+    clearTimeout(databaseRetryTimer);
+    databaseRetryTimer = setTimeout(initializeDatabase, databaseRetryDelayMs);
+    console.error(`Database initialization retry scheduled in ${databaseRetryDelayMs}ms`);
+  } finally {
+    databaseInitializationInProgress = false;
   }
 }
 
@@ -862,6 +937,14 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/health') {
       return json(res, 200, { status: 'ok' });
     }
+    if (req.method === 'GET' && url.pathname === '/api/debug/db') {
+      return json(res, 200, {
+        connected: databaseDiagnostics.connected,
+        migration: databaseDiagnostics.migration,
+        tables: databaseDiagnostics.tables,
+        error: databaseDiagnostics.error
+      });
+    }
     if (req.method === 'GET' && url.pathname === '/api/ready') {
       if (databaseStatus !== 'ready') {
         return json(res, 503, { status: databaseStatus, error: databaseInitializationError ? 'database_unavailable' : undefined });
@@ -907,6 +990,7 @@ server.listen(PORT, "0.0.0.0", () => {
 });
 
 function shutdown() {
+  clearTimeout(databaseRetryTimer);
   server.close(() => {
     if (db) db.close();
     process.exit(0);

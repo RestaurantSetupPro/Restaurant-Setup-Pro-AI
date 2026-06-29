@@ -33,6 +33,9 @@ test('health check validates the database and returns the required payload', () 
   assert.match(server, /const PORT = process\.env\.PORT \|\| 3000/);
   assert.match(server, /server\.listen\(PORT, "0\.0\.0\.0"/);
   assert.match(server, /Server listening on 0\.0\.0\.0:\$\{PORT\}/);
-  assert.ok(server.indexOf('server.listen(PORT, "0.0.0.0"') < server.indexOf('setTimeout(initializeDatabase'));
+  assert.ok(server.indexOf('server.listen(PORT, "0.0.0.0"') < server.indexOf('setTimeout(initializeDatabase, databaseInitializationDelayMs)'));
   assert.match(server, /url\.pathname === '\/api\/ready'/);
+  assert.match(server, /url\.pathname === '\/api\/debug\/db'/);
+  assert.match(server, /SELECT version FROM schema_migrations WHERE version = \?/);
+  assert.match(server, /information_schema\.tables/);
 });

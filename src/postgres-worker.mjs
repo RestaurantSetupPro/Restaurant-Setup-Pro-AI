@@ -94,7 +94,23 @@ parentPort.on('message', async ({ action, payload, signalBuffer, port }) => {
     const result = await execute(action, payload || {});
     port.postMessage({ ok: true, result });
   } catch (error) {
-    port.postMessage({ ok: false, error: { message: error.message, code: error.code, detail: error.detail } });
+    port.postMessage({
+      ok: false,
+      error: {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        detail: error.detail,
+        hint: error.hint,
+        position: error.position,
+        where: error.where,
+        schema: error.schema,
+        table: error.table,
+        column: error.column,
+        constraint: error.constraint,
+        stack: error.stack
+      }
+    });
   } finally {
     Atomics.store(signal, 0, 1);
     Atomics.notify(signal, 0);
