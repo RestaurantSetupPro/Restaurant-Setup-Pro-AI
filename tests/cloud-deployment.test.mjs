@@ -30,9 +30,9 @@ test('health check validates the database and returns the required payload', () 
   const server = read('src/server.mjs');
   assert.match(server, /db\.prepare\('SELECT 1 AS ok'\)\.get\(\)/);
   assert.match(server, /json\(res, 200, \{ status: 'ok' \}\)/);
-  assert.match(server, /const port = Number\(process\.env\.PORT \|\| 3000\)/);
-  assert.match(server, /server\.listen\(port, "0\.0\.0\.0"/);
-  assert.match(server, /Server listening on 0\.0\.0\.0:\$\{port\}/);
-  assert.ok(server.indexOf('server.listen(port, "0.0.0.0"') < server.indexOf('setTimeout(initializeDatabase'));
+  assert.match(server, /const PORT = process\.env\.PORT \|\| 3000/);
+  assert.match(server, /server\.listen\(PORT, "0\.0\.0\.0"/);
+  assert.match(server, /Server listening on 0\.0\.0\.0:\$\{PORT\}/);
+  assert.ok(server.indexOf('server.listen(PORT, "0.0.0.0"') < server.indexOf('setTimeout(initializeDatabase'));
   assert.match(server, /url\.pathname === '\/api\/ready'/);
 });
