@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+data/*.db
+data/*.db-*
+.env
+.env.local
+.env.*
+!.env.example
+.DS_Store
+coverage/
+work/
+.agents/
+.codex/
+.git/

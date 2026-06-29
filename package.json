@@ -1,0 +1,19 @@
+{
+  "name": "restaurant-setup-pro-ai-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Internal AI-enabled workspace for restaurant furniture export teams.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.mjs",
+    "start": "node src/server.mjs",
+    "db:check": "node scripts/check-database.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

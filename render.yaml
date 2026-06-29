@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: restaurant-setup-pro-ai
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DATABASE_POOL_SIZE
+        value: "5"
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: SESSION_HOURS
+        value: "12"
+      - key: SEED_PASSWORD
+        sync: false
