@@ -16,7 +16,7 @@ test('English and Chinese resources have identical key coverage', () => {
 });
 
 test('all requested navigation modules and product fields are localized', () => {
-  const navigation = ['dashboard', 'products', 'imports', 'images', 'proposals', 'cases', 'crm', 'salesAi', 'contentAi', 'coreFoundation', 'settings'];
+  const navigation = ['dashboard', 'products', 'imports', 'images', 'proposals', 'cases', 'crm', 'salesAi', 'contentAi', 'coreFoundation', 'debugCenter', 'settings'];
   const fields = ['sku', 'productName', 'category', 'material', 'size', 'priceRange', 'leadTime', 'moq', 'tags', 'status'];
   for (const key of navigation) {
     assert.ok(en.nav[key]);

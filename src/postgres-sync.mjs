@@ -1,11 +1,13 @@
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
 
-function waitForMessage(port, signal) {
-  while (true) {
+function waitForMessage(port, signal, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const message = receiveMessageOnPort(port);
     if (message) return message.message;
-    Atomics.wait(signal, 0, 0, 30_000);
+    Atomics.wait(signal, 0, 0, Math.min(1_000, deadline - Date.now()));
   }
+  throw new Error(`PostgreSQL worker request timed out after ${timeoutMs}ms.`);
 }
 
 export class PostgresSyncDatabase {
@@ -22,8 +24,12 @@ export class PostgresSyncDatabase {
     const signal = new Int32Array(signalBuffer);
     const { port1, port2 } = new MessageChannel();
     this.worker.postMessage({ action, payload, signalBuffer, port: port2 }, [port2]);
-    const response = waitForMessage(port1, signal);
-    port1.close();
+    let response;
+    try {
+      response = waitForMessage(port1, signal);
+    } finally {
+      port1.close();
+    }
     if (!response?.ok) {
       const error = new Error(response?.error?.message || 'PostgreSQL request failed.');
       Object.assign(error, response?.error || {});

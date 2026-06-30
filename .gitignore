@@ -8,6 +8,7 @@ data/*.db-*
 !.env.example
 .DS_Store
 coverage/
+public/generated/
 work/
 .agents/
 .codex/

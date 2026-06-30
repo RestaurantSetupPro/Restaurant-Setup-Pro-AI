@@ -8,6 +8,9 @@ const read = path => readFileSync(resolve(root, path), 'utf8');
 
 test('cloud deployment files are safe and complete', () => {
   const migration = read('database/migrations/001_initial_schema.sql');
+  const intelligenceMigration = read('database/migrations/002_product_intelligence.sql');
+  const factoryMigration = read('database/migrations/003_ai_product_content_factory.sql');
+  const imageMigration = read('database/migrations/004_real_ai_image_generation.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -16,6 +19,18 @@ test('cloud deployment files are safe and complete', () => {
   assert.doesNotMatch(migration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS products/);
   assert.match(migration, /ON CONFLICT \(version\) DO NOTHING/);
+  assert.doesNotMatch(intelligenceMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(intelligenceMigration, /ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_title/);
+  assert.match(intelligenceMigration, /CREATE TABLE IF NOT EXISTS product_related_category_links/);
+  assert.match(intelligenceMigration, /'002_product_intelligence'/);
+  assert.doesNotMatch(factoryMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(factoryMigration, /CREATE TABLE IF NOT EXISTS ai_product_content_drafts/);
+  assert.match(factoryMigration, /CREATE TABLE IF NOT EXISTS ai_image_generation_tasks/);
+  assert.match(factoryMigration, /'003_ai_product_content_factory'/);
+  assert.doesNotMatch(imageMigration, /\b(DROP TABLE|DROP COLUMN|TRUNCATE)\b/i);
+  assert.match(imageMigration, /ADD COLUMN IF NOT EXISTS lifecycle_status/);
+  assert.match(imageMigration, /ADD COLUMN IF NOT EXISTS provider_request_id/);
+  assert.match(imageMigration, /'004_real_ai_image_generation'/);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);
@@ -23,10 +38,19 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(env, /DATABASE_URL=/);
   assert.match(ignore, /^\.env\.local$/m);
   assert.equal(packageJson.dependencies.pg.startsWith('^8.'), true);
+  assert.equal(packageJson.scripts.start, 'node src/server.mjs');
 });
 
 test('health check validates the database and returns the required payload', () => {
   const server = read('src/server.mjs');
   assert.match(server, /db\.prepare\('SELECT 1 AS ok'\)\.get\(\)/);
   assert.match(server, /json\(res, 200, \{ status: 'ok' \}\)/);
+  assert.match(server, /const PORT = process\.env\.PORT \|\| 3000/);
+  assert.match(server, /server\.listen\(PORT, "0\.0\.0\.0"/);
+  assert.match(server, /Server listening on 0\.0\.0\.0:\$\{PORT\}/);
+  assert.ok(server.indexOf('server.listen(PORT, "0.0.0.0"') < server.indexOf('setTimeout(initializeDatabase, databaseInitializationDelayMs)'));
+  assert.match(server, /url\.pathname === '\/api\/ready'/);
+  assert.match(server, /url\.pathname === '\/api\/debug\/db'/);
+  assert.match(server, /SELECT version FROM schema_migrations WHERE version = \?/);
+  assert.match(server, /information_schema\.tables/);
 });

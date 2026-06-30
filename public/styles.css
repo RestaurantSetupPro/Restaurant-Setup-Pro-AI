@@ -26,6 +26,48 @@
   --sidebar: 252px;
 }
 
+.factory-hero { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; }
+.factory-hero > div:first-child { display:flex; align-items:center; gap:16px; }
+.factory-hero h2 { margin:3px 0 5px; }
+.factory-hero p { margin:0; color:var(--muted); max-width:760px; }
+.factory-cost { text-align:right; }
+.factory-cost small { display:block; color:var(--muted); }
+.factory-cost strong { display:block; margin-top:3px; font-size:28px; color:var(--green); }
+.factory-layout { display:grid; grid-template-columns:minmax(260px, .72fr) minmax(520px, 1.5fr); gap:20px; margin-top:20px; align-items:start; }
+.factory-source, .factory-draft { padding:22px; }
+.factory-source-preview { min-height:220px; margin:18px 0; border-radius:16px; background:var(--soft); display:grid; place-items:center; overflow:hidden; }
+.factory-source-preview img { width:100%; height:260px; object-fit:contain; }
+.factory-source-preview svg { width:52px; color:var(--muted); }
+.factory-mode-help { display:grid; gap:5px; color:var(--muted); }
+.factory-actions { justify-content:flex-end; margin-top:8px; }
+.provider-status { padding:22px; }
+.provider-status-grid { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:12px; margin-top:16px; }
+.provider-status-grid span { padding:13px 15px; border:1px solid var(--line); border-radius:12px; background:var(--soft); }
+.provider-status-grid small, .provider-status-grid strong { display:block; }
+.provider-status-grid small { color:var(--muted); margin-bottom:3px; }
+.ai-image-task-list { display:grid; gap:16px; margin-top:18px; }
+.ai-image-task { border:1px solid var(--line); border-radius:16px; overflow:hidden; background:#fff; }
+.ai-image-task-head { display:flex; align-items:center; gap:12px; padding:15px 17px; border-bottom:1px solid var(--line); background:var(--soft); }
+.ai-image-task-head > div { flex:1; }
+.ai-image-task-head strong, .ai-image-task-head small { display:block; }
+.ai-image-task-head small { color:var(--muted); }
+.task-select input { width:18px; height:18px; }
+.ai-image-task-body { display:grid; grid-template-columns:minmax(230px,.72fr) minmax(440px,1.5fr); gap:18px; padding:18px; }
+.ai-image-output { min-height:240px; display:grid; place-items:center; overflow:hidden; border-radius:13px; background:#eef4f1; }
+.ai-image-output img { width:100%; height:100%; max-height:380px; object-fit:contain; }
+.ai-image-output span { display:grid; place-items:center; gap:8px; color:var(--muted); }
+.ai-image-output svg { width:42px; }
+.ai-image-task-fields { min-width:0; }
+.task-metadata { display:flex; flex-wrap:wrap; gap:7px 16px; color:var(--muted); font-size:12px; }
+.generated-preview { width:min(880px,calc(100vw - 30px)); padding:20px; }
+.generated-preview > img { width:100%; max-height:72vh; object-fit:contain; border-radius:14px; background:var(--soft); }
+
+@media (max-width: 1100px) {
+  .factory-layout { grid-template-columns:1fr; }
+  .provider-status-grid { grid-template-columns:repeat(2,1fr); }
+  .ai-image-task-body { grid-template-columns:1fr; }
+}
+
 * { box-sizing: border-box; }
 html { min-width: 320px; background: var(--canvas); }
 body { margin: 0; color: var(--ink); font: 14px/1.5 "DM Sans", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -186,6 +228,23 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
 .trend--neutral { color: var(--faint); font-weight: 500; }
 .dashboard-grid { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(270px, .68fr); gap: 14px; }
 .stack { display: grid; gap: 14px; align-content: start; }
+.debug-table-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px; }
+.debug-table-list code { padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); font-size: 11px; }
+.debug-events { display: grid; max-height: 520px; overflow: auto; }
+.debug-event { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 14px 18px; border-top: 1px solid var(--line); }
+.debug-event:first-child { border-top: 0; }
+.debug-event small { display: block; margin-top: 3px; color: var(--muted); }
+.debug-event pre, .debug-error pre { max-width: 100%; margin: 9px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.55; }
+.debug-error { margin: 14px 18px; padding: 13px; border: 1px solid #e7b9b4; border-radius: 8px; background: #fff4f2; color: #8d2f25; }
+.intelligence-dashboard-grid { padding: 0 18px 18px; }
+.product-image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 16px; }
+.product-image-card { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.product-image-card small { display: block; margin-top: 4px; color: var(--muted); }
+.product-image-preview { display: grid; place-items: center; min-height: 132px; overflow: hidden; border-radius: 8px; background: var(--surface-soft); color: var(--muted); }
+.product-image-preview img { width: 100%; height: 150px; object-fit: cover; }
+.product-image-preview svg { width: 38px; }
+.media-library-details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.media-library-details summary { cursor: pointer; font-weight: 700; }
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .panel-header { min-height: 60px; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
 .panel-title h2 { margin: 0; font: 700 13px/1.2 "Manrope", sans-serif; letter-spacing: -.2px; }
@@ -489,6 +548,7 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
   .metrics-grid, .module-grid, .module-grid--4 { grid-template-columns: 1fr; }
   .dashboard-grid > .stack { grid-template-columns: 1fr; }
   .split-grid { grid-template-columns: 1fr; }
+  .product-image-grid { grid-template-columns: 1fr; }
   .topbar { height: 60px; }
   .page { min-height: calc(100vh - 60px); }
   .breadcrumbs span:first-child, .breadcrumbs svg { display: none; }
