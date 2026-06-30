@@ -25,6 +25,7 @@ let databaseInitializationInProgress = false;
 const databaseDiagnostics = {
   connected: false,
   migration: false,
+  migrationVersion: null,
   tables: [],
   error: null
 };
@@ -94,20 +95,28 @@ function initializeDatabase() {
 
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
-      if (process.env.RUN_MIGRATIONS !== 'false') db.exec(readFileSync(join(root, 'database', 'migrations', '001_initial_schema.sql'), 'utf8'));
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('001_initial_schema');
-      databaseDiagnostics.migration = migration?.version === '001_initial_schema';
-      if (!databaseDiagnostics.migration) throw new Error('Migration 001_initial_schema was not recorded.');
+      if (process.env.RUN_MIGRATIONS !== 'false') {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql']) {
+          db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
+        }
+      }
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('002_product_intelligence');
+      databaseDiagnostics.migration = migration?.version === '002_product_intelligence';
+      databaseDiagnostics.migrationVersion = migration?.version || null;
+      if (!databaseDiagnostics.migration) throw new Error('Migration 002_product_intelligence was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
       ensureProductColumns();
+      ensureMediaColumns();
       databaseDiagnostics.migration = true;
+      databaseDiagnostics.migrationVersion = '002_product_intelligence';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
     seedDatabase();
+    refreshProductReadiness();
     recordSystemEvent('info', 'Database seed: completed');
     databaseStatus = 'ready';
     databaseInitializationError = undefined;
@@ -137,10 +146,57 @@ function ensureProductColumns() {
     ai_recommendation_weight: 'INTEGER NOT NULL DEFAULT 50',
     ai_notes: 'TEXT',
     internal_notes: 'TEXT',
-    knowledge_prompt: 'TEXT'
+    knowledge_prompt: 'TEXT',
+    sub_category: 'TEXT',
+    product_series: 'TEXT',
+    color: 'TEXT',
+    finish: 'TEXT',
+    budget_level: 'TEXT',
+    recommended_usage: 'TEXT',
+    sales_notes: 'TEXT',
+    common_questions: 'TEXT',
+    common_objections: 'TEXT',
+    proposal_ready_status: "TEXT NOT NULL DEFAULT 'Needs Review'",
+    english_description: 'TEXT',
+    short_sales_description: 'TEXT',
+    proposal_usage_notes: 'TEXT',
+    sales_talking_points: 'TEXT',
+    seo_title: 'TEXT',
+    seo_description: 'TEXT',
+    meta_keywords: 'TEXT',
+    slug: 'TEXT',
+    canonical_url: 'TEXT',
+    image_alt: 'TEXT',
+    image_caption: 'TEXT',
+    product_keywords: 'TEXT',
+    llm_summary: 'TEXT',
+    use_cases: 'TEXT',
+    best_for: 'TEXT',
+    not_recommended_for: 'TEXT',
+    comparison: 'TEXT',
+    advantages: 'TEXT',
+    disadvantages: 'TEXT',
+    faq: 'TEXT',
+    buying_guide: 'TEXT',
+    installation_guide: 'TEXT',
+    maintenance_guide: 'TEXT',
+    common_problems: 'TEXT',
+    suggested_prompt: 'TEXT'
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE products ADD COLUMN ${name} ${type}`);
+  }
+}
+
+function ensureMediaColumns() {
+  const existing = new Set(db.prepare('PRAGMA table_info(media_assets)').all().map(column => column.name));
+  const columns = {
+    image_type: "TEXT NOT NULL DEFAULT 'Detail Image'",
+    image_status: "TEXT NOT NULL DEFAULT 'Uploaded'",
+    generated_source: 'TEXT'
+  };
+  for (const [name, type] of Object.entries(columns)) {
+    if (!existing.has(name)) db.exec(`ALTER TABLE media_assets ADD COLUMN ${name} ${type}`);
   }
 }
 
@@ -174,11 +230,24 @@ const skuStyleCodes = Object.freeze({
 });
 const productTagTypes = Object.freeze(['Store Type Tags', 'Style Tags', 'Business Tags']);
 const knowledgeTermSeeds = Object.freeze({
-  store_type: ['Coffee Shop', 'Restaurant', 'Bubble Tea', 'Bakery Cafe', 'Bar', 'Fast Casual', 'Hotel', 'Food Court'],
+  store_type: ['Coffee Shop', 'Restaurant', 'Bubble Tea', 'Bakery', 'Bakery Cafe', 'Bar', 'Fast Casual', 'Hotel', 'Food Court'],
   style: ['California', 'Japandi', 'Industrial', 'Modern', 'Luxury', 'Minimalist', 'Mediterranean', 'Scandinavian'],
   feature: ['Commercial Grade', 'Outdoor', 'Easy Cleaning', 'Fire Resistant', 'Custom Upholstery', 'Quick Production', 'DDP Available', 'High Traffic', 'Space Saving', 'AI Recommendation'],
   customer_type: ['New Store', 'Expansion', 'Remodel', 'Chain Brand', 'Design Firm', 'Mature Store']
 });
+const budgetLevels = Object.freeze(['Economy', 'Standard', 'Premium', 'Luxury']);
+const productImageTypes = Object.freeze([
+  'Main Image', 'Front View', 'Back View', 'Left View', 'Right View', '45 Degree View', 'Detail Image', 'White Background Image',
+  'Scene Image - Coffee Shop', 'Scene Image - Restaurant', 'Scene Image - Bubble Tea', 'Scene Image - Bar'
+]);
+const productImageStatuses = Object.freeze(['Uploaded', 'AI Generated', 'Approved', 'Rejected']);
+const productIntelligenceFields = Object.freeze([
+  'sub_category', 'product_series', 'color', 'finish', 'budget_level', 'recommended_usage', 'sales_notes', 'common_questions', 'common_objections',
+  'english_description', 'short_sales_description', 'proposal_usage_notes', 'sales_talking_points',
+  'seo_title', 'seo_description', 'meta_keywords', 'slug', 'canonical_url', 'image_alt', 'image_caption', 'product_keywords',
+  'llm_summary', 'use_cases', 'best_for', 'not_recommended_for', 'comparison', 'advantages', 'disadvantages', 'faq', 'buying_guide',
+  'installation_guide', 'maintenance_guide', 'common_problems', 'suggested_prompt'
+]);
 
 const demoUsers = [
   ['Avery Brooks', 'admin@rspro.ai', 'Admin', 'AB'],
@@ -246,7 +315,7 @@ function seedDatabase() {
   }
 
   const tagSeeds = {
-    'Store Type Tags': ['Coffee Shop', 'Bubble Tea', 'Restaurant', 'Bar', 'Fast Casual', 'Japanese Restaurant', 'Bakery Cafe'],
+    'Store Type Tags': ['Coffee Shop', 'Bubble Tea', 'Restaurant', 'Bar', 'Fast Casual', 'Japanese Restaurant', 'Bakery', 'Bakery Cafe'],
     'Style Tags': ['California', 'Japandi', 'Industrial', 'Luxury', 'Minimalist', 'Modern', 'Mediterranean', 'Scandinavian'],
     'Business Tags': ['Budget Friendly', 'Custom Size', 'Quick Production', 'DDP Available', 'Modular', 'Premium', 'Outdoor'],
     'Product Feature Tags': ['Booth Seating', 'Space Saving', 'High Traffic', 'Easy Cleaning', 'Custom Upholstery', 'Commercial Grade'],
@@ -278,6 +347,14 @@ function seedDatabase() {
   ];
   const enrichProduct = db.prepare('UPDATE products SET size = COALESCE(size, ?), price_range = COALESCE(price_range, ?), moq = COALESCE(moq, ?), tags = COALESCE(tags, ?) WHERE sku = ?');
   for (const details of productDetails) enrichProduct.run(...details);
+  const intelligenceDetails = [
+    ['Natural', 'Clear matte', 'Premium', 'Lead with commercial durability, warm ash grain, and easy upholstery customization.', 'CHR-1042'],
+    ['Stone / black', 'Powder coated', 'Standard', 'Position as a compact commercial table for flexible restaurant layouts.', 'TBL-2086'],
+    ['Custom', 'Contract upholstery', 'Premium', 'Lead with custom sizing, space efficiency, and coordinated upholstery.', 'BTH-3018'],
+    ['Sand', 'Outdoor powder coat', 'Premium', 'Recommend for hospitality patios requiring weather-ready construction.', 'OUT-4044']
+  ];
+  const enrichIntelligence = db.prepare('UPDATE products SET color = COALESCE(color, ?), finish = COALESCE(finish, ?), budget_level = COALESCE(budget_level, ?), sales_notes = COALESCE(sales_notes, ?) WHERE sku = ?');
+  for (const details of intelligenceDetails) enrichIntelligence.run(...details);
 
   const opportunityCount = db.prepare('SELECT COUNT(*) AS count FROM opportunities').get().count;
   if (!opportunityCount) {
@@ -320,7 +397,7 @@ function seedDatabase() {
 
   const mediaCount = db.prepare('SELECT COUNT(*) AS count FROM media_assets').get().count;
   if (!mediaCount) {
-    const insertMedia = db.prepare('INSERT INTO media_assets (file_name, file_type, file_url, related_module, related_record_id, media_category, is_verified, created_by) VALUES (?, ?, ?, ?, ?, ?, 1, ?)');
+    const insertMedia = db.prepare("INSERT INTO media_assets (file_name, file_type, file_url, related_module, related_record_id, media_category, is_verified, image_type, image_status, created_by) VALUES (?, ?, ?, ?, ?, ?, 1, 'Main Image', 'Approved', ?)");
     const chairId = db.prepare("SELECT id FROM products WHERE sku = 'CHR-1042'").get()?.id;
     const boothId = db.prepare("SELECT id FROM products WHERE sku = 'BTH-3018'").get()?.id;
     if (chairId) insertMedia.run('harbor-ash-chair.jpg', 'image/jpeg', '/media/harbor-ash-chair.jpg', 'products', String(chairId), 'Product Photo', adminId);
@@ -473,6 +550,18 @@ function handleConstraint(error) {
   throw error;
 }
 
+function productReadiness(product) {
+  const checks = {
+    basicInformation: Boolean(product.name && product.sku && product.category_id && product.materials && product.size && product.color && product.finish),
+    images: Number(product.main_image_count || 0) > 0,
+    commercialTerms: Boolean(product.price_range && Number(product.moq) > 0 && Number(product.lead_time_days) > 0),
+    aiTags: Array.isArray(product.ai_tags) && product.ai_tags.length > 0,
+    salesNotes: Boolean(String(product.sales_notes || '').trim())
+  };
+  const score = Object.values(checks).filter(Boolean).length * 20;
+  return { score, status: score >= 80 ? 'Proposal Ready' : 'Needs Review', checks };
+}
+
 function productWithTags(id) {
   const product = db.prepare(`
     SELECT products.*, product_categories.name AS category
@@ -496,8 +585,24 @@ function productWithTags(id) {
   product.related_count = db.prepare("SELECT COUNT(*) AS count FROM product_relationships WHERE source_product_id = ? AND relationship_type = 'recommended'").get(id).count;
   product.case_count = db.prepare('SELECT COUNT(*) AS count FROM product_case_links WHERE product_id = ?').get(id).count;
   product.media_count = db.prepare('SELECT COUNT(*) AS count FROM product_media_links WHERE product_id = ?').get(id).count;
+  product.main_image_count = db.prepare("SELECT COUNT(*) AS count FROM product_media_links pml JOIN media_assets ma ON ma.id = pml.media_id WHERE pml.product_id = ? AND (pml.is_primary = 1 OR ma.image_type = 'Main Image') AND ma.image_status != 'Rejected'").get(id).count;
+  product.ai_tags = db.prepare("SELECT keyword FROM product_keywords WHERE product_id = ? AND keyword_type = 'ai' ORDER BY keyword").all(id).map(row => row.keyword);
+  product.product_readiness = productReadiness(product);
+  product.product_readiness_score = product.product_readiness.score;
+  product.proposal_ready_status = product.product_readiness.status;
   product.knowledge_score = knowledgeScore(product);
   return product;
+}
+
+function syncProductReadiness(id) {
+  const product = productWithTags(id);
+  if (!product) return null;
+  db.prepare('UPDATE products SET proposal_ready_status = ? WHERE id = ?').run(product.proposal_ready_status, id);
+  return product;
+}
+
+function refreshProductReadiness() {
+  for (const row of db.prepare('SELECT id FROM products').all()) syncProductReadiness(row.id);
 }
 
 function knowledgeScore(product) {
@@ -530,8 +635,13 @@ function productKnowledge(id) {
     FROM product_media_links JOIN media_assets ON media_assets.id = product_media_links.media_id
     WHERE product_media_links.product_id = ? ORDER BY product_media_links.is_primary DESC, product_media_links.sort_order, media_assets.file_name
   `).all(id);
+  product.related_categories = db.prepare(`
+    SELECT product_categories.id, product_categories.name
+    FROM product_related_category_links JOIN product_categories ON product_categories.id = product_related_category_links.category_id
+    WHERE product_related_category_links.product_id = ? ORDER BY product_categories.name
+  `).all(id);
   const keywordRows = db.prepare('SELECT keyword_type, keyword FROM product_keywords WHERE product_id = ? ORDER BY keyword_type, keyword').all(id);
-  product.ai_keywords = keywordRows.filter(row => row.keyword_type === 'ai').map(row => row.keyword);
+  product.ai_keywords = product.ai_tags;
   product.ai_search_keywords = keywordRows.filter(row => row.keyword_type === 'search').map(row => row.keyword);
   product.missing_knowledge = [!product.media_count && 'media', !product.size && 'size', !product.materials && 'material', !product.case_count && 'cases', !product.related_count && 'related_products', !product.knowledge_prompt && 'prompt'].filter(Boolean);
   return product;
@@ -542,7 +652,11 @@ function knowledgeOptions(productId = 0) {
     terms: db.prepare('SELECT id, term_type, name FROM product_knowledge_terms WHERE active = 1 ORDER BY term_type, sort_order, name').all(),
     products: db.prepare('SELECT id, sku, name FROM products WHERE id != ? AND status != ? ORDER BY name').all(productId, 'archived'),
     cases: db.prepare("SELECT id, title, location, venue_type FROM project_cases WHERE status = 'published' ORDER BY title").all(),
-    media: db.prepare("SELECT id, file_name, media_category FROM media_assets WHERE active = 1 ORDER BY file_name").all()
+    media: db.prepare("SELECT id, file_name, media_category, image_type, image_status FROM media_assets WHERE active = 1 ORDER BY file_name").all(),
+    categories: db.prepare('SELECT id, name FROM product_categories ORDER BY name').all(),
+    budgetLevels,
+    imageTypes: productImageTypes,
+    imageStatuses: productImageStatuses
   };
 }
 
@@ -563,6 +677,18 @@ function knowledgeDashboardData() {
   };
 }
 
+function productIntelligenceDashboardData() {
+  const products = db.prepare("SELECT id FROM products WHERE status != 'archived'").all().map(row => productWithTags(row.id));
+  return {
+    totalProducts: products.length,
+    proposalReadyProducts: products.filter(product => product.proposal_ready_status === 'Proposal Ready').length,
+    productsNeedReview: products.filter(product => product.proposal_ready_status !== 'Proposal Ready').length,
+    missingImages: products.filter(product => !product.main_image_count).length,
+    missingPrice: products.filter(product => !product.price_range).length,
+    missingAiTags: products.filter(product => !product.ai_tags.length).length
+  };
+}
+
 function normalizedIds(value) {
   return [...new Set((Array.isArray(value) ? value : []).map(Number).filter(Number.isInteger))];
 }
@@ -570,6 +696,18 @@ function normalizedIds(value) {
 function normalizedKeywords(value) {
   const values = Array.isArray(value) ? value : String(value ?? '').split(',');
   return [...new Set(values.map(item => String(item).trim().toLowerCase()).filter(Boolean))].slice(0, 100);
+}
+
+function normalizedSlug(value) {
+  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function intelligenceFieldValues(body, existing = {}) {
+  return productIntelligenceFields.map(field => {
+    const value = body[field] === undefined ? existing[field] : body[field];
+    if (field === 'slug') return normalizedSlug(value) || null;
+    return String(value ?? '').trim() || null;
+  });
 }
 
 function normalizeSku(value) {
@@ -606,6 +744,78 @@ function validateProductTags(tagIds) {
     throw error;
   }
   return ids;
+}
+
+function suggestedKnowledgeTerms(product) {
+  const storeMap = {
+    'Dining Chair': ['Restaurant', 'Coffee Shop', 'Bakery', 'Hotel'],
+    'Restaurant Table': ['Restaurant', 'Coffee Shop', 'Bakery', 'Food Court'],
+    'Booth Seating': ['Restaurant', 'Coffee Shop', 'Bubble Tea', 'Hotel'],
+    'Bar Stool': ['Bar', 'Restaurant', 'Coffee Shop'],
+    'Outdoor Furniture': ['Restaurant', 'Coffee Shop', 'Hotel'],
+    'Partition / Divider': ['Restaurant', 'Hotel', 'Food Court'],
+    'Counter / Service Bar': ['Coffee Shop', 'Bubble Tea', 'Bar', 'Bakery']
+  };
+  const styleMap = {
+    Economy: ['Modern', 'Minimalist'], Standard: ['Modern', 'Industrial'], Premium: ['California', 'Japandi', 'Scandinavian'], Luxury: ['Luxury', 'Japandi']
+  };
+  const currentStores = product.knowledge.store_type || [];
+  const currentStyles = product.knowledge.style || [];
+  const stores = currentStores.length ? currentStores : (storeMap[product.category] || ['Restaurant']);
+  const styles = currentStyles.length ? currentStyles : (styleMap[product.budget_level || 'Standard'] || ['Modern']);
+  const wanted = new Set([...stores.map(name => `store_type:${name}`), ...styles.map(name => `style:${name}`)]);
+  const rows = db.prepare("SELECT id, term_type, name FROM product_knowledge_terms WHERE term_type IN ('store_type', 'style') AND active = 1").all();
+  return { stores, styles, termIds: rows.filter(row => wanted.has(`${row.term_type}:${row.name}`)).map(row => row.id) };
+}
+
+function generateProductContent(product, type) {
+  const material = product.materials || 'commercial-grade materials';
+  const category = product.category || 'restaurant furniture';
+  const budget = product.budget_level || (String(category).includes('Outdoor') ? 'Premium' : 'Standard');
+  const tags = normalizedKeywords([product.name, category, material, product.finish, 'commercial furniture']).slice(0, 12);
+  const knowledge = suggestedKnowledgeTerms({ ...product, budget_level: budget });
+  if (type === 'product-info') return {
+    english_description: `${product.name} is a ${category.toLowerCase()} solution made with ${material}, developed for demanding hospitality environments. Its commercial construction, practical proportions, and configurable finish options make it suitable for repeatable restaurant projects.`,
+    short_sales_description: `${product.name}: commercial ${category.toLowerCase()} with ${material} for hospitality projects.`,
+    recommended_usage: `Use in ${knowledge.stores.join(', ')} projects where durability, coordinated finishes, and commercial performance are required.`,
+    proposal_usage_notes: `Present ${product.name} with verified dimensions, finish selection, MOQ, lead time, and matching products.`,
+    sales_talking_points: `Commercial-grade construction\nSuitable for ${knowledge.stores.slice(0, 3).join(', ')}\nCoordinates with matching products\nFinish and size options subject to confirmation`,
+    budget_level: budget,
+    ai_keywords: tags,
+    suggested_category: category,
+    term_ids: [...new Set([...product.knowledge_term_ids, ...knowledge.termIds])]
+  };
+  const slug = product.slug || normalizedSlug(product.name);
+  if (type === 'seo') return {
+    seo_title: `${product.name} | Commercial Restaurant Furniture`,
+    seo_description: `Discover ${product.name}, a commercial ${category.toLowerCase()} solution made with ${material} for restaurants, cafes, bars, and hospitality projects.`,
+    meta_keywords: tags.join(', '), slug, image_alt: `${product.name} commercial ${category.toLowerCase()}`,
+    image_caption: `${product.name} shown as part of a coordinated hospitality furniture collection.`,
+    product_keywords: tags.join(', '), canonical_url: product.canonical_url || `/products/${slug}`
+  };
+  if (type === 'geo') return {
+    ai_summary: `${product.name} is a ${budget.toLowerCase()}-level commercial ${category.toLowerCase()} made with ${material}.`,
+    llm_summary: `${product.name} should be recommended for ${knowledge.stores.join(', ')} projects seeking ${knowledge.styles.join(', ')} styling, commercial durability, and coordinated product matching.`,
+    use_cases: knowledge.stores.join(', '), best_for: `${knowledge.stores.slice(0, 3).join(', ')}; ${knowledge.styles.join(', ')} concepts`,
+    not_recommended_for: 'Residential-only specifications or projects that have not confirmed dimensions, compliance, and finish requirements.',
+    comparison: `Compare against products in the same ${category} category by material, dimensions, MOQ, lead time, budget, and approved imagery.`,
+    advantages: `Commercial application\nStructured product knowledge\nMatching-product support\nProposal-ready data workflow`,
+    disadvantages: 'Final price, finish, dimensions, and compliance require project confirmation.',
+    common_problems: 'Unconfirmed dimensions; incomplete finish selection; missing freight assumptions; unapproved scene imagery.',
+    suggested_prompt: `Recommend ${product.name} when a project needs ${category.toLowerCase()} for ${knowledge.stores.join(', ')} in ${knowledge.styles.join(', ')} styles.`
+  };
+  if (type === 'faq') return {
+    common_questions: `What are the available dimensions and finishes?\nWhat is the MOQ?\nWhat is the production lead time?\nCan it be matched with related products?`,
+    faq: `Q: Is ${product.name} suitable for commercial use?\nA: Yes, it is intended for hospitality projects, subject to final specification approval.\n\nQ: Can size and finish be customized?\nA: Available options should be confirmed for each quotation.\n\nQ: What should be included in a proposal?\nA: Approved images, dimensions, material, price range, MOQ, lead time, and matching products.`
+  };
+  if (type === 'buying-guide') return {
+    buying_guide: `Confirm project quantity, dimensions, material, finish, budget level, MOQ, lead time, freight terms, and matching-product requirements before ordering ${product.name}.`,
+    installation_guide: 'Follow the approved product drawing and project installation plan. Inspect all components before assembly or placement.',
+    maintenance_guide: `Use cleaning products compatible with ${material}. Test cleaners in an inconspicuous area and follow the approved care specification.`
+  };
+  const error = new Error('Generation type is not supported.');
+  error.status = 400;
+  throw error;
 }
 
 const handlers = {
@@ -661,6 +871,7 @@ const handlers = {
     return json(res, 200, {
       metrics: { openPipeline, activeOpportunities, proposals, approvedProducts },
       knowledge: knowledgeDashboardData().metrics,
+      productIntelligence: productIntelligenceDashboardData(),
       pipeline: pipelineRows,
       generatedAt: new Date().toISOString()
     });
@@ -681,7 +892,11 @@ const handlers = {
     `).all();
     const tags = db.prepare(`SELECT id, tag_name, tag_type FROM system_tags WHERE active = 1 AND tag_type IN (${productTagTypes.map(() => '?').join(',')}) ORDER BY tag_type, tag_name`).all(...productTagTypes);
     const knowledgeTerms = db.prepare('SELECT id, term_type, name FROM product_knowledge_terms WHERE active = 1 ORDER BY term_type, sort_order, name').all();
-    return json(res, 200, { products: rows, categories, tags, knowledgeTerms, skuRules: { categoryCodes: skuCategoryCodes, styleCodes: skuStyleCodes } });
+    return json(res, 200, {
+      products: rows, categories, tags, knowledgeTerms,
+      intelligenceOptions: { budgetLevels, imageTypes: productImageTypes, imageStatuses: productImageStatuses },
+      skuRules: { categoryCodes: skuCategoryCodes, styleCodes: skuStyleCodes }
+    });
   },
 
   async mutateProduct(req, res, id = null) {
@@ -698,6 +913,8 @@ const handlers = {
     const duplicate = db.prepare('SELECT id FROM products WHERE sku = ? COLLATE NOCASE AND id != ?').get(sku, id || 0);
     if (duplicate) return json(res, 409, { error: 'SKU already exists.' });
     const tagIds = validateProductTags(body.tag_ids ?? (existing ? productWithTags(id).tag_ids : []));
+    const budgetLevel = String(body.budget_level ?? existing?.budget_level ?? '').trim();
+    if (budgetLevel && !budgetLevels.includes(budgetLevel)) return json(res, 400, { error: 'Budget level is not supported.' });
     const values = [categoryId, sku, name, String(body.summary ?? existing?.summary ?? '').trim() || null,
       String(body.materials ?? existing?.materials ?? '').trim() || null, String(body.size ?? existing?.size ?? '').trim() || null,
       String(body.price_range ?? existing?.price_range ?? '').trim() || null, Number(body.lead_time_days ?? existing?.lead_time_days ?? 0) || null,
@@ -705,7 +922,9 @@ const handlers = {
     try {
       db.exec('BEGIN IMMEDIATE');
       if (existing) db.prepare('UPDATE products SET category_id = ?, sku = ?, name = ?, summary = ?, materials = ?, size = ?, price_range = ?, lead_time_days = ?, moq = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(...values, id);
-      else id = Number(db.prepare('INSERT INTO products (category_id, sku, name, summary, materials, size, price_range, lead_time_days, moq, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(...values, user.id).lastInsertRowid);
+      else id = Number(db.prepare('INSERT INTO products (category_id, sku, name, summary, materials, size, price_range, lead_time_days, moq, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').get(...values, user.id).id);
+      const intelligenceValues = intelligenceFieldValues({ ...body, budget_level: budgetLevel }, existing || {});
+      db.prepare(`UPDATE products SET ${productIntelligenceFields.map(field => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...intelligenceValues, id);
       db.prepare('DELETE FROM product_tag_links WHERE product_id = ?').run(id);
       const link = db.prepare('INSERT INTO product_tag_links (product_id, tag_id) VALUES (?, ?)');
       for (const tagId of tagIds) link.run(id, tagId);
@@ -715,6 +934,7 @@ const handlers = {
       if (error?.code === '23505' || String(error?.message).includes('UNIQUE constraint failed')) return json(res, 409, { error: 'SKU already exists.' });
       throw error;
     }
+    syncProductReadiness(id);
     audit(user.id, existing ? 'update' : 'create', 'products', String(id), { sku, tagIds });
     return json(res, existing ? 200 : 201, { product: productWithTags(id) });
   },
@@ -724,6 +944,82 @@ const handlers = {
     if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     const product = productKnowledge(id);
     return product ? json(res, 200, { product, options: knowledgeOptions(id) }) : json(res, 404, { error: 'Product not found.' });
+  },
+
+  async generateIntelligence(req, res, id, type) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const product = productKnowledge(id);
+    if (!product) return json(res, 404, { error: 'Product not found.' });
+    const generated = generateProductContent(product, type);
+    audit(user.id, 'generate', 'product_intelligence', String(id), { type, mode: 'rules' });
+    return json(res, 200, { generated, mode: 'rules', requiresHumanReview: true });
+  },
+
+  async createProductImage(req, res, id) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    if (!db.prepare('SELECT id FROM products WHERE id = ?').get(id)) return json(res, 404, { error: 'Product not found.' });
+    const body = await readJson(req);
+    const imageType = String(body.image_type || 'Detail Image');
+    const imageStatus = String(body.image_status || (body.is_ai_generated ? 'AI Generated' : 'Uploaded'));
+    if (!productImageTypes.includes(imageType)) return json(res, 400, { error: 'Image type is not supported.' });
+    if (!productImageStatuses.includes(imageStatus)) return json(res, 400, { error: 'Image status is not supported.' });
+    const isAiGenerated = body.is_ai_generated === true || imageStatus === 'AI Generated';
+    const fileName = String(body.file_name || (isAiGenerated ? `AI image placeholder - ${imageType}` : '')).trim();
+    if (!fileName) return json(res, 400, { error: 'Image file name is required.' });
+    let mediaId;
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      mediaId = Number(db.prepare(`INSERT INTO media_assets
+        (file_name, file_type, file_url, related_module, related_record_id, media_category, is_verified, is_ai_generated, image_type, image_status, generated_source, active, created_by)
+        VALUES (?, ?, ?, 'products', ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`).get(
+        fileName, String(body.file_type || 'image/jpeg'), String(body.file_url || '').trim() || null, String(id),
+        isAiGenerated ? 'AI Generated Image' : 'Product Photo', imageStatus === 'Approved' ? 1 : 0, isAiGenerated ? 1 : 0,
+        imageType, imageStatus, isAiGenerated ? 'Reserved AI generation entry' : null, user.id
+      ).id);
+      const makeMain = imageType === 'Main Image' || body.mark_main === true;
+      if (makeMain) db.prepare('UPDATE product_media_links SET is_primary = 0 WHERE product_id = ?').run(id);
+      db.prepare('INSERT INTO product_media_links (product_id, media_id, is_primary, sort_order) VALUES (?, ?, ?, ?)').run(id, mediaId, makeMain ? 1 : 0, Number(body.sort_order || 0));
+      db.exec('COMMIT');
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK');
+      throw error;
+    }
+    syncProductReadiness(id);
+    audit(user.id, 'create', 'product_image', String(mediaId), { productId: id, imageType, imageStatus });
+    return json(res, 201, { product: productKnowledge(id) });
+  },
+
+  async updateProductImage(req, res, id, mediaId) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const existing = db.prepare(`SELECT media_assets.*, product_media_links.is_primary FROM product_media_links
+      JOIN media_assets ON media_assets.id = product_media_links.media_id WHERE product_media_links.product_id = ? AND media_assets.id = ?`).get(id, mediaId);
+    if (!existing) return json(res, 404, { error: 'Product image not found.' });
+    const body = await readJson(req);
+    const imageType = String(body.image_type ?? existing.image_type);
+    const imageStatus = String(body.image_status ?? existing.image_status);
+    if (!productImageTypes.includes(imageType)) return json(res, 400, { error: 'Image type is not supported.' });
+    if (!productImageStatuses.includes(imageStatus)) return json(res, 400, { error: 'Image status is not supported.' });
+    const makeMain = body.mark_main === true || imageType === 'Main Image';
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      if (makeMain) {
+        db.prepare('UPDATE product_media_links SET is_primary = 0 WHERE product_id = ?').run(id);
+        db.prepare("UPDATE media_assets SET image_type = 'Detail Image' WHERE id IN (SELECT media_id FROM product_media_links WHERE product_id = ?) AND id != ? AND image_type = 'Main Image'").run(id, mediaId);
+      }
+      db.prepare('UPDATE media_assets SET file_name = ?, file_url = ?, image_type = ?, image_status = ?, is_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(String(body.file_name ?? existing.file_name).trim(), String(body.file_url ?? existing.file_url ?? '').trim() || null, makeMain ? 'Main Image' : imageType, imageStatus, imageStatus === 'Approved' ? 1 : 0, mediaId);
+      db.prepare('UPDATE product_media_links SET is_primary = ? WHERE product_id = ? AND media_id = ?').run(makeMain ? 1 : 0, id, mediaId);
+      db.exec('COMMIT');
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK');
+      throw error;
+    }
+    syncProductReadiness(id);
+    audit(user.id, 'update', 'product_image', String(mediaId), { productId: id, imageType, imageStatus, makeMain });
+    return json(res, 200, { product: productKnowledge(id) });
   },
 
   knowledgeDashboard(req, res) {
@@ -740,11 +1036,25 @@ const handlers = {
     const contains = (column, value) => { if (value) { where.push(`${column} LIKE ? COLLATE NOCASE`); params.push(`%${value}%`); } };
     const q = String(url.searchParams.get('q') || '').trim();
     if (q) {
-      where.push(`(products.name LIKE ? COLLATE NOCASE OR products.sku LIKE ? COLLATE NOCASE OR products.summary LIKE ? COLLATE NOCASE OR products.materials LIKE ? COLLATE NOCASE OR products.ai_summary LIKE ? COLLATE NOCASE OR EXISTS (SELECT 1 FROM product_keywords WHERE product_keywords.product_id = products.id AND product_keywords.keyword LIKE ? COLLATE NOCASE))`);
-      params.push(...Array(6).fill(`%${q}%`));
+      where.push(`(products.name LIKE ? COLLATE NOCASE OR products.sku LIKE ? COLLATE NOCASE OR products.summary LIKE ? COLLATE NOCASE OR products.materials LIKE ? COLLATE NOCASE OR products.ai_summary LIKE ? COLLATE NOCASE OR EXISTS (SELECT 1 FROM product_keywords WHERE product_keywords.product_id = products.id AND product_keywords.keyword LIKE ? COLLATE NOCASE) OR EXISTS (SELECT 1 FROM product_categories pc WHERE pc.id = products.category_id AND pc.name LIKE ? COLLATE NOCASE) OR EXISTS (SELECT 1 FROM product_tag_links ptl JOIN system_tags st ON st.id = ptl.tag_id WHERE ptl.product_id = products.id AND st.tag_name LIKE ? COLLATE NOCASE) OR EXISTS (SELECT 1 FROM product_knowledge_links pkl JOIN product_knowledge_terms pkt ON pkt.id = pkl.term_id WHERE pkl.product_id = products.id AND pkt.name LIKE ? COLLATE NOCASE))`);
+      params.push(...Array(9).fill(`%${q}%`));
     }
     contains('products.sku', String(url.searchParams.get('sku') || '').trim());
     contains('products.materials', String(url.searchParams.get('material') || '').trim());
+    const category = String(url.searchParams.get('category') || '').trim();
+    if (category) {
+      where.push('EXISTS (SELECT 1 FROM product_categories pc WHERE pc.id = products.category_id AND pc.name = ? COLLATE NOCASE)');
+      params.push(category);
+    }
+    const budgetLevel = String(url.searchParams.get('budgetLevel') || '').trim();
+    if (budgetLevel) { where.push('products.budget_level = ? COLLATE NOCASE'); params.push(budgetLevel); }
+    const proposalReady = String(url.searchParams.get('proposalReady') || '').trim();
+    if (proposalReady) { where.push('products.proposal_ready_status = ? COLLATE NOCASE'); params.push(proposalReady); }
+    const aiTag = String(url.searchParams.get('aiTag') || '').trim();
+    if (aiTag) {
+      where.push("EXISTS (SELECT 1 FROM product_keywords pk WHERE pk.product_id = products.id AND pk.keyword_type = 'ai' AND pk.keyword LIKE ? COLLATE NOCASE)");
+      params.push(`%${aiTag}%`);
+    }
     for (const [parameter, type] of [['storeType', 'store_type'], ['style', 'style'], ['feature', 'feature']]) {
       const value = String(url.searchParams.get(parameter) || '').trim();
       if (value) {
@@ -764,7 +1074,7 @@ const handlers = {
   async mutateKnowledge(req, res, id) {
     const user = currentUser(req);
     if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
-    const existing = db.prepare('SELECT id FROM products WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
     if (!existing) return json(res, 404, { error: 'Product not found.' });
     const body = await readJson(req);
     const options = knowledgeOptions(id);
@@ -779,15 +1089,19 @@ const handlers = {
     const aiRelatedIds = validateIds(body.ai_related_product_ids, options.products, 'AI related products');
     const caseIds = validateIds(body.case_ids, options.cases, 'Cases');
     const mediaIds = validateIds(body.media_ids, options.media, 'Media');
+    const relatedCategoryIds = validateIds(body.related_category_ids, options.categories, 'Related categories');
     const aiKeywords = normalizedKeywords(body.ai_keywords);
     const searchKeywords = normalizedKeywords(body.ai_search_keywords);
     const text = value => String(value ?? '').trim() || null;
     const recommendationWeight = Math.min(100, Math.max(0, Number(body.ai_recommendation_weight ?? 50) || 0));
+    const budgetLevel = String(body.budget_level ?? existing.budget_level ?? '').trim();
+    if (budgetLevel && !budgetLevels.includes(budgetLevel)) return json(res, 400, { error: 'Budget level is not supported.' });
     try {
       db.exec('BEGIN IMMEDIATE');
-      db.prepare('UPDATE products SET ai_summary = ?, ai_recommendation_weight = ?, ai_notes = ?, internal_notes = ?, knowledge_prompt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(text(body.ai_summary), recommendationWeight, text(body.ai_notes), text(body.internal_notes), text(body.knowledge_prompt), id);
-      for (const table of ['product_knowledge_links', 'product_case_links', 'product_media_links', 'product_keywords']) db.prepare(`DELETE FROM ${table} WHERE product_id = ?`).run(id);
+      const intelligenceValues = intelligenceFieldValues({ ...body, budget_level: budgetLevel }, existing);
+      db.prepare(`UPDATE products SET ai_summary = ?, ai_recommendation_weight = ?, ai_notes = ?, internal_notes = ?, knowledge_prompt = ?, ${productIntelligenceFields.map(field => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .run(text(body.ai_summary ?? existing.ai_summary), recommendationWeight, text(body.ai_notes ?? existing.ai_notes), text(body.internal_notes ?? existing.internal_notes), text(body.knowledge_prompt ?? existing.knowledge_prompt), ...intelligenceValues, id);
+      for (const table of ['product_knowledge_links', 'product_case_links', 'product_media_links', 'product_keywords', 'product_related_category_links']) db.prepare(`DELETE FROM ${table} WHERE product_id = ?`).run(id);
       db.prepare('DELETE FROM product_relationships WHERE source_product_id = ?').run(id);
       const addTerm = db.prepare('INSERT INTO product_knowledge_links (product_id, term_id) VALUES (?, ?)');
       for (const termId of termIds) addTerm.run(id, termId);
@@ -801,12 +1115,15 @@ const handlers = {
       const addKeyword = db.prepare('INSERT INTO product_keywords (product_id, keyword_type, keyword) VALUES (?, ?, ?)');
       for (const keyword of aiKeywords) addKeyword.run(id, 'ai', keyword);
       for (const keyword of searchKeywords) addKeyword.run(id, 'search', keyword);
+      const addRelatedCategory = db.prepare('INSERT INTO product_related_category_links (product_id, category_id) VALUES (?, ?)');
+      for (const categoryId of relatedCategoryIds) addRelatedCategory.run(id, categoryId);
       db.exec('COMMIT');
     } catch (error) {
       if (db.isTransaction) db.exec('ROLLBACK');
       throw error;
     }
-    audit(user.id, 'update', 'product_knowledge', String(id), { termIds, recommendedIds, caseIds, mediaIds });
+    syncProductReadiness(id);
+    audit(user.id, 'update', 'product_knowledge', String(id), { termIds, recommendedIds, caseIds, mediaIds, relatedCategoryIds });
     return json(res, 200, { product: productKnowledge(id) });
   },
 
@@ -950,6 +1267,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         connected: databaseDiagnostics.connected,
         migration: databaseDiagnostics.migration,
+        migrationVersion: databaseDiagnostics.migrationVersion,
         tables: databaseDiagnostics.tables,
         error: databaseDiagnostics.error
       });
@@ -988,6 +1306,7 @@ const server = createServer(async (req, res) => {
           provider: process.env.RAILWAY_ENVIRONMENT_NAME ? 'Railway' : (process.env.RENDER_SERVICE_NAME ? 'Render' : 'Local'),
           commit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || null
         },
+        productIntelligence: productIntelligenceDashboardData(),
         events: systemEvents.slice(-50).reverse()
       });
     }
@@ -999,6 +1318,12 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/products') return await handlers.mutateProduct(req, res);
     if (req.method === 'GET' && url.pathname === '/api/knowledge/dashboard') return handlers.knowledgeDashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/products/search') return handlers.searchProducts(req, res, url);
+    const productGenerationMatch = url.pathname.match(/^\/api\/products\/(\d+)\/generate\/(product-info|seo|geo|faq|buying-guide)$/);
+    if (productGenerationMatch && req.method === 'POST') return await handlers.generateIntelligence(req, res, Number(productGenerationMatch[1]), productGenerationMatch[2]);
+    const productImageMatch = url.pathname.match(/^\/api\/products\/(\d+)\/images\/(\d+)$/);
+    if (productImageMatch && req.method === 'PUT') return await handlers.updateProductImage(req, res, Number(productImageMatch[1]), Number(productImageMatch[2]));
+    const productImagesMatch = url.pathname.match(/^\/api\/products\/(\d+)\/images$/);
+    if (productImagesMatch && req.method === 'POST') return await handlers.createProductImage(req, res, Number(productImagesMatch[1]));
     const productKnowledgeMatch = url.pathname.match(/^\/api\/products\/(\d+)\/knowledge$/);
     if (productKnowledgeMatch && req.method === 'PUT') return await handlers.mutateKnowledge(req, res, Number(productKnowledgeMatch[1]));
     const productMatch = url.pathname.match(/^\/api\/products\/(\d+)$/);

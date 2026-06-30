@@ -56,6 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
+  assert.equal(database.migrationVersion, '002_product_intelligence');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -73,6 +74,7 @@ test('admin login creates a session with full access', async () => {
   const dashboardBody = await dashboard.json();
   assert.equal(dashboard.status, 200);
   assert.equal(dashboardBody.metrics.activeOpportunities, 4);
+  assert.equal(typeof dashboardBody.productIntelligence.proposalReadyProducts, 'number');
 
   const team = await fetch(`http://127.0.0.1:${port}/api/team`, { headers: { Cookie: admin.cookie } });
   assert.equal(team.status, 200);
@@ -83,6 +85,7 @@ test('admin login creates a session with full access', async () => {
   assert.equal(debugBody.database.connected, true);
   assert.equal(debugBody.database.migration, true);
   assert.ok(debugBody.events.some(event => event.message.includes('Database ready')));
+  assert.equal(typeof debugBody.productIntelligence.missingAiTags, 'number');
 
   const products = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
   assert.ok(products.products.every(product => product.size && product.price_range && product.moq && product.tags));
@@ -170,6 +173,85 @@ test('Module 04 stores normalized product knowledge, computes score, and combine
   const dashboard = await fetch(`http://127.0.0.1:${port}/api/knowledge/dashboard`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
   assert.ok(dashboard.metrics.productCount >= 4);
   assert.ok(dashboard.top.some(product => product.sku === 'OUT-4044' && product.knowledge_score === 100));
+});
+
+test('Module 05 saves intelligence data, manages images, generates content, filters, and calculates readiness', async () => {
+  const admin = await login('admin@rspro.ai');
+  const library = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const chairCategory = library.categories.find(category => category.name === 'Dining Chair');
+  const create = await fetch(`http://127.0.0.1:${port}/api/products`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      category_id: chairCategory.id, sku: 'CH-JP-505', name: 'Module 05 Japandi Chair',
+      materials: 'Solid ash and commercial upholstery', size: 'W520 × D560 × H810 mm',
+      color: 'Natural Ash', finish: 'Matte clear coat', price_range: '$180-$240', moq: 20,
+      lead_time_days: 35, budget_level: 'Premium', product_series: 'Quiet Form',
+      sub_category: 'Upholstered Chair', sales_notes: 'Lead with commercial durability.'
+    })
+  });
+  const created = await create.json();
+  assert.equal(create.status, 201);
+  assert.equal(created.product.product_readiness_score, 60);
+  assert.equal(created.product.proposal_ready_status, 'Needs Review');
+
+  const detail = await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.equal(detail.product.sub_category, 'Upholstered Chair');
+  assert.ok(detail.options.imageTypes.includes('Scene Image - Coffee Shop'));
+  assert.deepEqual(detail.options.imageStatuses, ['Uploaded', 'AI Generated', 'Approved', 'Rejected']);
+
+  const generate = type => fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/generate/${type}`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: '{}'
+  }).then(response => response.json());
+  const generation = await generate('product-info');
+  const seo = await generate('seo');
+  const geo = await generate('geo');
+  const faq = await generate('faq');
+  const guide = await generate('buying-guide');
+  assert.equal(generation.mode, 'rules');
+  assert.equal(generation.requiresHumanReview, true);
+  assert.match(generation.generated.english_description, /Module 05 Japandi Chair/);
+  assert.equal(seo.generated.slug, 'module-05-japandi-chair');
+  assert.ok(geo.generated.llm_summary && faq.generated.faq && guide.generated.buying_guide);
+
+  const storeTerm = detail.options.terms.find(term => term.term_type === 'store_type' && term.name === 'Coffee Shop');
+  const styleTerm = detail.options.terms.find(term => term.term_type === 'style' && term.name === 'Japandi');
+  const relatedCategory = detail.options.categories.find(category => category.name === 'Restaurant Table');
+  const update = await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/knowledge`, {
+    method: 'PUT', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      term_ids: [storeTerm.id, styleTerm.id], recommended_product_ids: [], ai_related_product_ids: [],
+      case_ids: [], media_ids: [], related_category_ids: [relatedCategory.id],
+      ai_keywords: generation.generated.ai_keywords, ai_search_keywords: ['japandi restaurant chair'],
+      english_description: generation.generated.english_description,
+      short_sales_description: generation.generated.short_sales_description,
+      proposal_usage_notes: generation.generated.proposal_usage_notes,
+      sales_talking_points: generation.generated.sales_talking_points,
+      sales_notes: 'Approved sales positioning for hospitality proposals.',
+      seo_title: seo.generated.seo_title, seo_description: seo.generated.seo_description, slug: seo.generated.slug,
+      llm_summary: geo.generated.llm_summary, faq: faq.generated.faq, buying_guide: guide.generated.buying_guide,
+      budget_level: 'Premium'
+    })
+  });
+  const updated = await update.json();
+  assert.equal(update.status, 200);
+  assert.equal(updated.product.product_readiness_score, 80);
+  assert.equal(updated.product.proposal_ready_status, 'Proposal Ready');
+  assert.equal(updated.product.related_categories[0].name, 'Restaurant Table');
+
+  const image = await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/images`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_name: 'module-05-main.jpg', file_url: 'https://example.test/module-05-main.jpg', image_type: 'Main Image', image_status: 'Approved', mark_main: true })
+  });
+  const imaged = await image.json();
+  assert.equal(image.status, 201);
+  assert.equal(imaged.product.product_readiness_score, 100);
+  assert.equal(imaged.product.media[0].image_status, 'Approved');
+
+  const aiTag = encodeURIComponent(generation.generated.ai_keywords[0]);
+  const search = await fetch(`http://127.0.0.1:${port}/api/products/search?q=Japandi&category=Dining%20Chair&storeType=Coffee%20Shop&style=Japandi&budgetLevel=Premium&material=ash&proposalReady=Proposal%20Ready&aiTag=${aiTag}`, { headers: { Cookie: admin.cookie } });
+  const searchBody = await search.json();
+  assert.equal(search.status, 200);
+  assert.deepEqual(searchBody.products.map(product => product.sku), ['CH-JP-505']);
 });
 
 test('sales access is scoped and cannot reach settings', async () => {

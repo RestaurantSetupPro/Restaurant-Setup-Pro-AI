@@ -5,6 +5,7 @@ const state = {
   route: 'dashboard',
   dashboard: null,
   products: null,
+  productDetail: null,
   knowledgeDashboard: null,
   opportunities: null,
   imports: null,
@@ -294,8 +295,8 @@ function userAvatar(initials, name = '') {
 }
 
 async function renderDashboard() {
-  const { metrics, pipeline, knowledge } = await api('/api/dashboard');
-  state.dashboard = { metrics, pipeline, knowledge };
+  const { metrics, pipeline, knowledge, productIntelligence } = await api('/api/dashboard');
+  state.dashboard = { metrics, pipeline, knowledge, productIntelligence };
   const today = new Intl.DateTimeFormat(localeForIntl(), { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date());
   const firstName = state.user.name.split(' ')[0];
   $('#page').innerHTML = `
@@ -306,6 +307,12 @@ async function renderDashboard() {
       ${metricCard(t('dashboard.proposalsInProgress'), metrics.proposals, t('dashboard.dueThisWeek'), 'proposals', 'blue', true)}
       ${metricCard(t('dashboard.salesReadyProducts'), metrics.approvedProducts, t('dashboard.addedThisMonth'), 'products', 'purple')}
     </section>
+    <article class="panel section-gap">
+      ${panelHeader(t('intelligence.libraryStatus'), t('intelligence.libraryStatusSub'))}
+      <div class="module-grid intelligence-dashboard-grid">
+        ${[['totalProducts','products'],['proposalReadyProducts','check'],['productsNeedReview','document'],['missingImages','images'],['missingPrice','money'],['missingAiTags','sparkles']].map(([key, iconName]) => `<article class="stat-tile"><span class="metric-icon">${icon(iconName)}</span><div><strong>${productIntelligence[key]}</strong><small>${t(`intelligence.${key}`)}</small></div></article>`).join('')}
+      </div>
+    </article>
     <section class="dashboard-grid">
       <div class="stack">
         <article class="panel">
@@ -409,24 +416,28 @@ async function renderProducts() {
     </section>
     <article class="panel section-gap">
       ${panelHeader(t('products.library'), t('products.librarySub', { count: data.products.length }))}
-      <div class="filter-bar knowledge-filter"><label class="filter-search">${icon('search')}<input id="product-search" placeholder="${t('knowledge.keywordSearch')}" /></label><input id="product-sku-filter" class="select-control" placeholder="${t('fields.sku')}" /><input id="product-material-filter" class="select-control" placeholder="${t('fields.material')}" /><select id="product-store-filter" class="select-control"><option value="">${t('knowledge.allStoreTypes')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'store_type').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-style-filter" class="select-control"><option value="">${t('knowledge.allStyles')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'style').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-feature-filter" class="select-control"><option value="">${t('knowledge.allFeatures')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'feature').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-tag-filter" class="select-control"><option value="">${t('products.allTags')}</option>${data.tags.map(tag => `<option>${esc(tag.tag_name)}</option>`).join('')}</select><button class="button button--compact" data-action="clear-product-filters">${t('knowledge.clear')}</button></div>
-      <div class="table-scroll"><table id="products-table" class="data-table"><thead><tr><th>${t('fields.productName')}</th><th>${t('fields.sku')}</th><th>${t('fields.category')}</th><th>${t('fields.material')}</th><th>${t('knowledge.score')}</th><th>${t('knowledge.storeTypes')}</th><th>${t('knowledge.styles')}</th><th>${t('fields.tags')}</th><th>${t('fields.status')}</th><th></th></tr></thead><tbody>
-        ${data.products.map(product => `<tr data-product-row data-sku="${esc(product.sku.toLowerCase())}" data-material="${esc(String(product.materials || '').toLowerCase())}" data-stores="${esc(product.knowledge.store_type.join('|').toLowerCase())}" data-styles="${esc(product.knowledge.style.join('|').toLowerCase())}" data-features="${esc(product.knowledge.feature.join('|').toLowerCase())}" data-tags="${esc(product.tag_names.join('|').toLowerCase())}"><td class="primary-cell"><strong>${esc(product.name)}</strong><small>${esc(product.summary)}</small></td><td><code>${esc(product.sku)}</code></td><td>${esc(product.category)}</td><td>${esc(product.materials)}</td><td>${knowledgeScoreBadge(product.knowledge_score)}</td><td><div class="product-tags">${product.knowledge.store_type.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td><div class="product-tags">${product.knowledge.style.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td><div class="product-tags">${product.tag_names.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td>${badge(product.status)}</td><td><div class="row-actions"><button class="button button--compact" data-action="view-product" data-id="${product.id}">${t('knowledge.open')}</button><button class="icon-button row-menu" data-action="edit-product" data-id="${product.id}" aria-label="${t('common.edit')}">${icon('dots')}</button></div></td></tr>`).join('')}
+      <div class="filter-bar knowledge-filter"><label class="filter-search">${icon('search')}<input id="product-search" placeholder="${t('knowledge.keywordSearch')}" /></label><select id="product-category-filter" class="select-control"><option value="">${t('intelligence.allCategories')}</option>${data.categories.map(category => `<option>${esc(category.name)}</option>`).join('')}</select><input id="product-material-filter" class="select-control" placeholder="${t('fields.material')}" /><select id="product-store-filter" class="select-control"><option value="">${t('knowledge.allStoreTypes')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'store_type').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-style-filter" class="select-control"><option value="">${t('knowledge.allStyles')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'style').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-budget-filter" class="select-control"><option value="">${t('intelligence.allBudgetLevels')}</option>${data.intelligenceOptions.budgetLevels.map(level => `<option>${esc(level)}</option>`).join('')}</select><select id="product-ready-filter" class="select-control"><option value="">${t('intelligence.allReadiness')}</option><option>Proposal Ready</option><option>Needs Review</option></select><input id="product-ai-tag-filter" class="select-control" placeholder="${t('intelligence.aiTags')}" /><input id="product-sku-filter" class="select-control" placeholder="${t('fields.sku')}" /><select id="product-feature-filter" class="select-control"><option value="">${t('knowledge.allFeatures')}</option>${data.knowledgeTerms.filter(term => term.term_type === 'feature').map(term => `<option>${esc(term.name)}</option>`).join('')}</select><select id="product-tag-filter" class="select-control"><option value="">${t('products.allTags')}</option>${data.tags.map(tag => `<option>${esc(tag.tag_name)}</option>`).join('')}</select><button class="button button--compact" data-action="clear-product-filters">${t('knowledge.clear')}</button></div>
+      <div class="table-scroll"><table id="products-table" class="data-table"><thead><tr><th>${t('fields.productName')}</th><th>${t('fields.sku')}</th><th>${t('fields.category')}</th><th>${t('fields.material')}</th><th>${t('intelligence.readinessScore')}</th><th>${t('knowledge.storeTypes')}</th><th>${t('knowledge.styles')}</th><th>${t('intelligence.aiTags')}</th><th>${t('intelligence.proposalStatus')}</th><th></th></tr></thead><tbody>
+        ${data.products.map(product => `<tr data-product-row data-sku="${esc(product.sku.toLowerCase())}" data-category="${esc(String(product.category || '').toLowerCase())}" data-material="${esc(String(product.materials || '').toLowerCase())}" data-budget="${esc(String(product.budget_level || '').toLowerCase())}" data-ready="${esc(product.proposal_ready_status.toLowerCase())}" data-ai-tags="${esc(product.ai_tags.join('|').toLowerCase())}" data-stores="${esc(product.knowledge.store_type.join('|').toLowerCase())}" data-styles="${esc(product.knowledge.style.join('|').toLowerCase())}" data-features="${esc(product.knowledge.feature.join('|').toLowerCase())}" data-tags="${esc(product.tag_names.join('|').toLowerCase())}"><td class="primary-cell"><strong>${esc(product.name)}</strong><small>${esc(product.summary)}</small></td><td><code>${esc(product.sku)}</code></td><td>${esc(product.category)}</td><td>${esc(product.materials)}</td><td>${knowledgeScoreBadge(product.product_readiness_score)}</td><td><div class="product-tags">${product.knowledge.store_type.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td><div class="product-tags">${product.knowledge.style.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td><div class="product-tags">${product.ai_tags.map(name => `<span>${esc(name)}</span>`).join('') || '—'}</div></td><td>${badge(product.proposal_ready_status)}</td><td><div class="row-actions"><button class="button button--compact" data-action="view-product" data-id="${product.id}">${t('knowledge.open')}</button><button class="icon-button row-menu" data-action="edit-product" data-id="${product.id}" aria-label="${t('common.edit')}">${icon('dots')}</button></div></td></tr>`).join('')}
       </tbody></table></div>
     </article>`;
-  ['product-search', 'product-sku-filter', 'product-material-filter', 'product-store-filter', 'product-style-filter', 'product-feature-filter', 'product-tag-filter'].forEach(id => $(`#${id}`).addEventListener(id.includes('search') || id.includes('sku') || id.includes('material') ? 'input' : 'change', applyProductFilters));
+  ['product-search', 'product-sku-filter', 'product-category-filter', 'product-material-filter', 'product-store-filter', 'product-style-filter', 'product-budget-filter', 'product-ready-filter', 'product-ai-tag-filter', 'product-feature-filter', 'product-tag-filter'].forEach(id => $(`#${id}`).addEventListener(['product-search','product-sku-filter','product-material-filter','product-ai-tag-filter'].includes(id) ? 'input' : 'change', applyProductFilters));
 }
 
 function applyProductFilters() {
   const query = $('#product-search').value.trim().toLowerCase();
   const sku = $('#product-sku-filter').value.trim().toLowerCase();
+  const category = $('#product-category-filter').value.toLowerCase();
   const material = $('#product-material-filter').value.trim().toLowerCase();
   const store = $('#product-store-filter').value.toLowerCase();
   const style = $('#product-style-filter').value.toLowerCase();
   const feature = $('#product-feature-filter').value.toLowerCase();
   const tag = $('#product-tag-filter').value.toLowerCase();
+  const budget = $('#product-budget-filter').value.toLowerCase();
+  const ready = $('#product-ready-filter').value.toLowerCase();
+  const aiTag = $('#product-ai-tag-filter').value.trim().toLowerCase();
   document.querySelectorAll('[data-product-row]').forEach(row => {
-    row.hidden = !((!query || row.textContent.toLowerCase().includes(query)) && (!sku || row.dataset.sku.includes(sku)) && (!material || row.dataset.material.includes(material)) && (!store || row.dataset.stores.split('|').includes(store)) && (!style || row.dataset.styles.split('|').includes(style)) && (!feature || row.dataset.features.split('|').includes(feature)) && (!tag || row.dataset.tags.split('|').includes(tag)));
+    row.hidden = !((!query || row.textContent.toLowerCase().includes(query)) && (!sku || row.dataset.sku.includes(sku)) && (!category || row.dataset.category === category) && (!material || row.dataset.material.includes(material)) && (!store || row.dataset.stores.split('|').includes(store)) && (!style || row.dataset.styles.split('|').includes(style)) && (!budget || row.dataset.budget === budget) && (!ready || row.dataset.ready === ready) && (!aiTag || row.dataset.aiTags.includes(aiTag)) && (!feature || row.dataset.features.split('|').includes(feature)) && (!tag || row.dataset.tags.split('|').includes(tag)));
   });
 }
 
@@ -452,9 +463,12 @@ function openProductModal(id = null) {
   backdrop.className = 'modal-backdrop';
   backdrop.innerHTML = `<div class="command-modal foundation-modal product-modal" role="dialog" aria-modal="true"><form id="product-form" data-id="${id || ''}"><div class="foundation-modal-head"><div><h2>${t(id ? 'products.editTitle' : 'products.addTitle')}</h2><p>${t('products.skuHelp')}</p></div><button type="button" class="icon-button" data-action="product-close" aria-label="${t('common.close')}">${icon('close')}</button></div><div class="foundation-form">
     <div class="field-row"><label class="field"><span>${t('fields.productName')}</span><input name="name" value="${esc(product.name || '')}" required /></label><label class="field"><span>${t('fields.category')}</span><select name="category_id" required>${state.products.categories.filter(item => state.products.skuRules.categoryCodes[item.name]).map(item => `<option value="${item.id}" ${item.id === product.category_id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label></div>
+    <div class="field-row"><label class="field"><span>${t('intelligence.subCategory')}</span><input name="sub_category" value="${esc(product.sub_category || '')}" /></label><label class="field"><span>${t('intelligence.productSeries')}</span><input name="product_series" value="${esc(product.product_series || '')}" /></label></div>
     <div class="field-row"><label class="field"><span>${t('products.skuStyle')}</span><select name="sku_style">${Object.keys(state.products.skuRules.styleCodes).map(style => `<option ${product.tag_names?.includes(style) ? 'selected' : ''}>${esc(style)}</option>`).join('')}</select></label><label class="field"><span>${t('fields.sku')}</span><span class="sku-control"><input name="sku" value="${esc(product.sku || '')}" placeholder="${t('products.autoGenerated')}" /><button type="button" class="button button--compact" data-action="generate-sku">${t('products.generate')}</button></span></label></div>
     <label class="field"><span>${t('products.summary')}</span><textarea name="summary" rows="2">${esc(product.summary || '')}</textarea></label>
     <div class="field-row"><label class="field"><span>${t('fields.material')}</span><input name="materials" value="${esc(product.materials || '')}" /></label><label class="field"><span>${t('fields.size')}</span><input name="size" value="${esc(product.size || '')}" /></label></div>
+    <div class="field-row"><label class="field"><span>${t('intelligence.color')}</span><input name="color" value="${esc(product.color || '')}" /></label><label class="field"><span>${t('intelligence.finish')}</span><input name="finish" value="${esc(product.finish || '')}" /></label></div>
+    <div class="field-row"><label class="field"><span>${t('intelligence.budgetLevel')}</span><select name="budget_level"><option value="">${t('common.none')}</option>${state.products.intelligenceOptions.budgetLevels.map(level => `<option ${level === product.budget_level ? 'selected' : ''}>${esc(level)}</option>`).join('')}</select></label><label class="field"><span>${t('intelligence.recommendedUsage')}</span><input name="recommended_usage" value="${esc(product.recommended_usage || '')}" /></label></div>
     <div class="field-row"><label class="field"><span>${t('fields.priceRange')}</span><input name="price_range" value="${esc(product.price_range || '')}" /></label><label class="field"><span>${t('fields.status')}</span><select name="status">${['draft','review','approved','archived'].map(status => `<option value="${status}" ${status === product.status ? 'selected' : ''}>${esc(statusLabel(status))}</option>`).join('')}</select></label></div>
     <div class="field-row"><label class="field"><span>${t('fields.leadTime')}</span><input name="lead_time_days" type="number" min="0" value="${esc(product.lead_time_days || '')}" /></label><label class="field"><span>${t('fields.moq')}</span><input name="moq" type="number" min="0" value="${esc(product.moq || '')}" /></label></div>
     <div class="tag-selector">${groups.map(group => `<fieldset><legend>${esc(group)}</legend><div>${state.products.tags.filter(tag => tag.tag_type === group).map(tag => `<label><input type="checkbox" name="tag_ids" value="${tag.id}" ${product.tag_ids?.includes(tag.id) ? 'checked' : ''} /><span>${esc(tag.tag_name)}</span></label>`).join('')}</div></fieldset>`).join('')}</div>
@@ -489,16 +503,18 @@ function knowledgeChecks(name, rows, selectedIds, label = row => row.name) {
 
 async function renderProductDetail(id) {
   const data = await api(`/api/products/${id}`);
+  state.productDetail = data;
   const product = data.product;
   const terms = type => data.options.terms.filter(term => term.term_type === type);
   const selectedRelated = product.recommended_products.map(item => item.id);
   const selectedAiRelated = product.ai_related_products.map(item => item.id);
   const selectedCases = product.related_cases.map(item => item.id);
   const selectedMedia = product.media.map(item => item.id);
+  const selectedRelatedCategories = product.related_categories.map(item => item.id);
   $('#page').innerHTML = `<form id="knowledge-form" data-id="${product.id}">
-    ${pageHeader(esc(product.name), `${esc(product.sku)} · ${esc(product.category)}`, `<button type="submit" class="button button--primary">${t('knowledge.saveKnowledge')}</button>`, `<button type="button" class="button" data-route="products">${t('knowledge.backProducts')}</button>`)}
-    <section class="knowledge-hero panel"><div>${knowledgeScoreBadge(product.knowledge_score)}<div><span class="eyebrow-label">${t('knowledge.completeness')}</span><strong>${t('knowledge.scoreOutOf100', { score: product.knowledge_score })}</strong><small>${product.missing_knowledge.length ? t('knowledge.missing', { items: product.missing_knowledge.join(', ') }) : t('knowledge.complete')}</small></div></div><div class="knowledge-hero-summary"><span>${t('knowledge.aiSummary')}</span><p>${esc(product.ai_summary || t('knowledge.notSet'))}</p></div></section>
-    <nav class="knowledge-tabs" role="tablist"><button type="button" class="is-active" data-action="knowledge-tab" data-tab="knowledge" role="tab">${t('knowledge.knowledgeTab')}</button><button type="button" data-action="knowledge-tab" data-tab="media" role="tab">${t('knowledge.mediaTab')} <span>${product.media.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="products" role="tab">${t('knowledge.relatedProducts')} <span>${product.recommended_products.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="cases" role="tab">${t('knowledge.relatedCases')} <span>${product.related_cases.length}</span></button></nav>
+    ${pageHeader(esc(product.name), `${esc(product.sku)} · ${esc(product.category)}`, `<button type="button" class="button button--soft" data-action="generate-intelligence" data-type="product-info">${icon('sparkles')} ${t('intelligence.generateProductInfo')}</button><button type="submit" class="button button--primary">${t('knowledge.saveKnowledge')}</button>`, `<button type="button" class="button" data-route="products">${t('knowledge.backProducts')}</button>`)}
+    <section class="knowledge-hero panel"><div>${knowledgeScoreBadge(product.product_readiness_score)}<div><span class="eyebrow-label">${t('intelligence.readinessScore')}</span><strong>${esc(product.proposal_ready_status)}</strong><small>${t('intelligence.readinessSummary')}</small></div></div><div class="knowledge-hero-summary"><span>${t('knowledge.aiSummary')}</span><p>${esc(product.ai_summary || t('knowledge.notSet'))}</p></div></section>
+    <nav class="knowledge-tabs" role="tablist"><button type="button" class="is-active" data-action="knowledge-tab" data-tab="knowledge" role="tab">${t('knowledge.knowledgeTab')}</button><button type="button" data-action="knowledge-tab" data-tab="media" role="tab">${t('knowledge.mediaTab')} <span>${product.media.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="products" role="tab">${t('knowledge.relatedProducts')} <span>${product.recommended_products.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="cases" role="tab">${t('knowledge.relatedCases')} <span>${product.related_cases.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="seo" role="tab">${t('intelligence.seoGeo')}</button></nav>
     <div class="knowledge-pane" data-knowledge-pane="knowledge">
       <section class="knowledge-detail-grid">
         <article class="panel knowledge-section"><h2>${t('knowledge.suitableStoreTypes')}</h2><p>${t('knowledge.multiSelect')}</p>${knowledgeChecks('term_ids', terms('store_type'), product.knowledge_term_ids)}</article>
@@ -506,6 +522,16 @@ async function renderProductDetail(id) {
         <article class="panel knowledge-section"><h2>${t('knowledge.features')}</h2><p>${t('knowledge.featureSub')}</p>${knowledgeChecks('term_ids', terms('feature'), product.knowledge_term_ids)}</article>
         <article class="panel knowledge-section"><h2>${t('knowledge.customerTypes')}</h2><p>${t('knowledge.customerSub')}</p>${knowledgeChecks('term_ids', terms('customer_type'), product.knowledge_term_ids)}</article>
       </section>
+      <section class="panel knowledge-fields"><div class="panel-header"><div class="panel-title"><h2>${t('intelligence.productProfile')}</h2><p>${t('intelligence.productProfileSub')}</p></div></div><div class="foundation-form">
+        <div class="field-row"><label class="field"><span>${t('intelligence.subCategory')}</span><input name="sub_category" value="${esc(product.sub_category || '')}" /></label><label class="field"><span>${t('intelligence.productSeries')}</span><input name="product_series" value="${esc(product.product_series || '')}" /></label></div>
+        <div class="field-row"><label class="field"><span>${t('intelligence.color')}</span><input name="color" value="${esc(product.color || '')}" /></label><label class="field"><span>${t('intelligence.finish')}</span><input name="finish" value="${esc(product.finish || '')}" /></label></div>
+        <div class="field-row"><label class="field"><span>${t('intelligence.budgetLevel')}</span><select name="budget_level"><option value="">${t('common.none')}</option>${data.options.budgetLevels.map(level => `<option ${level === product.budget_level ? 'selected' : ''}>${esc(level)}</option>`).join('')}</select></label><label class="field"><span>${t('intelligence.recommendedUsage')}</span><input name="recommended_usage" value="${esc(product.recommended_usage || '')}" /></label></div>
+        <label class="field"><span>${t('intelligence.englishDescription')}</span><textarea name="english_description" rows="4">${esc(product.english_description || '')}</textarea></label>
+        <label class="field"><span>${t('intelligence.shortSalesDescription')}</span><textarea name="short_sales_description" rows="2">${esc(product.short_sales_description || '')}</textarea></label>
+        <div class="field-row"><label class="field"><span>${t('intelligence.salesNotes')}</span><textarea name="sales_notes" rows="4">${esc(product.sales_notes || '')}</textarea></label><label class="field"><span>${t('intelligence.salesTalkingPoints')}</span><textarea name="sales_talking_points" rows="4">${esc(product.sales_talking_points || '')}</textarea></label></div>
+        <div class="field-row"><label class="field"><span>${t('intelligence.commonQuestions')}</span><textarea name="common_questions" rows="4">${esc(product.common_questions || '')}</textarea></label><label class="field"><span>${t('intelligence.commonObjections')}</span><textarea name="common_objections" rows="4">${esc(product.common_objections || '')}</textarea></label></div>
+        <label class="field"><span>${t('intelligence.proposalUsageNotes')}</span><textarea name="proposal_usage_notes" rows="3">${esc(product.proposal_usage_notes || '')}</textarea></label>
+      </div></section>
       <section class="panel knowledge-fields"><div class="panel-header"><div class="panel-title"><h2>${t('knowledge.aiReady')}</h2><p>${t('knowledge.aiReadySub')}</p></div></div><div class="foundation-form">
         <label class="field"><span>${t('knowledge.aiSummary')}</span><textarea name="ai_summary" rows="3">${esc(product.ai_summary || '')}</textarea></label>
         <div class="field-row"><label class="field"><span>${t('knowledge.aiKeywords')}</span><input name="ai_keywords" value="${esc(product.ai_keywords.join(', '))}" /></label><label class="field"><span>${t('knowledge.aiSearchKeywords')}</span><input name="ai_search_keywords" value="${esc(product.ai_search_keywords.join(', '))}" /></label></div>
@@ -514,9 +540,17 @@ async function renderProductDetail(id) {
         <label class="field"><span>${t('knowledge.recommendationWeight')}</span><input name="ai_recommendation_weight" type="number" min="0" max="100" value="${product.ai_recommendation_weight}" /></label>
       </div></section>
     </div>
-    <div class="knowledge-pane is-hidden" data-knowledge-pane="media"><article class="panel knowledge-section"><h2>${t('knowledge.mediaLibrary')}</h2><p>${t('knowledge.mediaSub')}</p>${data.options.media.length ? knowledgeChecks('media_ids', data.options.media, selectedMedia, row => `${row.file_name} · ${row.media_category}`) : `<div class="empty-state">${t('knowledge.noMedia')}</div>`}</article></div>
-    <div class="knowledge-pane is-hidden" data-knowledge-pane="products"><section class="knowledge-detail-grid"><article class="panel knowledge-section"><h2>${t('knowledge.recommendedProducts')}</h2><p>${t('knowledge.recommendedSub')}</p>${knowledgeChecks('recommended_product_ids', data.options.products, selectedRelated, row => `${row.name} · ${row.sku}`)}</article><article class="panel knowledge-section"><h2>${t('knowledge.aiRelatedProducts')}</h2><p>${t('knowledge.aiRelatedSub')}</p>${knowledgeChecks('ai_related_product_ids', data.options.products, selectedAiRelated, row => `${row.name} · ${row.sku}`)}</article></section></div>
+    <div class="knowledge-pane is-hidden" data-knowledge-pane="media"><article class="panel knowledge-section"><div class="panel-header"><div class="panel-title"><h2>${t('intelligence.productImages')}</h2><p>${t('intelligence.productImagesSub')}</p></div><div class="row-actions"><button type="button" class="button button--soft" data-action="add-product-image" data-ai="false">${icon('upload')} ${t('intelligence.uploadImage')}</button><button type="button" class="button button--primary" data-action="add-product-image" data-ai="true">${icon('sparkles')} ${t('intelligence.addAiImage')}</button></div></div><div class="product-image-grid">${product.media.map(media => `<article class="product-image-card"><div class="product-image-preview">${media.file_url ? `<img src="${esc(media.file_url)}" alt="${esc(product.image_alt || media.file_name)}" />` : icon('images')}</div><div><strong>${esc(media.file_name)}</strong><small>${esc(media.image_type || 'Detail Image')} · ${esc(media.image_status || 'Uploaded')}</small></div><div class="row-actions">${media.is_primary ? badge('Main Image') : `<button type="button" class="button button--compact" data-action="mark-main-image" data-id="${media.id}">${t('intelligence.markMain')}</button>`}<button type="button" class="icon-button" data-action="edit-product-image" data-id="${media.id}">${icon('dots')}</button></div></article>`).join('') || `<div class="empty-state">${t('knowledge.noMedia')}</div>`}</div><details class="media-library-details"><summary>${t('intelligence.linkExistingMedia')}</summary>${data.options.media.length ? knowledgeChecks('media_ids', data.options.media, selectedMedia, row => `${row.file_name} · ${row.image_type || row.media_category}`) : `<div class="empty-state">${t('knowledge.noMedia')}</div>`}</details></article></div>
+    <div class="knowledge-pane is-hidden" data-knowledge-pane="products"><section class="knowledge-detail-grid"><article class="panel knowledge-section"><h2>${t('knowledge.recommendedProducts')}</h2><p>${t('knowledge.recommendedSub')}</p>${knowledgeChecks('recommended_product_ids', data.options.products, selectedRelated, row => `${row.name} · ${row.sku}`)}</article><article class="panel knowledge-section"><h2>${t('knowledge.aiRelatedProducts')}</h2><p>${t('knowledge.aiRelatedSub')}</p>${knowledgeChecks('ai_related_product_ids', data.options.products, selectedAiRelated, row => `${row.name} · ${row.sku}`)}</article><article class="panel knowledge-section"><h2>${t('intelligence.relatedCategories')}</h2><p>${t('intelligence.relatedCategoriesSub')}</p>${knowledgeChecks('related_category_ids', data.options.categories, selectedRelatedCategories)}</article></section></div>
     <div class="knowledge-pane is-hidden" data-knowledge-pane="cases"><article class="panel knowledge-section"><h2>${t('knowledge.usedInProjects')}</h2><p>${t('knowledge.casesSub')}</p>${data.options.cases.length ? knowledgeChecks('case_ids', data.options.cases, selectedCases, row => `${row.title} · ${row.location}`) : `<div class="empty-state">${t('knowledge.noCases')}</div>`}</article></div>
+    <div class="knowledge-pane is-hidden" data-knowledge-pane="seo"><section class="panel knowledge-fields"><div class="panel-header"><div class="panel-title"><h2>${t('intelligence.seoGeo')}</h2><p>${t('intelligence.seoGeoSub')}</p></div><div class="row-actions">${[['seo','generateSeo'],['geo','generateGeo'],['faq','generateFaq'],['buying-guide','generateBuyingGuide']].map(([type,key]) => `<button type="button" class="button button--compact" data-action="generate-intelligence" data-type="${type}">${t(`intelligence.${key}`)}</button>`).join('')}</div></div><div class="foundation-form">
+      <div class="field-row"><label class="field"><span>${t('intelligence.seoTitle')}</span><input name="seo_title" value="${esc(product.seo_title || '')}" /></label><label class="field"><span>${t('intelligence.slug')}</span><input name="slug" value="${esc(product.slug || '')}" /></label></div>
+      <label class="field"><span>${t('intelligence.seoDescription')}</span><textarea name="seo_description" rows="3">${esc(product.seo_description || '')}</textarea></label>
+      <div class="field-row"><label class="field"><span>${t('intelligence.metaKeywords')}</span><input name="meta_keywords" value="${esc(product.meta_keywords || '')}" /></label><label class="field"><span>${t('intelligence.canonicalUrl')}</span><input name="canonical_url" value="${esc(product.canonical_url || '')}" /></label></div>
+      <div class="field-row"><label class="field"><span>${t('intelligence.imageAlt')}</span><input name="image_alt" value="${esc(product.image_alt || '')}" /></label><label class="field"><span>${t('intelligence.imageCaption')}</span><input name="image_caption" value="${esc(product.image_caption || '')}" /></label></div>
+      <label class="field"><span>${t('intelligence.productKeywords')}</span><textarea name="product_keywords" rows="2">${esc(product.product_keywords || '')}</textarea></label>
+      ${[['llm_summary','llmSummary'],['use_cases','useCases'],['best_for','bestFor'],['not_recommended_for','notRecommendedFor'],['comparison','comparison'],['advantages','advantages'],['disadvantages','disadvantages'],['faq','faq'],['buying_guide','buyingGuide'],['installation_guide','installationGuide'],['maintenance_guide','maintenanceGuide'],['common_problems','commonProblems'],['suggested_prompt','suggestedPrompt']].map(([name,key]) => `<label class="field"><span>${t(`intelligence.${key}`)}</span><textarea name="${name}" rows="3">${esc(product[name] || '')}</textarea></label>`).join('')}
+    </div></section></div>
     <p id="knowledge-form-error" class="form-error"></p>
   </form>`;
   $('#knowledge-form').addEventListener('submit', saveProductKnowledge);
@@ -527,7 +561,7 @@ async function saveProductKnowledge(event) {
   const form = event.currentTarget;
   const checked = name => [...form.querySelectorAll(`[name="${name}"]:checked`)].map(input => Number(input.value));
   const payload = Object.fromEntries(new FormData(form));
-  for (const name of ['term_ids', 'recommended_product_ids', 'ai_related_product_ids', 'case_ids', 'media_ids']) payload[name] = checked(name);
+  for (const name of ['term_ids', 'recommended_product_ids', 'ai_related_product_ids', 'case_ids', 'media_ids', 'related_category_ids']) payload[name] = checked(name);
   const button = form.querySelector('[type="submit"]');
   button.disabled = true;
   try {
@@ -540,6 +574,67 @@ async function saveProductKnowledge(event) {
     $('#knowledge-form-error').textContent = error.message;
     button.disabled = false;
   }
+}
+
+async function applyIntelligenceGeneration(type) {
+  const form = $('#knowledge-form');
+  const result = await api(`/api/products/${form.dataset.id}/generate/${type}`, { method: 'POST' });
+  for (const [name, value] of Object.entries(result.generated)) {
+    if (name === 'term_ids') {
+      const selected = new Set(value.map(Number));
+      form.querySelectorAll('[name="term_ids"]').forEach(input => { input.checked = selected.has(Number(input.value)); });
+      continue;
+    }
+    if (name === 'ai_keywords') {
+      const input = form.elements.ai_keywords;
+      if (input) input.value = value.join(', ');
+      continue;
+    }
+    const input = form.elements[name];
+    if (input) input.value = value ?? '';
+  }
+  toast(t('intelligence.generatedReview'));
+}
+
+function openProductImageModal(mediaId = null, aiGenerated = false) {
+  const detail = state.productDetail;
+  const product = detail.product;
+  const media = mediaId ? product.media.find(item => item.id === Number(mediaId)) : {};
+  const isAi = aiGenerated || Boolean(media.is_ai_generated);
+  const backdrop = document.createElement('div');
+  backdrop.id = 'product-image-modal';
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `<div class="command-modal foundation-modal" role="dialog" aria-modal="true"><form id="product-image-form" data-id="${mediaId || ''}" data-product-id="${product.id}"><div class="foundation-modal-head"><div><h2>${t(isAi ? 'intelligence.addAiImage' : 'intelligence.uploadImage')}</h2><p>${t('intelligence.imageEntryNote')}</p></div><button type="button" class="icon-button" data-action="product-image-close">${icon('close')}</button></div><div class="foundation-form">
+    <label class="field"><span>${t('foundation.fileName')}</span><input name="file_name" value="${esc(media.file_name || (isAi ? 'AI image placeholder' : ''))}" required /></label>
+    <label class="field"><span>${t('foundation.fileUrl')}</span><input name="file_url" value="${esc(media.file_url || '')}" placeholder="https://..." /></label>
+    <div class="field-row"><label class="field"><span>${t('intelligence.imageType')}</span><select name="image_type">${detail.options.imageTypes.map(type => `<option ${type === (media.image_type || 'Detail Image') ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></label><label class="field"><span>${t('intelligence.imageStatus')}</span><select name="image_status">${detail.options.imageStatuses.map(status => `<option ${status === (media.image_status || (isAi ? 'AI Generated' : 'Uploaded')) ? 'selected' : ''}>${esc(status)}</option>`).join('')}</select></label></div>
+    <label class="field checkbox-field"><input name="mark_main" type="checkbox" ${media.is_primary ? 'checked' : ''} /><span>${t('intelligence.markMain')}</span></label>
+    <input type="hidden" name="is_ai_generated" value="${isAi}" /><p id="product-image-error" class="form-error"></p></div><div class="foundation-modal-actions"><button type="button" class="button" data-action="product-image-close">${t('common.cancel')}</button><button type="submit" class="button button--primary">${t('common.save')}</button></div></form></div>`;
+  document.body.append(backdrop);
+  $('#product-image-form').addEventListener('submit', saveProductImage);
+}
+
+async function saveProductImage(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = Object.fromEntries(new FormData(form));
+  payload.mark_main = form.elements.mark_main.checked;
+  payload.is_ai_generated = payload.is_ai_generated === 'true';
+  try {
+    await api(`/api/products/${form.dataset.productId}/images${form.dataset.id ? `/${form.dataset.id}` : ''}`, { method: form.dataset.id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    $('#product-image-modal').remove();
+    toast(t('intelligence.imageSaved'));
+    await renderProductDetail(form.dataset.productId);
+  } catch (error) {
+    $('#product-image-error').textContent = error.message;
+  }
+}
+
+async function markMainImage(mediaId) {
+  const productId = state.productDetail.product.id;
+  await api(`/api/products/${productId}/images/${mediaId}`, { method: 'PUT', body: JSON.stringify({ mark_main: true }) });
+  toast(t('intelligence.imageSaved'));
+  await renderProductDetail(productId);
 }
 
 async function renderImports() {
@@ -856,6 +951,12 @@ async function renderDebugCenter() {
       ${metricCard(t('debug.migration'), data.database.migration ? t('debug.verified') : t('debug.missing'), t('debug.tableCount', { count: data.database.tables.length }), 'check', data.database.migration ? 'green' : 'gold', true)}
       ${metricCard(t('debug.uptime'), `${data.runtime.uptimeSeconds}s`, `${esc(data.runtime.node)} · ${esc(data.deployment.provider)}`, 'sparkles', '', true)}
     </section>
+    <article class="panel section-gap">
+      ${panelHeader(t('intelligence.libraryStatus'), `${t('debug.migration')}: ${esc(data.database.migrationVersion || '—')}`)}
+      <div class="metrics-grid compact-metrics">
+        ${[['totalProducts','products'],['proposalReadyProducts','check'],['productsNeedReview','document'],['missingImages','images'],['missingPrice','money'],['missingAiTags','sparkles']].map(([key, iconName]) => metricCard(t(`intelligence.${key}`), data.productIntelligence?.[key] ?? 0, t('intelligence.libraryStatusSub'), iconName, key.startsWith('missing') ? 'gold' : 'green', true)).join('')}
+      </div>
+    </article>
     <section class="split-grid section-gap">
       <div class="stack">
         <article class="panel">
@@ -983,6 +1084,16 @@ async function handleAction(action, node) {
     state.debugCenter = null;
     await renderDebugCenter();
     toast(t('debug.refreshed'));
+  } else if (action === 'generate-intelligence') {
+    await applyIntelligenceGeneration(node.dataset.type);
+  } else if (action === 'add-product-image') {
+    openProductImageModal(null, node.dataset.ai === 'true');
+  } else if (action === 'edit-product-image') {
+    openProductImageModal(node.dataset.id);
+  } else if (action === 'mark-main-image') {
+    await markMainImage(node.dataset.id);
+  } else if (action === 'product-image-close') {
+    $('#product-image-modal')?.remove();
   } else if (action === 'foundation-tab') {
     state.foundationTab = node.dataset.tab;
     await renderFoundation();

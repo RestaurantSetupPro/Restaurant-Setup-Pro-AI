@@ -14,6 +14,7 @@
 
 ## Development
 
+- Enforce the mandatory Migration, API, Debug, Test, and Documentation standard for every module.
 - Inspect existing behavior before editing.
 - Preserve unrelated user changes.
 - Prefer normalized relationship tables over multi-value text fields.

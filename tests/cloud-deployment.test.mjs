@@ -8,6 +8,7 @@ const read = path => readFileSync(resolve(root, path), 'utf8');
 
 test('cloud deployment files are safe and complete', () => {
   const migration = read('database/migrations/001_initial_schema.sql');
+  const intelligenceMigration = read('database/migrations/002_product_intelligence.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -16,6 +17,10 @@ test('cloud deployment files are safe and complete', () => {
   assert.doesNotMatch(migration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS products/);
   assert.match(migration, /ON CONFLICT \(version\) DO NOTHING/);
+  assert.doesNotMatch(intelligenceMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(intelligenceMigration, /ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_title/);
+  assert.match(intelligenceMigration, /CREATE TABLE IF NOT EXISTS product_related_category_links/);
+  assert.match(intelligenceMigration, /'002_product_intelligence'/);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);

@@ -194,6 +194,15 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
 .debug-event small { display: block; margin-top: 3px; color: var(--muted); }
 .debug-event pre, .debug-error pre { max-width: 100%; margin: 9px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.55; }
 .debug-error { margin: 14px 18px; padding: 13px; border: 1px solid #e7b9b4; border-radius: 8px; background: #fff4f2; color: #8d2f25; }
+.intelligence-dashboard-grid { padding: 0 18px 18px; }
+.product-image-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 16px; }
+.product-image-card { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.product-image-card small { display: block; margin-top: 4px; color: var(--muted); }
+.product-image-preview { display: grid; place-items: center; min-height: 132px; overflow: hidden; border-radius: 8px; background: var(--surface-soft); color: var(--muted); }
+.product-image-preview img { width: 100%; height: 150px; object-fit: cover; }
+.product-image-preview svg { width: 38px; }
+.media-library-details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.media-library-details summary { cursor: pointer; font-weight: 700; }
 .panel { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); }
 .panel-header { min-height: 60px; padding: 15px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
 .panel-title h2 { margin: 0; font: 700 13px/1.2 "Manrope", sans-serif; letter-spacing: -.2px; }
@@ -497,6 +506,7 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
   .metrics-grid, .module-grid, .module-grid--4 { grid-template-columns: 1fr; }
   .dashboard-grid > .stack { grid-template-columns: 1fr; }
   .split-grid { grid-template-columns: 1fr; }
+  .product-image-grid { grid-template-columns: 1fr; }
   .topbar { height: 60px; }
   .page { min-height: calc(100vh - 60px); }
   .breadcrumbs span:first-child, .breadcrumbs svg { display: none; }
