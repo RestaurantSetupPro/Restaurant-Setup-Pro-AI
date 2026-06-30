@@ -9,6 +9,7 @@ const read = path => readFileSync(resolve(root, path), 'utf8');
 test('cloud deployment files are safe and complete', () => {
   const migration = read('database/migrations/001_initial_schema.sql');
   const intelligenceMigration = read('database/migrations/002_product_intelligence.sql');
+  const factoryMigration = read('database/migrations/003_ai_product_content_factory.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -21,6 +22,10 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(intelligenceMigration, /ALTER TABLE products ADD COLUMN IF NOT EXISTS seo_title/);
   assert.match(intelligenceMigration, /CREATE TABLE IF NOT EXISTS product_related_category_links/);
   assert.match(intelligenceMigration, /'002_product_intelligence'/);
+  assert.doesNotMatch(factoryMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(factoryMigration, /CREATE TABLE IF NOT EXISTS ai_product_content_drafts/);
+  assert.match(factoryMigration, /CREATE TABLE IF NOT EXISTS ai_image_generation_tasks/);
+  assert.match(factoryMigration, /'003_ai_product_content_factory'/);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);

@@ -96,21 +96,21 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('002_product_intelligence');
-      databaseDiagnostics.migration = migration?.version === '002_product_intelligence';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('003_ai_product_content_factory');
+      databaseDiagnostics.migration = migration?.version === '003_ai_product_content_factory';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 002_product_intelligence was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 003_ai_product_content_factory was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
       ensureProductColumns();
       ensureMediaColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '002_product_intelligence';
+      databaseDiagnostics.migrationVersion = '003_ai_product_content_factory';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
@@ -248,6 +248,30 @@ const productIntelligenceFields = Object.freeze([
   'llm_summary', 'use_cases', 'best_for', 'not_recommended_for', 'comparison', 'advantages', 'disadvantages', 'faq', 'buying_guide',
   'installation_guide', 'maintenance_guide', 'common_problems', 'suggested_prompt'
 ]);
+const aiFactoryModes = Object.freeze(['fast', 'standard', 'premium']);
+const aiDraftStatuses = Object.freeze(['draft', 'pending_review', 'approved', 'rejected', 'applied']);
+const aiImageTaskStatuses = Object.freeze(['draft', 'pending', 'generated', 'approved', 'rejected', 'failed']);
+const aiDraftEditableFields = Object.freeze([
+  'generated_product_name', 'generated_category', 'generated_sub_category', 'generated_material', 'generated_color',
+  'generated_description_en', 'generated_description_zh', 'generated_short_sales_description', 'generated_seo_title',
+  'generated_seo_description', 'generated_meta_keywords', 'generated_llm_summary', 'generated_faq', 'generated_buying_guide',
+  'generated_sales_talking_points', 'generated_proposal_notes', 'analysis_summary', 'review_notes'
+]);
+const aiFactoryImagePlans = Object.freeze({
+  fast: [],
+  standard: [
+    ['Scene Image - Coffee Shop', 'Coffee Shop'],
+    ['Scene Image - Restaurant', 'Restaurant'],
+    ['White Background Image', null]
+  ],
+  premium: [
+    ['Front View', null], ['Back View', null], ['Left View', null], ['Right View', null], ['45 Degree View', null],
+    ['Detail Image', null], ['White Background Image', null], ['Transparent PNG', null],
+    ['Scene Image - Coffee Shop', 'Coffee Shop'], ['Scene Image - Restaurant', 'Restaurant'],
+    ['Scene Image - Bubble Tea', 'Bubble Tea'], ['Scene Image - Bar', 'Bar'],
+    ['Scene Image - Bakery', 'Bakery'], ['Scene Image - Hotel', 'Hotel']
+  ]
+});
 
 const demoUsers = [
   ['Avery Brooks', 'admin@rspro.ai', 'Admin', 'AB'],
@@ -818,6 +842,156 @@ function generateProductContent(product, type) {
   throw error;
 }
 
+function jsonArray(value) {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return Array.isArray(parsed) ? parsed.map(item => String(item).trim()).filter(Boolean) : [];
+  } catch {
+    return normalizedKeywords(value);
+  }
+}
+
+function aiFactoryCapabilities(user) {
+  const canManage = ['Admin', 'Owner', 'Designer'].includes(user?.role);
+  return {
+    canView: canManage || user?.role === 'Sales',
+    canGenerate: canManage,
+    canEdit: canManage,
+    canReview: canManage,
+    canApply: canManage,
+    approvedOnly: user?.role === 'Sales'
+  };
+}
+
+function mappedDraft(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    generated_style: jsonArray(row.generated_style),
+    generated_store_types: jsonArray(row.generated_store_types),
+    generated_ai_tags: jsonArray(row.generated_ai_tags),
+    cost_estimate: Number(row.cost_estimate || 0)
+  };
+}
+
+function aiFactoryDrafts(productId, user) {
+  const approvedOnly = aiFactoryCapabilities(user).approvedOnly;
+  const rows = db.prepare(`
+    SELECT drafts.*, source.file_name AS source_file_name, source.file_url AS source_file_url,
+      creator.name AS created_by_name, reviewer.name AS reviewer_name
+    FROM ai_product_content_drafts drafts
+    LEFT JOIN media_assets source ON source.id = drafts.source_media_id
+    LEFT JOIN users creator ON creator.id = drafts.created_by
+    LEFT JOIN users reviewer ON reviewer.id = drafts.reviewer_id
+    WHERE drafts.product_id = ? ${approvedOnly ? "AND drafts.status IN ('approved', 'applied')" : ''}
+    ORDER BY drafts.created_at DESC, drafts.id DESC
+  `).all(productId);
+  return rows.map(mappedDraft);
+}
+
+function aiFactoryTasks(productId, user) {
+  const approvedOnly = aiFactoryCapabilities(user).approvedOnly;
+  return db.prepare(`
+    SELECT tasks.*, source.file_name AS source_file_name, output.file_name AS output_file_name,
+      reviewer.name AS reviewer_name
+    FROM ai_image_generation_tasks tasks
+    LEFT JOIN media_assets source ON source.id = tasks.source_media_id
+    LEFT JOIN media_assets output ON output.id = tasks.output_media_id
+    LEFT JOIN users reviewer ON reviewer.id = tasks.reviewer_id
+    WHERE tasks.product_id = ? ${approvedOnly ? "AND tasks.status = 'approved'" : ''}
+    ORDER BY tasks.created_at DESC, tasks.id DESC
+  `).all(productId).map(row => ({ ...row, cost_estimate: Number(row.cost_estimate || 0) }));
+}
+
+function aiFactorySummary(productId, user) {
+  const capabilities = aiFactoryCapabilities(user);
+  if (!capabilities.canView) return { capabilities, drafts: [], imageTasks: [], status: 'no_content' };
+  const drafts = aiFactoryDrafts(productId, user);
+  const imageTasks = aiFactoryTasks(productId, user);
+  const latest = drafts[0];
+  const statusMap = { draft: 'draft_generated', pending_review: 'pending_review', approved: 'approved', rejected: 'rejected', applied: 'applied' };
+  return {
+    capabilities,
+    drafts,
+    imageTasks,
+    status: latest ? statusMap[latest.status] : 'no_content',
+    modes: aiFactoryModes,
+    providers: ['reserved', 'openai', 'gemini', 'claude', 'flux', 'ideogram']
+  };
+}
+
+function aiFactoryDebugData() {
+  const count = (table, where = '1 = 1') => db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get().count;
+  return {
+    totalDrafts: count('ai_product_content_drafts'),
+    pendingReview: count('ai_product_content_drafts', "status = 'pending_review'"),
+    appliedDrafts: count('ai_product_content_drafts', "status = 'applied'"),
+    imageTasks: count('ai_image_generation_tasks'),
+    pendingImageTasks: count('ai_image_generation_tasks', "status IN ('draft', 'pending')"),
+    failedImageTasks: count('ai_image_generation_tasks', "status = 'failed'")
+  };
+}
+
+function sourceMediaForProduct(productId, requestedId) {
+  const source = requestedId
+    ? db.prepare(`SELECT media_assets.* FROM product_media_links JOIN media_assets ON media_assets.id = product_media_links.media_id
+        WHERE product_media_links.product_id = ? AND media_assets.id = ? AND media_assets.image_status != 'Rejected'`).get(productId, Number(requestedId))
+    : db.prepare(`SELECT media_assets.* FROM product_media_links JOIN media_assets ON media_assets.id = product_media_links.media_id
+        WHERE product_media_links.product_id = ? AND media_assets.image_status != 'Rejected'
+        ORDER BY product_media_links.is_primary DESC, media_assets.image_type = 'Main Image' DESC, product_media_links.sort_order, media_assets.id LIMIT 1`).get(productId);
+  if (!source) {
+    const error = new Error('An uploaded or approved source product image is required.');
+    error.status = 400;
+    throw error;
+  }
+  return source;
+}
+
+function factoryGeneratedContent(product) {
+  const info = generateProductContent(product, 'product-info');
+  const seo = generateProductContent(product, 'seo');
+  const geo = generateProductContent(product, 'geo');
+  const faq = generateProductContent(product, 'faq');
+  const guide = generateProductContent(product, 'buying-guide');
+  const knowledge = suggestedKnowledgeTerms(product);
+  return {
+    generated_product_name: product.name,
+    generated_category: product.category,
+    generated_sub_category: product.sub_category || product.category,
+    generated_material: product.materials,
+    generated_color: product.color,
+    generated_style: knowledge.styles,
+    generated_store_types: knowledge.stores,
+    generated_description_en: info.english_description,
+    generated_description_zh: `${product.name} 是一款面向餐饮与酒店项目的商用${String(product.category || '家具')}，采用${product.materials || '商用级材料'}，适合高频使用空间。`,
+    generated_short_sales_description: info.short_sales_description,
+    generated_seo_title: seo.seo_title,
+    generated_seo_description: seo.seo_description,
+    generated_meta_keywords: seo.meta_keywords,
+    generated_llm_summary: geo.llm_summary,
+    generated_faq: faq.faq,
+    generated_buying_guide: guide.buying_guide,
+    generated_sales_talking_points: info.sales_talking_points,
+    generated_proposal_notes: info.proposal_usage_notes,
+    generated_ai_tags: info.ai_keywords,
+    analysis_summary: `Rules analysis of the approved source image and existing ${product.category || 'product'} record. Material, color, dimensions, and compliance remain subject to human verification.`
+  };
+}
+
+function insertImageTask(product, source, mode, imageType, sceneType, userId, overrides = {}) {
+  const cost = mode === 'premium' ? 0.15 : mode === 'standard' ? 0.05 : 0;
+  const scene = sceneType ? ` in a commercial ${sceneType} setting` : '';
+  const prompt = String(overrides.prompt || `Create a ${imageType.toLowerCase()} of ${product.name}${scene}. Preserve product geometry, material, color, proportions, and commercial realism.`).trim();
+  const negativePrompt = String(overrides.negative_prompt || 'No logos, no text, no geometry changes, no extra furniture parts, no residential styling, no unverified claims.').trim();
+  const provider = String(overrides.provider || 'reserved').trim().toLowerCase();
+  return Number(db.prepare(`INSERT INTO ai_image_generation_tasks
+    (product_id, source_media_id, image_type, scene_type, prompt, negative_prompt, generation_mode, provider, status, cost_estimate, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(
+    product.id, source.id, imageType, sceneType || null, prompt, negativePrompt, mode, provider, overrides.status || 'pending', cost, userId
+  ).id);
+}
+
 const handlers = {
   async login(req, res) {
     const { email, password } = await readJson(req);
@@ -943,7 +1117,151 @@ const handlers = {
     const user = currentUser(req);
     if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     const product = productKnowledge(id);
-    return product ? json(res, 200, { product, options: knowledgeOptions(id) }) : json(res, 404, { error: 'Product not found.' });
+    return product ? json(res, 200, { product, options: knowledgeOptions(id), aiContentFactory: aiFactorySummary(id, user) }) : json(res, 404, { error: 'Product not found.' });
+  },
+
+  async generateAiContent(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = aiFactoryCapabilities(user);
+    if (!capabilities.canGenerate) return json(res, user ? 403 : 401, { error: 'AI Product Factory generation is not allowed for this role.' });
+    const product = productKnowledge(id);
+    if (!product) return json(res, 404, { error: 'Product not found.' });
+    const body = await readJson(req);
+    const mode = allowedType(String(body.generation_mode || 'standard').toLowerCase(), aiFactoryModes, 'Generation mode');
+    const source = sourceMediaForProduct(id, body.source_media_id);
+    const generated = factoryGeneratedContent(product);
+    let draftId;
+    const taskIds = [];
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      draftId = Number(db.prepare(`INSERT INTO ai_product_content_drafts
+        (product_id, source_media_id, generation_mode, generated_product_name, generated_category, generated_sub_category,
+         generated_material, generated_color, generated_style, generated_store_types, generated_description_en,
+         generated_description_zh, generated_short_sales_description, generated_seo_title, generated_seo_description,
+         generated_meta_keywords, generated_llm_summary, generated_faq, generated_buying_guide, generated_sales_talking_points,
+         generated_proposal_notes, generated_ai_tags, analysis_summary, cost_estimate, status, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?) RETURNING id`).get(
+        id, source.id, mode, generated.generated_product_name, generated.generated_category, generated.generated_sub_category,
+        generated.generated_material, generated.generated_color, JSON.stringify(generated.generated_style), JSON.stringify(generated.generated_store_types),
+        generated.generated_description_en, generated.generated_description_zh, generated.generated_short_sales_description,
+        generated.generated_seo_title, generated.generated_seo_description, generated.generated_meta_keywords,
+        generated.generated_llm_summary, generated.generated_faq, generated.generated_buying_guide,
+        generated.generated_sales_talking_points, generated.generated_proposal_notes, JSON.stringify(generated.generated_ai_tags),
+        generated.analysis_summary, 0.01, user.id
+      ).id);
+      for (const [imageType, sceneType] of aiFactoryImagePlans[mode]) {
+        taskIds.push(insertImageTask(product, source, mode, imageType, sceneType, user.id));
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK');
+      throw error;
+    }
+    recordSystemEvent('info', 'AI Product Factory draft generated', { productId: id, draftId, mode, imageTasks: taskIds.length, provider: 'rules' });
+    audit(user.id, 'generate', 'ai_product_content_draft', String(draftId), { productId: id, mode, taskIds });
+    const factory = aiFactorySummary(id, user);
+    return json(res, 201, { draft: factory.drafts.find(draft => draft.id === draftId), imageTasks: factory.imageTasks.filter(task => taskIds.includes(task.id)), factory });
+  },
+
+  aiContentDrafts(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = aiFactoryCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'AI Product Factory is not available for this role.' });
+    if (!db.prepare('SELECT id FROM products WHERE id = ?').get(id)) return json(res, 404, { error: 'Product not found.' });
+    return json(res, 200, { drafts: aiFactoryDrafts(id, user), capabilities });
+  },
+
+  async updateAiContentDraft(req, res, id, draftId) {
+    const user = currentUser(req);
+    if (!aiFactoryCapabilities(user).canEdit) return json(res, user ? 403 : 401, { error: 'AI draft editing is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ? AND product_id = ?').get(draftId, id);
+    if (!existing) return json(res, 404, { error: 'AI content draft not found.' });
+    if (existing.status === 'applied') return json(res, 409, { error: 'An applied draft cannot be edited.' });
+    const body = await readJson(req);
+    const status = body.status === undefined ? existing.status : allowedType(String(body.status), ['draft', 'pending_review'], 'Draft status');
+    const values = aiDraftEditableFields.map(field => String(body[field] ?? existing[field] ?? '').trim() || null);
+    const styles = body.generated_style === undefined ? jsonArray(existing.generated_style) : jsonArray(body.generated_style);
+    const stores = body.generated_store_types === undefined ? jsonArray(existing.generated_store_types) : jsonArray(body.generated_store_types);
+    const tags = body.generated_ai_tags === undefined ? jsonArray(existing.generated_ai_tags) : jsonArray(body.generated_ai_tags);
+    db.prepare(`UPDATE ai_product_content_drafts SET ${aiDraftEditableFields.map(field => `${field} = ?`).join(', ')},
+      generated_style = ?, generated_store_types = ?, generated_ai_tags = ?, status = ?, reviewer_id = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND product_id = ?`).run(...values, JSON.stringify(styles), JSON.stringify(stores), JSON.stringify(tags), status, draftId, id);
+    audit(user.id, 'update', 'ai_product_content_draft', String(draftId), { productId: id, status });
+    return json(res, 200, { draft: mappedDraft(db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ?').get(draftId)) });
+  },
+
+  async reviewAiContentDraft(req, res, id, draftId, decision) {
+    const user = currentUser(req);
+    if (!aiFactoryCapabilities(user).canReview) return json(res, user ? 403 : 401, { error: 'AI draft review is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ? AND product_id = ?').get(draftId, id);
+    if (!existing) return json(res, 404, { error: 'AI content draft not found.' });
+    if (existing.status === 'applied') return json(res, 409, { error: 'An applied draft cannot be reviewed again.' });
+    const body = await readJson(req);
+    const status = decision === 'approve' ? 'approved' : 'rejected';
+    db.prepare('UPDATE ai_product_content_drafts SET status = ?, reviewer_id = ?, review_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(status, user.id, String(body.review_notes || '').trim() || null, draftId);
+    audit(user.id, decision, 'ai_product_content_draft', String(draftId), { productId: id });
+    return json(res, 200, { draft: mappedDraft(db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ?').get(draftId)) });
+  },
+
+  async applyAiContentDraft(req, res, id, draftId) {
+    const user = currentUser(req);
+    if (!aiFactoryCapabilities(user).canApply) return json(res, user ? 403 : 401, { error: 'Applying AI content is not allowed for this role.' });
+    const draft = mappedDraft(db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ? AND product_id = ?').get(draftId, id));
+    if (!draft) return json(res, 404, { error: 'AI content draft not found.' });
+    if (draft.status !== 'approved') return json(res, 409, { error: 'Only an approved draft can be applied.' });
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare(`UPDATE products SET
+        english_description = COALESCE(NULLIF(?, ''), english_description),
+        short_sales_description = COALESCE(NULLIF(?, ''), short_sales_description),
+        seo_title = COALESCE(NULLIF(?, ''), seo_title), seo_description = COALESCE(NULLIF(?, ''), seo_description),
+        meta_keywords = COALESCE(NULLIF(?, ''), meta_keywords), llm_summary = COALESCE(NULLIF(?, ''), llm_summary),
+        faq = COALESCE(NULLIF(?, ''), faq), buying_guide = COALESCE(NULLIF(?, ''), buying_guide),
+        sales_talking_points = COALESCE(NULLIF(?, ''), sales_talking_points),
+        proposal_usage_notes = COALESCE(NULLIF(?, ''), proposal_usage_notes),
+        ai_summary = COALESCE(NULLIF(?, ''), ai_summary), updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+        draft.generated_description_en || '', draft.generated_short_sales_description || '', draft.generated_seo_title || '',
+        draft.generated_seo_description || '', draft.generated_meta_keywords || '', draft.generated_llm_summary || '',
+        draft.generated_faq || '', draft.generated_buying_guide || '', draft.generated_sales_talking_points || '',
+        draft.generated_proposal_notes || '', draft.generated_llm_summary || '', id
+      );
+      db.prepare("DELETE FROM product_keywords WHERE product_id = ? AND keyword_type = 'ai'").run(id);
+      const addKeyword = db.prepare("INSERT INTO product_keywords (product_id, keyword_type, keyword) VALUES (?, 'ai', ?)");
+      for (const keyword of normalizedKeywords(draft.generated_ai_tags)) addKeyword.run(id, keyword);
+      db.prepare("UPDATE ai_product_content_drafts SET status = 'applied', reviewer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(user.id, draftId);
+      db.exec('COMMIT');
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK');
+      throw error;
+    }
+    syncProductReadiness(id);
+    recordSystemEvent('info', 'AI Product Factory draft applied', { productId: id, draftId });
+    audit(user.id, 'apply', 'ai_product_content_draft', String(draftId), { productId: id });
+    return json(res, 200, { product: productKnowledge(id), draft: mappedDraft(db.prepare('SELECT * FROM ai_product_content_drafts WHERE id = ?').get(draftId)) });
+  },
+
+  imageGenerationTasks(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = aiFactoryCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'Image generation tasks are not available for this role.' });
+    if (!db.prepare('SELECT id FROM products WHERE id = ?').get(id)) return json(res, 404, { error: 'Product not found.' });
+    return json(res, 200, { imageTasks: aiFactoryTasks(id, user), capabilities });
+  },
+
+  async createImageGenerationTask(req, res, id) {
+    const user = currentUser(req);
+    if (!aiFactoryCapabilities(user).canGenerate) return json(res, user ? 403 : 401, { error: 'Image task creation is not allowed for this role.' });
+    const product = productKnowledge(id);
+    if (!product) return json(res, 404, { error: 'Product not found.' });
+    const body = await readJson(req);
+    const mode = allowedType(String(body.generation_mode || 'standard').toLowerCase(), aiFactoryModes, 'Generation mode');
+    const source = sourceMediaForProduct(id, body.source_media_id);
+    const imageType = requiredText(body.image_type, 'Image type');
+    const provider = allowedType(String(body.provider || 'reserved').toLowerCase(), ['reserved', 'openai', 'gemini', 'claude', 'flux', 'ideogram'], 'Provider');
+    const taskId = insertImageTask(product, source, mode, imageType, String(body.scene_type || '').trim() || null, user.id, { ...body, provider });
+    audit(user.id, 'create', 'ai_image_generation_task', String(taskId), { productId: id, mode, provider });
+    return json(res, 201, { imageTask: aiFactoryTasks(id, user).find(task => task.id === taskId) });
   },
 
   async generateIntelligence(req, res, id, type) {
@@ -1307,6 +1625,7 @@ const server = createServer(async (req, res) => {
           commit: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || null
         },
         productIntelligence: productIntelligenceDashboardData(),
+        aiProductFactory: aiFactoryDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
     }
@@ -1320,6 +1639,22 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/products/search') return handlers.searchProducts(req, res, url);
     const productGenerationMatch = url.pathname.match(/^\/api\/products\/(\d+)\/generate\/(product-info|seo|geo|faq|buying-guide)$/);
     if (productGenerationMatch && req.method === 'POST') return await handlers.generateIntelligence(req, res, Number(productGenerationMatch[1]), productGenerationMatch[2]);
+    const aiDraftActionMatch = url.pathname.match(/^\/api\/products\/(\d+)\/ai-content\/drafts\/(\d+)\/(approve|reject|apply)$/);
+    if (aiDraftActionMatch && req.method === 'POST') {
+      const [, productId, draftId, action] = aiDraftActionMatch;
+      return action === 'apply'
+        ? await handlers.applyAiContentDraft(req, res, Number(productId), Number(draftId))
+        : await handlers.reviewAiContentDraft(req, res, Number(productId), Number(draftId), action);
+    }
+    const aiDraftMatch = url.pathname.match(/^\/api\/products\/(\d+)\/ai-content\/drafts\/(\d+)$/);
+    if (aiDraftMatch && req.method === 'PUT') return await handlers.updateAiContentDraft(req, res, Number(aiDraftMatch[1]), Number(aiDraftMatch[2]));
+    const aiDraftsMatch = url.pathname.match(/^\/api\/products\/(\d+)\/ai-content\/drafts$/);
+    if (aiDraftsMatch && req.method === 'GET') return handlers.aiContentDrafts(req, res, Number(aiDraftsMatch[1]));
+    const aiGenerateMatch = url.pathname.match(/^\/api\/products\/(\d+)\/ai-content\/generate$/);
+    if (aiGenerateMatch && req.method === 'POST') return await handlers.generateAiContent(req, res, Number(aiGenerateMatch[1]));
+    const imageTasksMatch = url.pathname.match(/^\/api\/products\/(\d+)\/image-generation-tasks$/);
+    if (imageTasksMatch && req.method === 'GET') return handlers.imageGenerationTasks(req, res, Number(imageTasksMatch[1]));
+    if (imageTasksMatch && req.method === 'POST') return await handlers.createImageGenerationTask(req, res, Number(imageTasksMatch[1]));
     const productImageMatch = url.pathname.match(/^\/api\/products\/(\d+)\/images\/(\d+)$/);
     if (productImageMatch && req.method === 'PUT') return await handlers.updateProductImage(req, res, Number(productImageMatch[1]), Number(productImageMatch[2]));
     const productImagesMatch = url.pathname.match(/^\/api\/products\/(\d+)\/images$/);

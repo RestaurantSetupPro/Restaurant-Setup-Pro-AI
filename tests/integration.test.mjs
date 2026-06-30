@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '002_product_intelligence');
+  assert.equal(database.migrationVersion, '003_ai_product_content_factory');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -252,6 +252,119 @@ test('Module 05 saves intelligence data, manages images, generates content, filt
   const searchBody = await search.json();
   assert.equal(search.status, 200);
   assert.deepEqual(searchBody.products.map(product => product.sku), ['CH-JP-505']);
+});
+
+test('Module 05.1 creates reviewable content drafts and image tasks before applying approved content', async () => {
+  const admin = await login('admin@rspro.ai');
+  const library = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const product = library.products.find(item => item.sku === 'CH-JP-505');
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}`, { headers: { Cookie: admin.cookie } });
+  const detail = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detail.aiContentFactory.capabilities.canGenerate, true);
+  assert.equal(detail.aiContentFactory.status, 'no_content');
+  const source = detail.product.media.find(media => media.image_type === 'Main Image');
+
+  const generate = mode => fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/generate`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ generation_mode: mode, source_media_id: source.id })
+  });
+  const standardResponse = await generate('standard');
+  const standard = await standardResponse.json();
+  assert.equal(standardResponse.status, 201);
+  assert.equal(standard.draft.status, 'pending_review');
+  assert.equal(standard.draft.generation_mode, 'standard');
+  assert.equal(standard.draft.cost_estimate, 0.01);
+  assert.equal(standard.imageTasks.length, 3);
+  assert.ok(standard.imageTasks.every(task => task.status === 'pending' && task.cost_estimate === 0.05));
+
+  const editResponse = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${standard.draft.id}`, {
+    method: 'PUT', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'pending_review', generated_description_en: 'Human-edited approved English description.',
+      generated_seo_title: 'Human Reviewed Japandi Chair', generated_ai_tags: ['japandi chair', 'contract seating'],
+      generated_style: ['Japandi'], generated_store_types: ['Coffee Shop', 'Restaurant'], review_notes: 'Edited before review.'
+    })
+  });
+  const edited = await editResponse.json();
+  assert.equal(editResponse.status, 200);
+  assert.equal(edited.draft.generated_description_en, 'Human-edited approved English description.');
+  assert.deepEqual(edited.draft.generated_ai_tags, ['japandi chair', 'contract seating']);
+
+  const prematureApply = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${standard.draft.id}/apply`, {
+    method: 'POST', headers: { Cookie: admin.cookie }
+  });
+  assert.equal(prematureApply.status, 409);
+
+  const approveResponse = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${standard.draft.id}/approve`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ review_notes: 'Approved by product owner.' })
+  });
+  assert.equal(approveResponse.status, 200);
+  assert.equal((await approveResponse.json()).draft.status, 'approved');
+
+  const applyResponse = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${standard.draft.id}/apply`, {
+    method: 'POST', headers: { Cookie: admin.cookie }
+  });
+  const applied = await applyResponse.json();
+  assert.equal(applyResponse.status, 200);
+  assert.equal(applied.draft.status, 'applied');
+  assert.equal(applied.product.english_description, 'Human-edited approved English description.');
+  assert.equal(applied.product.seo_title, 'Human Reviewed Japandi Chair');
+  assert.deepEqual(applied.product.ai_tags, ['contract seating', 'japandi chair']);
+
+  const fastResponse = await generate('fast');
+  const fast = await fastResponse.json();
+  assert.equal(fastResponse.status, 201);
+  assert.equal(fast.imageTasks.length, 0);
+  const rejectResponse = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${fast.draft.id}/reject`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ review_notes: 'Regenerate with more context.' })
+  });
+  assert.equal((await rejectResponse.json()).draft.status, 'rejected');
+
+  const premiumResponse = await generate('premium');
+  const premium = await premiumResponse.json();
+  assert.equal(premiumResponse.status, 201);
+  assert.equal(premium.imageTasks.length, 14);
+  assert.ok(premium.imageTasks.some(task => task.image_type === 'Transparent PNG'));
+  assert.ok(premium.imageTasks.some(task => task.scene_type === 'Hotel'));
+  assert.ok(premium.imageTasks.every(task => task.cost_estimate === 0.15));
+
+  const manualTask = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/image-generation-tasks`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source_media_id: source.id, generation_mode: 'standard', image_type: 'Detail Image', provider: 'flux', prompt: 'Preserve exact chair geometry.' })
+  });
+  const manualTaskBody = await manualTask.json();
+  assert.equal(manualTask.status, 201);
+  assert.equal(manualTaskBody.imageTask.provider, 'flux');
+
+  const sales = await login('sales@rspro.ai');
+  const salesDrafts = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts`, { headers: { Cookie: sales.cookie } });
+  const salesDraftBody = await salesDrafts.json();
+  assert.equal(salesDrafts.status, 200);
+  assert.deepEqual(salesDraftBody.drafts.map(draft => draft.status), ['applied']);
+  const salesGenerate = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/generate`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_mode: 'fast', source_media_id: source.id })
+  });
+  assert.equal(salesGenerate.status, 403);
+  const salesApprove = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts/${premium.draft.id}/approve`, { method: 'POST', headers: { Cookie: sales.cookie } });
+  assert.equal(salesApprove.status, 403);
+
+  const designer = await login('designer@rspro.ai');
+  const designerGenerate = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/generate`, {
+    method: 'POST', headers: { Cookie: designer.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_mode: 'fast', source_media_id: source.id })
+  });
+  assert.equal(designerGenerate.status, 201);
+
+  const va = await login('va@rspro.ai');
+  const vaDrafts = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/drafts`, { headers: { Cookie: va.cookie } });
+  assert.equal(vaDrafts.status, 403);
+
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(debug.aiProductFactory.totalDrafts >= 4);
+  assert.ok(debug.aiProductFactory.appliedDrafts >= 1);
+  assert.ok(debug.aiProductFactory.imageTasks >= 18);
+  assert.ok(debug.aiProductFactory.pendingImageTasks >= 18);
+  assert.equal(debug.aiProductFactory.failedImageTasks, 0);
 });
 
 test('sales access is scoped and cannot reach settings', async () => {

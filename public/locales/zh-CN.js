@@ -68,6 +68,17 @@ export default {
     generateSeo: '生成 SEO', generateGeo: '生成 GEO', generateFaq: '生成 FAQ', generateBuyingGuide: '生成购买指南', seoTitle: 'SEO 标题', seoDescription: 'SEO 描述', metaKeywords: 'Meta 关键词', slug: 'Slug', canonicalUrl: 'Canonical URL', imageAlt: '图片 Alt', imageCaption: '图片说明', productKeywords: '产品关键词',
     llmSummary: 'LLM 摘要', useCases: '使用场景', bestFor: '最适合', notRecommendedFor: '不建议用于', comparison: '对比说明', advantages: '优势', disadvantages: '不足', faq: 'FAQ', buyingGuide: '购买指南', installationGuide: '安装指南', maintenanceGuide: '维护指南', commonProblems: '常见问题', suggestedPrompt: '建议提示词'
   },
+  factory: {
+    title: 'AI 产品内容工厂', subtitle: '以一张已批准产品图生成可审核的产品、销售、SEO、GEO、Proposal 内容与图片任务。',
+    generateEverything: '生成全部内容', sourceImage: '源产品图片', generationMode: '生成模式', fast: '快速模式', standard: '标准模式', premium: '高级模式',
+    fastHelp: '仅生成文字 · 预计文字成本 $0.01', standardHelp: '文字加 3 个图片任务 · 每个任务 $0.05', premiumHelp: '文字加 14 个图片任务 · 每个任务 $0.15',
+    generatedDraft: '生成内容草稿', imageTasks: '图片生成任务', reviewStatus: '审核状态', noContent: '暂无 AI 内容', draftGenerated: '草稿已生成', pendingReview: '等待审核', approved: '已批准', rejected: '已拒绝', applied: '已应用',
+    analyze: '图片分析', descriptionEn: '英文描述', descriptionZh: '中文描述', shortSales: '简短销售描述', seoTitle: 'SEO 标题', seoDescription: 'SEO 描述', metaKeywords: 'Meta 关键词', llmSummary: 'LLM 摘要', faq: 'FAQ', buyingGuide: '购买指南', salesPoints: '销售话术要点', proposalNotes: '方案备注', aiTags: 'AI 标签', styles: '风格', storeTypes: '门店类型', reviewNotes: '审核备注',
+    saveDraft: '保存草稿', approveDraft: '批准草稿', rejectDraft: '拒绝草稿', applyProduct: '应用到产品', viewDraft: '查看 AI 草稿', editDraft: '编辑草稿',
+    sourceRequired: '请先在媒体 Tab 上传或批准一张产品图片。', generated: '草稿与图片任务已创建，等待人工审核。', saved: 'AI 内容草稿已保存。', reviewed: '审核结果已保存。', appliedMessage: '已批准内容已应用到 Product Intelligence Center。',
+    mode: '模式', provider: '模型提供方', taskType: '任务类型', scene: '场景', cost: '预计成本', status: '状态', noTasks: '当前模式没有图片任务。', totalCost: '预计总成本', humanReview: '任何生成内容都不会在批准并点击“应用到产品”之前覆盖正式产品数据。',
+    debugTitle: 'AI 产品工厂状态', totalDrafts: '草稿总数', appliedDrafts: '已应用草稿', imageTaskCount: '图片任务', pendingImageTasks: '待处理图片任务', failedImageTasks: '失败图片任务'
+  },
   knowledge: {
     title: '知识完整度看板', subtitle: '衡量并完善可供销售、方案、推荐与未来 AI 工作流复用的产品知识。',
     completion: '知识完整度', scoreSummary: '按六项知识信号评估 {{count}} 个产品', withImages: '已有媒体产品', withSizes: '已有尺寸产品', withCases: '已有案例产品', openDashboard: '打开知识看板',

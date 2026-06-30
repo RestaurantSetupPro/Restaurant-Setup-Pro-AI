@@ -77,6 +77,17 @@ export default {
     generateSeo: 'Generate SEO', generateGeo: 'Generate GEO', generateFaq: 'Generate FAQ', generateBuyingGuide: 'Generate Buying Guide', seoTitle: 'SEO Title', seoDescription: 'SEO Description', metaKeywords: 'Meta Keywords', slug: 'Slug', canonicalUrl: 'Canonical URL', imageAlt: 'Image Alt', imageCaption: 'Image Caption', productKeywords: 'Product Keywords',
     llmSummary: 'LLM Summary', useCases: 'Use Cases', bestFor: 'Best For', notRecommendedFor: 'Not Recommended For', comparison: 'Comparison', advantages: 'Advantages', disadvantages: 'Disadvantages', faq: 'FAQ', buyingGuide: 'Buying Guide', installationGuide: 'Installation Guide', maintenanceGuide: 'Maintenance Guide', commonProblems: 'Common Problems', suggestedPrompt: 'Suggested Prompt'
   },
+  factory: {
+    title: 'AI Content Factory', subtitle: 'Turn one approved product image into reviewable product, sales, SEO, GEO, proposal, and image-task drafts.',
+    generateEverything: 'Generate Everything', sourceImage: 'Source Image', generationMode: 'Generation Mode', fast: 'Fast Mode', standard: 'Standard Mode', premium: 'Premium Mode',
+    fastHelp: 'Text content only · estimated text cost $0.01', standardHelp: 'Text plus 3 image tasks · $0.05 per image task', premiumHelp: 'Text plus 14 image tasks · $0.15 per image task',
+    generatedDraft: 'Generated Content Draft', imageTasks: 'Image Generation Tasks', reviewStatus: 'Review Status', noContent: 'No AI Content', draftGenerated: 'Draft Generated', pendingReview: 'Pending Review', approved: 'Approved', rejected: 'Rejected', applied: 'Applied',
+    analyze: 'Image analysis', descriptionEn: 'English Description', descriptionZh: 'Chinese Description', shortSales: 'Short Sales Description', seoTitle: 'SEO Title', seoDescription: 'SEO Description', metaKeywords: 'Meta Keywords', llmSummary: 'LLM Summary', faq: 'FAQ', buyingGuide: 'Buying Guide', salesPoints: 'Sales Talking Points', proposalNotes: 'Proposal Notes', aiTags: 'AI Tags', styles: 'Styles', storeTypes: 'Store Types', reviewNotes: 'Review Notes',
+    saveDraft: 'Save Draft', approveDraft: 'Approve Draft', rejectDraft: 'Reject Draft', applyProduct: 'Apply to Product', viewDraft: 'View AI Draft', editDraft: 'Edit Draft',
+    sourceRequired: 'Upload or approve a product image in the Media tab before generating.', generated: 'Draft and image tasks created for review.', saved: 'AI content draft saved.', reviewed: 'Review decision saved.', appliedMessage: 'Approved content applied to Product Intelligence Center.',
+    mode: 'Mode', provider: 'Provider', taskType: 'Task Type', scene: 'Scene', cost: 'Estimated Cost', status: 'Status', noTasks: 'No image tasks for this mode.', totalCost: 'Estimated total', humanReview: 'No generated content overwrites the product until approval and Apply to Product.',
+    debugTitle: 'AI Product Factory Status', totalDrafts: 'Total Drafts', appliedDrafts: 'Applied Drafts', imageTaskCount: 'Image Tasks', pendingImageTasks: 'Pending Image Tasks', failedImageTasks: 'Failed Image Tasks'
+  },
   knowledge: {
     title: 'Knowledge Dashboard', subtitle: 'Measure and improve the product intelligence used by sales, proposals, recommendations, and future AI workflows.',
     completion: 'Knowledge Completion', scoreSummary: '{{count}} products measured across six knowledge signals', withImages: 'Products with media', withSizes: 'Products with dimensions', withCases: 'Products with cases', openDashboard: 'Open Knowledge Dashboard',

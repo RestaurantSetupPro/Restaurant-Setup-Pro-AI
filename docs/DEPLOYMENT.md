@@ -15,17 +15,17 @@ The server reads `process.env.PORT` and binds to `0.0.0.0`.
 
 `NODE_ENV`, `DATABASE_URL`, `DATABASE_SSL`, `RUN_MIGRATIONS`, `SESSION_HOURS`, and `SEED_PASSWORD` are configured outside Git. Never commit secrets.
 
-## Module 05 Migration
+## Module 05.1 Migration
 
-Apply `001_initial_schema.sql`, then `002_product_intelligence.sql`. Migration 002 is additive and preserves existing product records. With `RUN_MIGRATIONS=true`, startup applies and verifies both versions.
+Apply migrations 001, 002, then `003_ai_product_content_factory.sql`. Migration 003 adds only Factory workflow tables and indexes. With `RUN_MIGRATIONS=true`, startup applies and verifies all versions.
 
 ## Verification
 
 1. `GET /api/health` → HTTP 200 and `{"status":"ok"}`.
-2. `GET /api/debug/db` → connected, migrated, and version `002_product_intelligence`.
+2. `GET /api/debug/db` → connected, migrated, and version `003_ai_product_content_factory`.
 3. Admin login and Product Intelligence workflows succeed.
 4. `npm test` passes with zero failures.
 
 ## Rollback
 
-Redeploy the last accepted Module 04 commit. Do not drop Module 05 columns or relation tables during application rollback; they are backward-compatible and retain data. Restore a verified pre-migration backup only with formal approval.
+Redeploy the last accepted Module 05 commit. Do not drop Module 05.1 draft/task tables during an application rollback; retaining them preserves review history and remains backward-compatible. Restore a verified pre-migration backup only with formal approval.

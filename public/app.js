@@ -501,7 +501,54 @@ function knowledgeChecks(name, rows, selectedIds, label = row => row.name) {
   return `<div class="knowledge-checks">${rows.map(row => `<label><input type="checkbox" name="${name}" value="${row.id}" ${selectedIds.includes(row.id) ? 'checked' : ''} /><span>${esc(label(row))}</span></label>`).join('')}</div>`;
 }
 
-async function renderProductDetail(id) {
+function factoryStatusLabel(status) {
+  const key = { no_content: 'noContent', draft_generated: 'draftGenerated', pending_review: 'pendingReview', approved: 'approved', rejected: 'rejected', applied: 'applied' }[status] || 'noContent';
+  return t(`factory.${key}`);
+}
+
+function renderAiFactoryPane(data) {
+  const factory = data.aiContentFactory;
+  if (!factory?.capabilities.canView) return '';
+  const product = data.product;
+  const validMedia = product.media.filter(media => media.image_status !== 'Rejected');
+  const latest = factory.drafts[0];
+  const editable = Boolean(latest && factory.capabilities.canEdit && ['draft', 'pending_review', 'rejected'].includes(latest.status));
+  const sourceId = latest?.source_media_id || validMedia.find(item => item.is_primary)?.id || validMedia[0]?.id || '';
+  const source = validMedia.find(item => item.id === Number(sourceId));
+  const textFields = [
+    ['analysis_summary','analyze',3], ['generated_description_en','descriptionEn',4], ['generated_description_zh','descriptionZh',4],
+    ['generated_short_sales_description','shortSales',2], ['generated_seo_title','seoTitle',2], ['generated_seo_description','seoDescription',3],
+    ['generated_meta_keywords','metaKeywords',2], ['generated_llm_summary','llmSummary',4], ['generated_faq','faq',5],
+    ['generated_buying_guide','buyingGuide',4], ['generated_sales_talking_points','salesPoints',4], ['generated_proposal_notes','proposalNotes',4]
+  ];
+  const estimatedTotal = Number(latest?.cost_estimate || 0) + factory.imageTasks.reduce((sum, task) => sum + Number(task.cost_estimate || 0), 0);
+  return `<div class="knowledge-pane is-hidden" data-knowledge-pane="factory">
+    <section class="factory-hero panel">
+      <div><span class="metric-icon">${icon('sparkles')}</span><div><span class="eyebrow-label">${t('factory.title')}</span><h2>${factoryStatusLabel(factory.status)}</h2><p>${t('factory.humanReview')}</p></div></div>
+      <div class="factory-cost"><small>${t('factory.totalCost')}</small><strong>$${estimatedTotal.toFixed(2)}</strong></div>
+    </section>
+    <section class="factory-layout">
+      <article class="panel factory-source"><div class="panel-title"><h2>${t('factory.sourceImage')}</h2><p>${t('factory.subtitle')}</p></div>
+        <div class="factory-source-preview">${source?.file_url ? `<img src="${esc(source.file_url)}" alt="${esc(source.file_name)}" />` : icon('images')}</div>
+        ${factory.capabilities.canGenerate ? `<div class="foundation-form"><label class="field"><span>${t('factory.sourceImage')}</span><select id="factory-source-media"><option value="">${t('common.none')}</option>${validMedia.map(media => `<option value="${media.id}" ${media.id === Number(sourceId) ? 'selected' : ''}>${esc(media.file_name)} · ${esc(media.image_type)}</option>`).join('')}</select></label><label class="field"><span>${t('factory.generationMode')}</span><select id="factory-mode"><option value="fast">${t('factory.fast')}</option><option value="standard" selected>${t('factory.standard')}</option><option value="premium">${t('factory.premium')}</option></select></label><div class="factory-mode-help"><small>${t('factory.fastHelp')}</small><small>${t('factory.standardHelp')}</small><small>${t('factory.premiumHelp')}</small></div><button type="button" class="button button--primary button--wide" data-action="generate-ai-factory" ${validMedia.length ? '' : 'disabled'}>${icon('sparkles')} ${t('factory.generateEverything')}</button>${validMedia.length ? '' : `<p class="form-error">${t('factory.sourceRequired')}</p>`}</div>` : ''}
+      </article>
+      <article class="panel factory-draft"><div class="panel-header"><div class="panel-title"><h2>${t('factory.generatedDraft')}</h2><p>${latest ? `${t('factory.mode')}: ${esc(latest.generation_mode)} · $${Number(latest.cost_estimate).toFixed(2)}` : t('factory.noContent')}</p></div>${latest ? badge(factoryStatusLabel(factory.status)) : ''}</div>
+        ${latest ? `<div class="foundation-form" data-factory-draft="${latest.id}">
+          <div class="field-row"><label class="field"><span>${t('factory.styles')}</span><input data-draft-field="generated_style" value="${esc(latest.generated_style.join(', '))}" ${editable ? '' : 'disabled'} /></label><label class="field"><span>${t('factory.storeTypes')}</span><input data-draft-field="generated_store_types" value="${esc(latest.generated_store_types.join(', '))}" ${editable ? '' : 'disabled'} /></label></div>
+          <label class="field"><span>${t('factory.aiTags')}</span><input data-draft-field="generated_ai_tags" value="${esc(latest.generated_ai_tags.join(', '))}" ${editable ? '' : 'disabled'} /></label>
+          ${textFields.map(([name,key,rows]) => `<label class="field"><span>${t(`factory.${key}`)}</span><textarea data-draft-field="${name}" rows="${rows}" ${editable ? '' : 'disabled'}>${esc(latest[name] || '')}</textarea></label>`).join('')}
+          <label class="field"><span>${t('factory.reviewNotes')}</span><textarea data-draft-field="review_notes" rows="2" ${editable ? '' : 'disabled'}>${esc(latest.review_notes || '')}</textarea></label>
+          <div class="row-actions factory-actions">${editable ? `<button type="button" class="button button--soft" data-action="save-ai-draft" data-id="${latest.id}">${t('factory.saveDraft')}</button>` : ''}${factory.capabilities.canReview && latest.status !== 'applied' && latest.status !== 'rejected' ? `<button type="button" class="button button--soft" data-action="reject-ai-draft" data-id="${latest.id}">${t('factory.rejectDraft')}</button>` : ''}${factory.capabilities.canReview && ['draft', 'pending_review', 'rejected'].includes(latest.status) ? `<button type="button" class="button button--primary" data-action="approve-ai-draft" data-id="${latest.id}">${t('factory.approveDraft')}</button>` : ''}${factory.capabilities.canApply && latest.status === 'approved' ? `<button type="button" class="button button--primary" data-action="apply-ai-draft" data-id="${latest.id}">${t('factory.applyProduct')}</button>` : ''}</div>
+        </div>` : `<div class="empty-state">${t('factory.noContent')}</div>`}
+      </article>
+    </section>
+    <article class="panel section-gap"><div class="panel-header"><div class="panel-title"><h2>${t('factory.imageTasks')}</h2><p>${t('factory.humanReview')}</p></div><strong>${factory.imageTasks.length}</strong></div>
+      ${factory.imageTasks.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('factory.taskType')}</th><th>${t('factory.scene')}</th><th>${t('factory.mode')}</th><th>${t('factory.provider')}</th><th>${t('factory.cost')}</th><th>${t('factory.status')}</th></tr></thead><tbody>${factory.imageTasks.map(task => `<tr><td class="money">${esc(task.image_type)}</td><td>${esc(task.scene_type || '—')}</td><td>${esc(task.generation_mode)}</td><td>${esc(task.provider)}</td><td>$${Number(task.cost_estimate).toFixed(2)}</td><td>${badge(task.status)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('factory.noTasks')}</div>`}
+    </article>
+  </div>`;
+}
+
+async function renderProductDetail(id, activeTab = 'knowledge') {
   const data = await api(`/api/products/${id}`);
   state.productDetail = data;
   const product = data.product;
@@ -514,7 +561,7 @@ async function renderProductDetail(id) {
   $('#page').innerHTML = `<form id="knowledge-form" data-id="${product.id}">
     ${pageHeader(esc(product.name), `${esc(product.sku)} · ${esc(product.category)}`, `<button type="button" class="button button--soft" data-action="generate-intelligence" data-type="product-info">${icon('sparkles')} ${t('intelligence.generateProductInfo')}</button><button type="submit" class="button button--primary">${t('knowledge.saveKnowledge')}</button>`, `<button type="button" class="button" data-route="products">${t('knowledge.backProducts')}</button>`)}
     <section class="knowledge-hero panel"><div>${knowledgeScoreBadge(product.product_readiness_score)}<div><span class="eyebrow-label">${t('intelligence.readinessScore')}</span><strong>${esc(product.proposal_ready_status)}</strong><small>${t('intelligence.readinessSummary')}</small></div></div><div class="knowledge-hero-summary"><span>${t('knowledge.aiSummary')}</span><p>${esc(product.ai_summary || t('knowledge.notSet'))}</p></div></section>
-    <nav class="knowledge-tabs" role="tablist"><button type="button" class="is-active" data-action="knowledge-tab" data-tab="knowledge" role="tab">${t('knowledge.knowledgeTab')}</button><button type="button" data-action="knowledge-tab" data-tab="media" role="tab">${t('knowledge.mediaTab')} <span>${product.media.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="products" role="tab">${t('knowledge.relatedProducts')} <span>${product.recommended_products.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="cases" role="tab">${t('knowledge.relatedCases')} <span>${product.related_cases.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="seo" role="tab">${t('intelligence.seoGeo')}</button></nav>
+    <nav class="knowledge-tabs" role="tablist"><button type="button" class="is-active" data-action="knowledge-tab" data-tab="knowledge" role="tab">${t('knowledge.knowledgeTab')}</button><button type="button" data-action="knowledge-tab" data-tab="media" role="tab">${t('knowledge.mediaTab')} <span>${product.media.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="products" role="tab">${t('knowledge.relatedProducts')} <span>${product.recommended_products.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="cases" role="tab">${t('knowledge.relatedCases')} <span>${product.related_cases.length}</span></button><button type="button" data-action="knowledge-tab" data-tab="seo" role="tab">${t('intelligence.seoGeo')}</button>${data.aiContentFactory?.capabilities.canView ? `<button type="button" data-action="knowledge-tab" data-tab="factory" role="tab">${t('factory.title')} <span>${data.aiContentFactory.drafts.length}</span></button>` : ''}</nav>
     <div class="knowledge-pane" data-knowledge-pane="knowledge">
       <section class="knowledge-detail-grid">
         <article class="panel knowledge-section"><h2>${t('knowledge.suitableStoreTypes')}</h2><p>${t('knowledge.multiSelect')}</p>${knowledgeChecks('term_ids', terms('store_type'), product.knowledge_term_ids)}</article>
@@ -551,9 +598,14 @@ async function renderProductDetail(id) {
       <label class="field"><span>${t('intelligence.productKeywords')}</span><textarea name="product_keywords" rows="2">${esc(product.product_keywords || '')}</textarea></label>
       ${[['llm_summary','llmSummary'],['use_cases','useCases'],['best_for','bestFor'],['not_recommended_for','notRecommendedFor'],['comparison','comparison'],['advantages','advantages'],['disadvantages','disadvantages'],['faq','faq'],['buying_guide','buyingGuide'],['installation_guide','installationGuide'],['maintenance_guide','maintenanceGuide'],['common_problems','commonProblems'],['suggested_prompt','suggestedPrompt']].map(([name,key]) => `<label class="field"><span>${t(`intelligence.${key}`)}</span><textarea name="${name}" rows="3">${esc(product[name] || '')}</textarea></label>`).join('')}
     </div></section></div>
+    ${renderAiFactoryPane(data)}
     <p id="knowledge-form-error" class="form-error"></p>
   </form>`;
   $('#knowledge-form').addEventListener('submit', saveProductKnowledge);
+  if (activeTab !== 'knowledge') {
+    document.querySelectorAll('[data-action="knowledge-tab"]').forEach(tab => tab.classList.toggle('is-active', tab.dataset.tab === activeTab));
+    document.querySelectorAll('[data-knowledge-pane]').forEach(pane => pane.classList.toggle('is-hidden', pane.dataset.knowledgePane !== activeTab));
+  }
 }
 
 async function saveProductKnowledge(event) {
@@ -635,6 +687,46 @@ async function markMainImage(mediaId) {
   await api(`/api/products/${productId}/images/${mediaId}`, { method: 'PUT', body: JSON.stringify({ mark_main: true }) });
   toast(t('intelligence.imageSaved'));
   await renderProductDetail(productId);
+}
+
+function aiDraftPayload() {
+  const container = $('[data-factory-draft]');
+  const payload = { status: 'pending_review' };
+  container?.querySelectorAll('[data-draft-field]').forEach(input => { payload[input.dataset.draftField] = input.value; });
+  return payload;
+}
+
+async function generateAiFactory() {
+  const productId = state.productDetail.product.id;
+  const sourceMediaId = Number($('#factory-source-media')?.value);
+  const generationMode = $('#factory-mode')?.value || 'standard';
+  await api(`/api/products/${productId}/ai-content/generate`, { method: 'POST', body: JSON.stringify({ source_media_id: sourceMediaId, generation_mode: generationMode }) });
+  toast(t('factory.generated'));
+  await renderProductDetail(productId, 'factory');
+}
+
+async function saveAiDraft(draftId) {
+  const productId = state.productDetail.product.id;
+  await api(`/api/products/${productId}/ai-content/drafts/${draftId}`, { method: 'PUT', body: JSON.stringify(aiDraftPayload()) });
+  toast(t('factory.saved'));
+  await renderProductDetail(productId, 'factory');
+}
+
+async function reviewAiDraft(draftId, decision) {
+  const productId = state.productDetail.product.id;
+  const reviewNotes = $('[data-draft-field="review_notes"]')?.value || '';
+  await api(`/api/products/${productId}/ai-content/drafts/${draftId}/${decision}`, { method: 'POST', body: JSON.stringify({ review_notes: reviewNotes }) });
+  toast(t('factory.reviewed'));
+  await renderProductDetail(productId, 'factory');
+}
+
+async function applyAiDraft(draftId) {
+  const productId = state.productDetail.product.id;
+  await api(`/api/products/${productId}/ai-content/drafts/${draftId}/apply`, { method: 'POST' });
+  state.products = null;
+  state.knowledgeDashboard = null;
+  toast(t('factory.appliedMessage'));
+  await renderProductDetail(productId, 'factory');
 }
 
 async function renderImports() {
@@ -957,6 +1049,12 @@ async function renderDebugCenter() {
         ${[['totalProducts','products'],['proposalReadyProducts','check'],['productsNeedReview','document'],['missingImages','images'],['missingPrice','money'],['missingAiTags','sparkles']].map(([key, iconName]) => metricCard(t(`intelligence.${key}`), data.productIntelligence?.[key] ?? 0, t('intelligence.libraryStatusSub'), iconName, key.startsWith('missing') ? 'gold' : 'green', true)).join('')}
       </div>
     </article>
+    <article class="panel section-gap">
+      ${panelHeader(t('factory.debugTitle'), t('factory.humanReview'))}
+      <div class="metrics-grid compact-metrics">
+        ${[['totalDrafts','totalDrafts','document'],['pendingReview','pendingReview','clock'],['appliedDrafts','appliedDrafts','check'],['imageTasks','imageTaskCount','images'],['pendingImageTasks','pendingImageTasks','sparkles'],['failedImageTasks','failedImageTasks','warning']].map(([key,label,iconName]) => metricCard(t(`factory.${label}`), data.aiProductFactory?.[key] ?? 0, t('factory.subtitle'), iconName, key.startsWith('failed') ? 'gold' : 'green', true)).join('')}
+      </div>
+    </article>
     <section class="split-grid section-gap">
       <div class="stack">
         <article class="panel">
@@ -1086,6 +1184,16 @@ async function handleAction(action, node) {
     toast(t('debug.refreshed'));
   } else if (action === 'generate-intelligence') {
     await applyIntelligenceGeneration(node.dataset.type);
+  } else if (action === 'generate-ai-factory') {
+    await generateAiFactory();
+  } else if (action === 'save-ai-draft') {
+    await saveAiDraft(node.dataset.id);
+  } else if (action === 'approve-ai-draft') {
+    await reviewAiDraft(node.dataset.id, 'approve');
+  } else if (action === 'reject-ai-draft') {
+    await reviewAiDraft(node.dataset.id, 'reject');
+  } else if (action === 'apply-ai-draft') {
+    await applyAiDraft(node.dataset.id);
   } else if (action === 'add-product-image') {
     openProductImageModal(null, node.dataset.ai === 'true');
   } else if (action === 'edit-product-image') {

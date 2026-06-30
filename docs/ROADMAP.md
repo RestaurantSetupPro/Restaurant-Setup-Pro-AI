@@ -4,31 +4,28 @@ Last updated: June 30, 2026
 
 ## Vision
 
-Build one trusted product intelligence source for websites, proposals, layouts, sales, SEO/GEO, Q&A, marketing, case studies, and future APIs. Downstream modules call Product Intelligence Center data and never copy it.
+One Product Intelligence source feeds websites, proposals, layouts, sales, SEO/GEO, Q&A, marketing and future APIs. Downstream modules may consume but never copy product data.
 
-## Roadmap
+## Status
 
-| Release | Status | Outcome |
-| --- | --- | --- |
-| Module 01 / v0.1 | Accepted | Platform shell, authentication, roles, dashboard |
-| Module 02 / v0.2 | Accepted | Shared configuration, tags, media metadata, prompts |
-| Module 03 / v0.3 | Accepted | Product library, SKU, tags, search and filters |
-| Module 04 / v0.4 | Accepted | Product Knowledge Engine, relationships and AI-ready fields |
-| Cloud / v0.4.x | Accepted | GitHub, Supabase PostgreSQL, cloud runtime, diagnostics |
-| Module 05 / v0.5 | Awaiting Acceptance | Product Intelligence, images, rules generation, SEO/GEO, readiness |
+- Module 01–04: Accepted
+- Cloud v0.4.x: Accepted
+- Module 05 Product Intelligence: Completed
+- Module 05.1 AI Product Content Factory: Development complete; awaiting acceptance
 
-## Module 05 Scope
+## Module 05.1 Outcome
 
-Additive commercial, sales, SEO/GEO data; normalized relations; twelve image roles and four states; editable deterministic generation; advanced filters; Product Readiness Score; dashboard and debug metrics.
-
-Excluded: real AI APIs, AI image generation, CRM, customer search, outreach, imports, and the next module.
+- One source image can create an editable content draft.
+- Fast, Standard and Premium modes control task volume and estimated cost.
+- Generated content follows Draft/Pending Review/Approved/Rejected/Applied states.
+- Only Apply to Product writes approved content to the Product Intelligence source.
+- Image tasks reserve provider integration while producing no real images.
+- Debug Center exposes draft and task health.
 
 ## Acceptance Gate
 
-- Migration 002 is safe and verified.
-- Health and database diagnostics are healthy.
-- List, detail, save, search, image, and generation workflows pass.
-- Readiness is verified at 60, 80, and 100.
-- Tests, documentation, screenshots, schema, report, and GitHub push are complete.
+Migration 003, health/debug checks, product detail, three generation modes, edit/review/apply, image tasks, role permissions, regression tests, documentation, screenshots and GitHub push must all pass.
 
-Future object storage, real AI, semantic search, and downstream consumers require separate authorization after acceptance.
+## Explicitly Deferred
+
+Real model calls, billing, image generation, object storage, queues, CRM, customer search, outreach and any next module require separate authorization after acceptance.

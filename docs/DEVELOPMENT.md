@@ -1,10 +1,8 @@
 # Development
 
-All modules follow [Module Development Standards](Development-Standards.md): Migration, API, Debug, Test, and Documentation are mandatory.
+All modules require Migration, API, Debug, Test and Documentation tracks.
 
 ## Start and Test
-
-Requires Node.js 24+ and npm.
 
 ```bash
 npm install
@@ -12,21 +10,22 @@ npm start
 npm test
 ```
 
-SQLite is used locally when `DATABASE_URL` is absent. PostgreSQL is used when configured.
+Node.js 24+ is required. SQLite is the local fallback; PostgreSQL is used when `DATABASE_URL` exists.
 
-## Module 05 Rules
+## Module 05.1 Rules
 
-- Extend `products`; never rebuild or duplicate it.
-- Store multi-value relationships in normalized link tables.
-- Generated AI/SEO/GEO content is deterministic, editable, and requires human review.
-- Image management stores metadata and URLs; binary storage is outside Module 05.
-- Preserve PostgreSQL and local SQLite compatibility.
+- Run migrations in numeric order through `003_ai_product_content_factory.sql`.
+- Never write generated content directly to `products` during generation or review.
+- Generate/edit/review/apply roles: Admin, Owner, Designer.
+- Sales reads Approved/Applied content only; VA has no Factory access.
+- Provider values are interface reservations, not active external calls.
+- Image outputs must eventually return through `media_assets`.
 
-## Paths
+## Important Paths
 
-- `src/server.mjs`: API, generation rules, score, diagnostics
-- `public/`: Product Intelligence Center UI
-- `database/migrations/002_product_intelligence.sql`: additive migration
-- `tests/`: regression and Module 05 integration tests
-- `docs/PRODUCT_INTELLIGENCE_MODULE.md`: module contract
-- `outputs/Module-05/`: acceptance package
+- `src/server.mjs`: factory rules, workflow, permissions, APIs, diagnostics
+- `public/app.js`: AI Content Factory tab and review UI
+- `database/migrations/003_ai_product_content_factory.sql`: additive PostgreSQL migration
+- `tests/integration.test.mjs`: generation, review, apply and role tests
+- `docs/AI_PRODUCT_CONTENT_FACTORY.md`: functional and API contract
+- `outputs/Module-05.1/`: acceptance package

@@ -11,6 +11,7 @@
 - [AI Rules](AI%20Rules.md)
 - [Modules](MODULES.md)
 - [Product Intelligence Module](PRODUCT_INTELLIGENCE_MODULE.md)
+- [AI Product Content Factory](AI_PRODUCT_CONTENT_FACTORY.md)
 
 This directory covers accepted Module 01–04 documentation and Module 05 acceptance materials.
 
@@ -21,6 +22,7 @@ This directory covers accepted Module 01–04 documentation and Module 05 accept
 - Module 03: `outputs/Module-03/`
 - Module 04: `outputs/Module-04/`
 - Module 05: `outputs/Module-05/`
+- Module 05.1: `outputs/Module-05.1/`
 
 ## Cloud
 
@@ -28,4 +30,4 @@ This directory covers accepted Module 01–04 documentation and Module 05 accept
 - Migrations: `database/migrations/`
 - Environment template: `.env.example`
 
-Module 05 development is complete and awaiting formal product-manager acceptance.
+Module 05.1 development is complete and awaiting formal product-manager acceptance.

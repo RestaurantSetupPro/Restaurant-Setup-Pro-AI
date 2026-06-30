@@ -1,23 +1,14 @@
 # Modules
 
-## Module 01 — Platform Foundation
+| Module | Status | Scope |
+| --- | --- | --- |
+| 01 — Platform Foundation | Accepted | Shell, authentication, roles, navigation, dashboard |
+| 02 — Core Foundation Data | Accepted | Shared configuration, tags, media metadata, prompts |
+| 03 — Product Library | Accepted | Product CRUD, unique SKU, tags, search, filters, media |
+| 04 — Product Knowledge Engine V2 | Accepted | Knowledge relationships, cases, AI-ready fields, score |
+| 05 — Product Intelligence Upgrade | Completed | Commercial/sales/SEO/GEO fields, images, filters, readiness |
+| 05.1 — AI Product Content Factory | Awaiting Acceptance | Reviewable content drafts, generation modes, image tasks, Apply workflow |
 
-Shell, authentication, roles, navigation, and dashboard. Status: Accepted.
+Module 05.1 is additive to Module 05. No subsequent module is authorized until formal acceptance.
 
-## Module 02 — Core Foundation Data
-
-Shared configuration, tags, media metadata, prompts, and role restrictions. Status: Accepted.
-
-## Module 03 — Product Library
-
-Product CRUD, unique SKU, categorized tags, search, filters, and media. Status: Accepted.
-
-## Module 04 — Product Knowledge Engine V2
-
-Store/style suitability, features, customers, product/case relations, AI-ready fields, Knowledge Score, and combined search. Status: Accepted.
-
-## Module 05 — Product Intelligence Upgrade
-
-Commercial and sales intelligence, structured image roles/status, deterministic AI-info/SEO/GEO/FAQ/guide generation, advanced filters, Product Readiness Score, and dashboard/debug metrics. Status: Development complete; awaiting product-manager acceptance.
-
-See [Product Intelligence Module](PRODUCT_INTELLIGENCE_MODULE.md). No subsequent module is authorized.
+References: [Product Intelligence](PRODUCT_INTELLIGENCE_MODULE.md) · [AI Product Content Factory](AI_PRODUCT_CONTENT_FACTORY.md)

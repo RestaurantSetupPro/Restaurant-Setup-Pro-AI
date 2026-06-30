@@ -2,24 +2,29 @@
 
 ## Open / Limitations
 
-### Product image upload
+### Rule simulation only
 
-Module 05 manages image type, URL, main selection, and approval status. Binary upload/object storage is not implemented. AI images are placeholders; no external AI API is called.
+Content analysis and generation are deterministic rules. Provider names are reserved adapters; no external AI API is called.
 
-### Catalog-scale search
+### Image tasks do not render images
 
-Combined search is capped at 500 results. Full-text/semantic indexing and pagination remain future scale work.
+Standard and Premium modes create priced task records only. Workers, queues, billing, object storage and generated media are future work.
 
-### PostgreSQL concurrency
+### Source image metadata
 
-The existing synchronous worker bridge is retained to avoid restructuring accepted modules and should be reviewed before high-concurrency use.
+The Factory requires a linked, non-rejected source media record. Binary upload/cloud storage remains outside the current implementation.
+
+### Catalog scale
+
+Product search remains capped at 500 results. The existing synchronous PostgreSQL worker bridge should be reviewed before high concurrency.
 
 ## Resolved
 
-- Cloud listener uses platform `PORT` and `0.0.0.0`.
-- Database startup exposes safe connection/migration diagnostics.
-- Readiness recalculates after product, knowledge, and image changes.
+- Generated content cannot overwrite products before approval and Apply.
+- Sales cannot view pending/rejected drafts or generate/review content.
+- Product readiness recalculates after approved draft content is applied.
+- Migration and Factory counters are visible in System Debug Center.
 
 ## Template
 
-Record date, environment, severity, reproduction, expected/actual result, non-secret logs, owner, and status.
+Record date, environment, severity, reproduction, expected/actual result, non-secret logs, owner and status.
