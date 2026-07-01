@@ -30,3 +30,11 @@ Node.js 24+ is required. SQLite is the local fallback; PostgreSQL is used when `
 - `src/services/generated-image-storage.mjs`: generated-file persistence
 - `database/migrations/004_real_ai_image_generation.sql`: execution metadata
 - `docs/AI_IMAGE_GENERATION_PROVIDER.md`: operational contract
+# Module 06A development rules
+
+- Migration 005 is additive and PostgreSQL compatible.
+- Opportunity engines must be provider adapters or deterministic services; route handlers must not embed vendor calls.
+- Product matching must query Product Intelligence Center and persist only product/category references plus rationale.
+- Every AI run records input/output snapshots, provider, version, status, and error.
+- All generated outreach remains editable and manually sent.
+- New customer APIs require explicit role checks and activity logging.

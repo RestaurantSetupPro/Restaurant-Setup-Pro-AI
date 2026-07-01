@@ -33,3 +33,6 @@ This directory covers accepted Module 01–04 documentation and Module 05 accept
 - Environment template: `.env.example`
 
 Module 05.2 development is complete and awaiting formal product-manager acceptance.
+# Opportunity Intelligence
+
+Module 06A documentation: [OPPORTUNITY_INTELLIGENCE_ENGINE.md](./OPPORTUNITY_INTELLIGENCE_ENGINE.md). The module imports sourced customer data, runs rule-based opportunity analysis, references Product Intelligence for recommendations, prepares human-reviewed outreach, and routes qualified opportunities to sales.

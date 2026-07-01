@@ -7,6 +7,10 @@ import { DatabaseSync } from 'node:sqlite';
 import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
+import {
+  buildOutreachDraft, contactRoles, customerSources, dataQualityScore, detectGaps, nextActionFor,
+  normalizeCustomer, opportunityEngineVersion, parseImportPayload, scoreOpportunity
+} from './services/opportunity-engine.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -98,14 +102,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('004_real_ai_image_generation');
-      databaseDiagnostics.migration = migration?.version === '004_real_ai_image_generation';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('005_opportunity_intelligence_engine');
+      databaseDiagnostics.migration = migration?.version === '005_opportunity_intelligence_engine';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 004_real_ai_image_generation was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 005_opportunity_intelligence_engine was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -113,7 +117,7 @@ function initializeDatabase() {
       ensureMediaColumns();
       ensureImageTaskColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '004_real_ai_image_generation';
+      databaseDiagnostics.migrationVersion = '005_opportunity_intelligence_engine';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
@@ -220,11 +224,11 @@ function ensureImageTaskColumns() {
 }
 
 const rolePermissions = Object.freeze({
-  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
-  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
-  Sales: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation'],
+  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
+  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
+  Sales: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation'],
   Designer: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'content-ai', 'core-foundation'],
-  VA: ['dashboard', 'products', 'knowledge-dashboard', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
+  VA: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
 });
 
 const foundationTypes = Object.freeze({
@@ -1132,6 +1136,221 @@ function requireImageTaskConfirmation(body) {
   }
 }
 
+const opportunityStatuses = Object.freeze(['Imported', 'Cleaned', 'Enriched', 'Scored', 'Recommended', 'Ready for Sales', 'Contacted', 'In Progress', 'Replied', 'Qualified', 'Proposal Needed', 'Won', 'Lost', 'Nurture']);
+const outreachChannels = Object.freeze(['Email', 'WhatsApp', 'LinkedIn', 'Facebook']);
+const outreachTypes = Object.freeze(['First Touch', 'Follow Up 1', 'Follow Up 2', 'Reply Response']);
+
+function opportunityCapabilities(user) {
+  const role = user?.role;
+  return {
+    canView: ['Admin', 'Owner', 'Sales', 'VA'].includes(role),
+    canImport: ['Admin', 'Owner', 'VA'].includes(role),
+    canEditBasic: ['Admin', 'Owner', 'VA'].includes(role),
+    canRunAi: ['Admin', 'Owner'].includes(role),
+    canEditDraft: ['Admin', 'Owner', 'Sales'].includes(role),
+    canApproveDraft: ['Admin', 'Owner'].includes(role),
+    canAcceptLead: ['Admin', 'Owner', 'Sales'].includes(role),
+    canDelete: false
+  };
+}
+
+function parseJsonValue(value, fallback = {}) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function customerActivity(customerId, type, description, userId, metadata = {}) {
+  db.prepare('INSERT INTO customer_activity_log (customer_id, activity_type, description, metadata, created_by) VALUES (?, ?, ?, ?, ?)')
+    .run(customerId, type, description, JSON.stringify(metadata), userId);
+}
+
+function opportunityDebugData() {
+  const count = table => Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
+  const openGaps = Number(db.prepare("SELECT COUNT(*) AS count FROM customer_data_gaps WHERE status = 'Open'").get().count);
+  const queue = Number(db.prepare("SELECT COUNT(*) AS count FROM customers WHERE opportunity_grade IN ('A+', 'A') AND opportunity_status NOT IN ('Won', 'Lost')").get().count);
+  const lastRun = db.prepare("SELECT MAX(completed_at) AS value FROM customer_ai_analysis_runs WHERE status = 'completed'").get().value;
+  const lastError = db.prepare("SELECT error_message FROM customer_ai_analysis_runs WHERE status = 'failed' ORDER BY created_at DESC LIMIT 1").get()?.error_message || null;
+  return {
+    customers_count: count('customers'), contacts_count: count('customer_contacts'), gaps_open: openGaps,
+    outreach_drafts_count: count('customer_outreach_drafts'), opportunity_queue_count: queue, last_ai_run_at: lastRun,
+    scoring_engine_status: 'rules-ready', product_matching_status: 'product-intelligence-connected',
+    duplicate_check_status: 'active', provider: process.env.OPPORTUNITY_AI_PROVIDER || 'rules', engine_version: opportunityEngineVersion,
+    last_error: lastError
+  };
+}
+
+function opportunityMetrics() {
+  const row = db.prepare(`SELECT COUNT(*) AS total,
+    SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN 1 ELSE 0 END) AS imported_today,
+    SUM(CASE WHEN last_ai_run_at IS NOT NULL THEN 1 ELSE 0 END) AS ai_processed,
+    SUM(CASE WHEN opportunity_grade = 'A+' THEN 1 ELSE 0 END) AS grade_aplus,
+    SUM(CASE WHEN opportunity_grade = 'A' THEN 1 ELSE 0 END) AS grade_a,
+    SUM(CASE WHEN opportunity_status = 'Ready for Sales' THEN 1 ELSE 0 END) AS ready_for_sales,
+    SUM(CASE WHEN opportunity_status IN ('Contacted', 'In Progress') THEN 1 ELSE 0 END) AS accepted
+    FROM customers`).get();
+  const gapCount = type => Number(db.prepare("SELECT COUNT(*) AS count FROM customer_data_gaps WHERE gap_type = ? AND status = 'Open'").get(type).count);
+  return {
+    totalCustomers: Number(row.total || 0), importedToday: Number(row.imported_today || 0), aiProcessed: Number(row.ai_processed || 0),
+    gradeAPlus: Number(row.grade_aplus || 0), gradeA: Number(row.grade_a || 0), readyForSales: Number(row.ready_for_sales || 0),
+    missingDecisionMaker: gapCount('Missing Decision Maker'), missingEmail: gapCount('Missing Email'),
+    missingWhatsApp: gapCount('Missing WhatsApp'), salesAcceptedLeads: Number(row.accepted || 0)
+  };
+}
+
+function productRecommendationsFor(customer) {
+  const mappings = {
+    'Coffee Shop': ['Dining Chair', 'Restaurant Table', 'Booth Seating', 'Counter / Service Bar'],
+    Restaurant: ['Booth Seating', 'Dining Chair', 'Restaurant Table', 'Partition / Divider'],
+    'Bubble Tea': ['Dining Chair', 'Restaurant Table', 'Counter / Service Bar'],
+    Bar: ['Bar Stool', 'Counter / Service Bar', 'Restaurant Table'],
+    Bakery: ['Dining Chair', 'Restaurant Table', 'Booth Seating'],
+    Hotel: ['Outdoor Furniture', 'Dining Chair', 'Restaurant Table'],
+    'Food Court': ['Restaurant Table', 'Dining Chair', 'Partition / Divider']
+  };
+  const categories = mappings[customer.business_type] || ['Dining Chair', 'Restaurant Table', 'Booth Seating'];
+  const placeholders = categories.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT products.id AS product_id, products.name, products.budget_level,
+    product_categories.id AS category_id, product_categories.name AS category,
+    CASE WHEN EXISTS (SELECT 1 FROM product_knowledge_links pkl JOIN product_knowledge_terms pkt ON pkt.id = pkl.term_id
+      WHERE pkl.product_id = products.id AND pkt.term_type = 'store_type' AND pkt.name = ?) THEN 20 ELSE 0 END +
+    COALESCE(products.ai_recommendation_weight, 50) AS match_score
+    FROM products JOIN product_categories ON product_categories.id = products.category_id
+    WHERE product_categories.name IN (${placeholders}) AND products.status != 'archived'
+    ORDER BY match_score DESC, CASE products.proposal_ready_status WHEN 'Proposal Ready' THEN 1 ELSE 2 END, products.id LIMIT 7`).all(customer.business_type || '', ...categories);
+  const seen = new Set();
+  const matched = rows.filter(row => !seen.has(row.category) && seen.add(row.category)).map(row => ({
+    ...row,
+    recommendation_reason: `${row.category} matches the ${customer.business_type || 'hospitality'} profile${customer.style_signal ? ` and ${customer.style_signal} style signal` : ''}.`,
+    sales_angle: `${row.name}: factory-direct commercial furniture${customer.budget_estimate ? ` aligned to ${customer.budget_estimate}` : ''}.`
+  }));
+  const categoryRows = db.prepare(`SELECT id, name FROM product_categories WHERE name IN (${placeholders}) ORDER BY name`).all(...categories);
+  for (const category of categoryRows) if (!seen.has(category.name)) matched.push({
+    product_id: null, product_name: null, name: category.name, category_id: category.id, category: category.name, match_score: 50,
+    recommendation_reason: `${category.name} is a recommended product direction for the ${customer.business_type || 'hospitality'} profile.`,
+    sales_angle: `${category.name}: propose a factory-direct custom project package${customer.budget_estimate ? ` for the ${customer.budget_estimate} budget signal` : ''}.`
+  });
+  return matched;
+}
+
+function mappedCustomer(row) {
+  if (!row) return null;
+  return { ...row, source_confidence: Number(row.source_confidence || 0), confidence_score: Number(row.confidence_score || 0) };
+}
+
+function customerRecommendationNames(customerId) {
+  return db.prepare(`SELECT DISTINCT product_categories.name FROM customer_product_recommendations
+    JOIN product_categories ON product_categories.id = customer_product_recommendations.category_id
+    WHERE customer_product_recommendations.customer_id = ? ORDER BY product_categories.name`).all(customerId).map(row => row.name);
+}
+
+function customerDetailData(id) {
+  const customer = mappedCustomer(db.prepare('SELECT customers.*, users.name AS assigned_sales_name FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id WHERE customers.id = ?').get(id));
+  if (!customer) return null;
+  customer.contacts = db.prepare('SELECT * FROM customer_contacts WHERE customer_id = ? ORDER BY is_primary_decision_maker DESC, created_at').all(id);
+  customer.gaps = db.prepare('SELECT * FROM customer_data_gaps WHERE customer_id = ? ORDER BY CASE priority WHEN \'High\' THEN 1 WHEN \'Medium\' THEN 2 ELSE 3 END, created_at').all(id);
+  customer.recommended_products = db.prepare(`SELECT cpr.*, products.name AS product_name, products.sku, product_categories.name AS category
+    FROM customer_product_recommendations cpr LEFT JOIN products ON products.id = cpr.product_id
+    LEFT JOIN product_categories ON product_categories.id = cpr.category_id WHERE cpr.customer_id = ? ORDER BY cpr.score DESC`).all(id);
+  customer.recommended_product_categories = [...new Set(customer.recommended_products.map(item => item.category).filter(Boolean))];
+  customer.recommended_sales_angle = customer.recommended_products.map(item => item.sales_angle).filter(Boolean).join(' ');
+  customer.outreach_drafts = db.prepare('SELECT * FROM customer_outreach_drafts WHERE customer_id = ? ORDER BY updated_at DESC').all(id).map(row => ({ ...row, recommended_products_snapshot: parseJsonValue(row.recommended_products_snapshot, []) }));
+  customer.ai_runs = db.prepare('SELECT * FROM customer_ai_analysis_runs WHERE customer_id = ? ORDER BY created_at DESC LIMIT 20').all(id).map(row => ({ ...row, input_snapshot: parseJsonValue(row.input_snapshot), output_snapshot: parseJsonValue(row.output_snapshot) }));
+  customer.activity = db.prepare('SELECT customer_activity_log.*, users.name AS created_by_name FROM customer_activity_log LEFT JOIN users ON users.id = customer_activity_log.created_by WHERE customer_id = ? ORDER BY customer_activity_log.created_at DESC LIMIT 50').all(id).map(row => ({ ...row, metadata: parseJsonValue(row.metadata) }));
+  return customer;
+}
+
+function createCustomerRecord(input, source, user) {
+  const normalized = normalizeCustomer({ ...input, source: input.source || source });
+  const companyName = requiredText(normalized.company_name, 'Company name');
+  const validSource = allowedType(normalized.source || source || 'Manual', customerSources, 'Source');
+  const duplicate = db.prepare(`SELECT id FROM customers WHERE LOWER(company_name) = LOWER(?) AND
+    LOWER(COALESCE(country, '')) = LOWER(COALESCE(?, '')) AND LOWER(COALESCE(city, '')) = LOWER(COALESCE(?, '')) LIMIT 1`).get(companyName, normalized.country, normalized.city);
+  if (duplicate) return { id: duplicate.id, duplicate: true };
+  const id = Number(db.prepare(`INSERT INTO customers
+    (company_name, brand_name, business_type, country, city, address, website, google_maps_url, facebook_url, instagram_url,
+     linkedin_url, tiktok_url, phone, email, whatsapp, store_count, opening_year, years_in_business, source, source_url,
+     source_confidence, expansion_probability, renovation_probability, furniture_need_probability, budget_estimate, style_signal,
+     confidence_score, created_by) VALUES (${Array(28).fill('?').join(', ')}) RETURNING id`).get(
+    companyName, normalized.brand_name, normalized.business_type, normalized.country, normalized.city, normalized.address || null,
+    normalized.website, normalized.google_maps_url, normalized.facebook_url, normalized.instagram_url, normalized.linkedin_url,
+    normalized.tiktok_url, normalized.phone, normalized.email, normalized.whatsapp, normalized.store_count, normalized.opening_year,
+    normalized.years_in_business, validSource, normalized.source_url || null, Math.min(100, Math.max(0, Number(normalized.source_confidence) || 50)),
+    normalized.expansion_probability, normalized.renovation_probability, normalized.furniture_need_probability,
+    normalized.budget_estimate || null, normalized.style_signal || null, Math.min(100, Math.max(0, Number(normalized.confidence_score) || 50)), user.id
+  ).id);
+  customerActivity(id, 'imported', `Customer imported from ${validSource}.`, user.id, { sourceUrl: normalized.source_url || null });
+  audit(user.id, 'create', 'customers', String(id), { source: validSource });
+  return { id, duplicate: false };
+}
+
+function runOpportunityEngine(customerId, user) {
+  const existing = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+  if (!existing) { const error = new Error('Customer not found.'); error.status = 404; throw error; }
+  const runId = Number(db.prepare(`INSERT INTO customer_ai_analysis_runs
+    (customer_id, run_type, input_snapshot, engine_version, provider, status, created_by)
+    VALUES (?, 'Full Run', ?, ?, ?, 'running', ?) RETURNING id`).get(customerId, JSON.stringify(existing), opportunityEngineVersion, process.env.OPPORTUNITY_AI_PROVIDER || 'rules', user.id).id);
+  try {
+    const normalized = normalizeCustomer(existing);
+    const hasDecisionMaker = Boolean(db.prepare('SELECT id FROM customer_contacts WHERE customer_id = ? AND is_primary_decision_maker = TRUE LIMIT 1').get(customerId));
+    normalized.data_quality_score = dataQualityScore(normalized, hasDecisionMaker);
+    const recommendations = productRecommendationsFor(normalized);
+    const scoring = scoreOpportunity(normalized, { hasDecisionMaker, productMatchCount: recommendations.length });
+    const next = nextActionFor(scoring.grade);
+    const contactable = Boolean(normalized.email || normalized.whatsapp || normalized.website || hasDecisionMaker);
+    const status = ['A+', 'A'].includes(scoring.grade) && contactable ? 'Ready for Sales' : 'Recommended';
+    const summary = `${normalized.company_name} is a ${scoring.grade}-grade ${normalized.business_type || 'hospitality'} opportunity with a ${scoring.score}/100 score and ${normalized.data_quality_score}% data quality.`;
+    const recommendation = `${next.next_action} Recommended directions: ${recommendations.map(item => item.category).join(', ') || 'complete restaurant furniture package'}.`;
+    const gaps = detectGaps(normalized, hasDecisionMaker);
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare(`UPDATE customers SET company_name = ?, brand_name = ?, business_type = ?, country = ?, city = ?, website = ?,
+      google_maps_url = ?, facebook_url = ?, instagram_url = ?, linkedin_url = ?, tiktok_url = ?, phone = ?, email = ?, whatsapp = ?,
+      store_count = ?, opening_year = ?, years_in_business = ?, data_quality_score = ?, opportunity_score = ?, opportunity_grade = ?,
+      opportunity_status = ?, ai_summary = ?, ai_recommendation = ?, next_action = ?, next_action_date = ?, confidence_score = ?,
+      last_ai_run_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      normalized.company_name, normalized.brand_name, normalized.business_type, normalized.country, normalized.city, normalized.website,
+      normalized.google_maps_url, normalized.facebook_url, normalized.instagram_url, normalized.linkedin_url, normalized.tiktok_url,
+      normalized.phone, normalized.email, normalized.whatsapp, normalized.store_count, normalized.opening_year, normalized.years_in_business,
+      normalized.data_quality_score, scoring.score, scoring.grade, status, summary, recommendation, next.next_action, next.next_action_date,
+      Math.round((normalized.data_quality_score + Number(existing.source_confidence || 50)) / 2), customerId
+    );
+    db.prepare('DELETE FROM customer_product_recommendations WHERE customer_id = ?').run(customerId);
+    const addRecommendation = db.prepare(`INSERT INTO customer_product_recommendations
+      (customer_id, product_id, category_id, recommendation_reason, sales_angle, score) VALUES (?, ?, ?, ?, ?, ?)`);
+    for (const item of recommendations) addRecommendation.run(customerId, item.product_id, item.category_id, item.recommendation_reason, item.sales_angle, item.match_score);
+    db.prepare("UPDATE customer_data_gaps SET status = 'Filled', updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?").run(customerId);
+    const addGap = db.prepare(`INSERT OR IGNORE INTO customer_data_gaps (customer_id, gap_type, priority, status) VALUES (?, ?, ?, 'Open')`);
+    for (const gap of gaps) {
+      addGap.run(customerId, gap.gap_type, gap.priority);
+      db.prepare("UPDATE customer_data_gaps SET priority = ?, status = 'Open', updated_at = CURRENT_TIMESTAMP WHERE customer_id = ? AND gap_type = ?").run(gap.priority, customerId, gap.gap_type);
+    }
+    const draft = buildOutreachDraft({ ...normalized, opportunity_grade: scoring.grade }, recommendations);
+    const existingDraft = db.prepare("SELECT id FROM customer_outreach_drafts WHERE customer_id = ? AND draft_type = 'First Touch' AND status IN ('Draft', 'Ready') ORDER BY id DESC LIMIT 1").get(customerId);
+    if (existingDraft) db.prepare(`UPDATE customer_outreach_drafts SET channel = ?, subject = ?, body = ?, personalization_summary = ?,
+      recommended_products_snapshot = ?, status = 'Ready', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      draft.channel, draft.subject, draft.body, draft.personalization_summary, JSON.stringify(draft.recommended_products_snapshot), existingDraft.id);
+    else db.prepare(`INSERT INTO customer_outreach_drafts
+      (customer_id, channel, draft_type, subject, body, language, personalization_summary, recommended_products_snapshot, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Ready', ?)`).run(customerId, draft.channel, draft.draft_type, draft.subject, draft.body,
+      draft.language, draft.personalization_summary, JSON.stringify(draft.recommended_products_snapshot), user.id);
+    const output = { scoring, gaps, recommendations, status, nextAction: next };
+    db.prepare("UPDATE customer_ai_analysis_runs SET output_snapshot = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(output), runId);
+    customerActivity(customerId, 'cleaned', 'Customer data normalized and missing fields detected.', user.id, { gaps: gaps.length });
+    customerActivity(customerId, 'scored', `Opportunity scored ${scoring.score}/100 (${scoring.grade}).`, user.id, scoring.dimensions);
+    customerActivity(customerId, 'product matched', `${recommendations.length} Product Intelligence recommendations created.`, user.id);
+    customerActivity(customerId, 'draft generated', 'Personalized first-touch outreach draft generated for human review.', user.id);
+    if (status === 'Ready for Sales') customerActivity(customerId, 'handoff created', 'Opportunity is ready for sales handoff.', user.id);
+    db.exec('COMMIT');
+    audit(user.id, 'run_ai', 'customers', String(customerId), { runId, score: scoring.score, grade: scoring.grade });
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    db.prepare("UPDATE customer_ai_analysis_runs SET status = 'failed', error_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?").run(String(error.message).slice(0, 2000), runId);
+    recordSystemEvent('error', 'Opportunity Intelligence run failed', { customerId, runId, error: error.message });
+    throw error;
+  }
+  return customerDetailData(customerId);
+}
+
 const handlers = {
   async login(req, res) {
     const { email, password } = await readJson(req);
@@ -1186,6 +1405,7 @@ const handlers = {
       metrics: { openPipeline, activeOpportunities, proposals, approvedProducts },
       knowledge: knowledgeDashboardData().metrics,
       productIntelligence: productIntelligenceDashboardData(),
+      opportunityIntelligence: opportunityMetrics(),
       pipeline: pipelineRows,
       generatedAt: new Date().toISOString()
     });
@@ -1716,6 +1936,282 @@ const handlers = {
     return json(res, 200, { product: productKnowledge(id) });
   },
 
+  opportunityDashboard(req, res) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    return json(res, 200, { metrics: opportunityMetrics(), debug: opportunityDebugData(), capabilities });
+  },
+
+  customers(req, res, url) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const where = ['1 = 1'];
+    const params = [];
+    const q = String(url.searchParams.get('q') || '').trim();
+    if (q) { where.push('(customers.company_name LIKE ? COLLATE NOCASE OR customers.brand_name LIKE ? COLLATE NOCASE OR customers.city LIKE ? COLLATE NOCASE OR customers.country LIKE ? COLLATE NOCASE)'); params.push(...Array(4).fill(`%${q}%`)); }
+    for (const [parameter, column] of [['grade', 'opportunity_grade'], ['status', 'opportunity_status'], ['source', 'source']]) {
+      const value = String(url.searchParams.get(parameter) || '').trim();
+      if (value) { where.push(`customers.${column} = ?`); params.push(value); }
+    }
+    const rows = db.prepare(`SELECT customers.*, users.name AS assigned_sales_name,
+      (SELECT COUNT(*) FROM customer_contacts cc WHERE cc.customer_id = customers.id AND cc.is_primary_decision_maker = TRUE) AS decision_maker_count,
+      (SELECT COUNT(*) FROM customer_data_gaps cg WHERE cg.customer_id = customers.id AND cg.status = 'Open') AS open_gap_count
+      FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id WHERE ${where.join(' AND ')}
+      ORDER BY customers.opportunity_score DESC, customers.updated_at DESC LIMIT 1000`).all(...params).map(row => ({ ...mappedCustomer(row), recommended_categories: customerRecommendationNames(row.id).join(', ') }));
+    return json(res, 200, { customers: rows, capabilities, sources: customerSources, contactRoles, statuses: opportunityStatuses, metrics: opportunityMetrics() });
+  },
+
+  async createCustomer(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canImport) return json(res, user ? 403 : 401, { error: 'Customer import is not allowed for this role.' });
+    const body = await readJson(req);
+    const result = createCustomerRecord(body, body.source || 'Manual', user);
+    return json(res, result.duplicate ? 200 : 201, { customer: customerDetailData(result.id), duplicate: result.duplicate });
+  },
+
+  customerDetail(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const customer = customerDetailData(id);
+    return customer ? json(res, 200, { customer, capabilities, sources: customerSources, contactRoles, statuses: opportunityStatuses }) : json(res, 404, { error: 'Customer not found.' });
+  },
+
+  async updateCustomer(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    const existing = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    if (!existing) return json(res, 404, { error: 'Customer not found.' });
+    const body = await readJson(req);
+    if (!capabilities.canEditBasic && user?.role !== 'Sales') return json(res, user ? 403 : 401, { error: 'Customer editing is not allowed for this role.' });
+    if (user.role === 'Sales') {
+      const status = allowedType(body.opportunity_status ?? existing.opportunity_status, opportunityStatuses, 'Opportunity status');
+      db.prepare('UPDATE customers SET opportunity_status = ?, next_action = ?, next_action_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(status, String(body.next_action ?? existing.next_action ?? '').trim() || null, String(body.next_action_date ?? existing.next_action_date ?? '').trim() || null, id);
+      customerActivity(id, 'status changed', `Sales changed status to ${status}.`, user.id);
+    } else {
+      const normalized = normalizeCustomer({ ...existing, ...body });
+      const source = allowedType(body.source ?? existing.source, customerSources, 'Source');
+      db.prepare(`UPDATE customers SET company_name = ?, brand_name = ?, business_type = ?, country = ?, city = ?, address = ?, website = ?,
+        google_maps_url = ?, facebook_url = ?, instagram_url = ?, linkedin_url = ?, tiktok_url = ?, phone = ?, email = ?, whatsapp = ?,
+        store_count = ?, opening_year = ?, years_in_business = ?, source = ?, source_url = ?, source_confidence = ?,
+        expansion_probability = ?, renovation_probability = ?, furniture_need_probability = ?, budget_estimate = ?, style_signal = ?,
+        assigned_sales_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+        requiredText(normalized.company_name, 'Company name'), normalized.brand_name, normalized.business_type, normalized.country, normalized.city,
+        String(normalized.address || '').trim() || null, normalized.website, normalized.google_maps_url, normalized.facebook_url, normalized.instagram_url,
+        normalized.linkedin_url, normalized.tiktok_url, normalized.phone, normalized.email, normalized.whatsapp, normalized.store_count,
+        normalized.opening_year, normalized.years_in_business, source, String(normalized.source_url || '').trim() || null,
+        Math.min(100, Math.max(0, Number(normalized.source_confidence) || 50)), normalized.expansion_probability,
+        normalized.renovation_probability, normalized.furniture_need_probability, String(normalized.budget_estimate || '').trim() || null,
+        String(normalized.style_signal || '').trim() || null, ['Admin', 'Owner'].includes(user.role) ? (Number(normalized.assigned_sales_id) || null) : existing.assigned_sales_id, id
+      );
+      if (['Admin', 'Owner'].includes(user.role)) {
+        const status = allowedType(body.opportunity_status ?? existing.opportunity_status, opportunityStatuses, 'Opportunity status');
+        db.prepare(`UPDATE customers SET opportunity_status = ?, ai_summary = ?, ai_recommendation = ?, next_action = ?,
+          next_action_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(status,
+          String(body.ai_summary ?? existing.ai_summary ?? '').trim() || null,
+          String(body.ai_recommendation ?? existing.ai_recommendation ?? '').trim() || null,
+          String(body.next_action ?? existing.next_action ?? '').trim() || null,
+          String(body.next_action_date ?? existing.next_action_date ?? '').trim() || null, id);
+      }
+      customerActivity(id, 'manual update', 'Customer basic information updated.', user.id);
+    }
+    audit(user.id, 'update', 'customers', String(id), { role: user.role });
+    return json(res, 200, { customer: customerDetailData(id) });
+  },
+
+  async importCustomers(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canImport) return json(res, user ? 403 : 401, { error: 'Customer import is not allowed for this role.' });
+    const body = await readJson(req);
+    const source = allowedType(body.source || (body.csv ? 'CSV' : 'Manual'), customerSources, 'Source');
+    const inputs = parseImportPayload(body);
+    if (!inputs.length) return json(res, 400, { error: 'No customer rows were provided.' });
+    const results = inputs.slice(0, 500).map(input => createCustomerRecord({ ...input, source }, source, user));
+    return json(res, 201, { imported: results.filter(item => !item.duplicate).length, duplicates: results.filter(item => item.duplicate).length, customerIds: results.map(item => item.id) });
+  },
+
+  async runCustomerAi(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunAi) return json(res, user ? 403 : 401, { error: 'Running Opportunity AI is not allowed for this role.' });
+    await readJson(req);
+    return json(res, 200, { customer: runOpportunityEngine(id, user) });
+  },
+
+  async runSelectedCustomerAi(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunAi) return json(res, user ? 403 : 401, { error: 'Running Opportunity AI is not allowed for this role.' });
+    const body = await readJson(req);
+    const ids = normalizedIds(body.customer_ids).slice(0, 50);
+    if (!ids.length) return json(res, 400, { error: 'Select at least one customer.' });
+    const results = ids.map(id => runOpportunityEngine(id, user));
+    return json(res, 200, { customers: results });
+  },
+
+  customerContacts(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    return json(res, 200, { contacts: db.prepare('SELECT * FROM customer_contacts WHERE customer_id = ? ORDER BY is_primary_decision_maker DESC, created_at').all(id) });
+  },
+
+  async createCustomerContact(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canEditBasic) return json(res, user ? 403 : 401, { error: 'Contact editing is not allowed for this role.' });
+    if (!db.prepare('SELECT id FROM customers WHERE id = ?').get(id)) return json(res, 404, { error: 'Customer not found.' });
+    const body = await readJson(req);
+    const role = allowedType(body.role || 'Other', contactRoles, 'Contact role');
+    const contactId = Number(db.prepare(`INSERT INTO customer_contacts
+      (customer_id, full_name, role, email, phone, whatsapp, linkedin_url, facebook_url, instagram_url, source, source_url,
+       confidence_score, is_primary_decision_maker, notes, created_by) VALUES (${Array(15).fill('?').join(', ')}) RETURNING id`).get(
+      id, requiredText(body.full_name, 'Full name'), role, String(body.email || '').trim().toLowerCase() || null,
+      String(body.phone || '').trim() || null, String(body.whatsapp || '').trim() || null, String(body.linkedin_url || '').trim() || null,
+      String(body.facebook_url || '').trim() || null, String(body.instagram_url || '').trim() || null,
+      allowedType(body.source || 'Manual', customerSources, 'Source'), String(body.source_url || '').trim() || null,
+      Math.min(100, Math.max(0, Number(body.confidence_score) || 50)), activeValue(body.is_primary_decision_maker, 0),
+      String(body.notes || '').trim() || null, user.id
+    ).id);
+    customerActivity(id, 'manual update', `Contact ${body.full_name} added.`, user.id, { contactId });
+    return json(res, 201, { contact: db.prepare('SELECT * FROM customer_contacts WHERE id = ?').get(contactId) });
+  },
+
+  async updateCustomerContact(req, res, id, contactId) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canEditBasic) return json(res, user ? 403 : 401, { error: 'Contact editing is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM customer_contacts WHERE id = ? AND customer_id = ?').get(contactId, id);
+    if (!existing) return json(res, 404, { error: 'Contact not found.' });
+    const body = await readJson(req);
+    db.prepare(`UPDATE customer_contacts SET full_name = ?, role = ?, email = ?, phone = ?, whatsapp = ?, linkedin_url = ?,
+      confidence_score = ?, is_primary_decision_maker = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      requiredText(body.full_name ?? existing.full_name, 'Full name'), allowedType(body.role ?? existing.role, contactRoles, 'Contact role'),
+      String(body.email ?? existing.email ?? '').trim().toLowerCase() || null, String(body.phone ?? existing.phone ?? '').trim() || null,
+      String(body.whatsapp ?? existing.whatsapp ?? '').trim() || null, String(body.linkedin_url ?? existing.linkedin_url ?? '').trim() || null,
+      Math.min(100, Math.max(0, Number(body.confidence_score ?? existing.confidence_score) || 50)),
+      activeValue(body.is_primary_decision_maker, existing.is_primary_decision_maker), String(body.notes ?? existing.notes ?? '').trim() || null, contactId
+    );
+    customerActivity(id, 'manual update', `Contact ${contactId} updated.`, user.id);
+    return json(res, 200, { contact: db.prepare('SELECT * FROM customer_contacts WHERE id = ?').get(contactId) });
+  },
+
+  customerGaps(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    return json(res, 200, { gaps: db.prepare('SELECT * FROM customer_data_gaps WHERE customer_id = ? ORDER BY priority, created_at').all(id) });
+  },
+
+  async updateCustomerGap(req, res, id, gapId) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canEditBasic) return json(res, user ? 403 : 401, { error: 'Data gap editing is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM customer_data_gaps WHERE id = ? AND customer_id = ?').get(gapId, id);
+    if (!existing) return json(res, 404, { error: 'Data gap not found.' });
+    const body = await readJson(req);
+    const status = allowedType(body.status ?? existing.status, ['Open', 'Filled', 'Ignored'], 'Gap status');
+    db.prepare('UPDATE customer_data_gaps SET status = ?, notes = ?, assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(status, String(body.notes ?? existing.notes ?? '').trim() || null, Number(body.assigned_to ?? existing.assigned_to) || null, gapId);
+    customerActivity(id, 'manual update', `${existing.gap_type} marked ${status}.`, user.id);
+    return json(res, 200, { gap: db.prepare('SELECT * FROM customer_data_gaps WHERE id = ?').get(gapId) });
+  },
+
+  customerOutreachDrafts(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    return json(res, 200, { drafts: customerDetailData(id)?.outreach_drafts || [] });
+  },
+
+  async createCustomerOutreachDraft(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canEditDraft) return json(res, user ? 403 : 401, { error: 'Outreach draft editing is not allowed for this role.' });
+    const body = await readJson(req);
+    const draftId = Number(db.prepare(`INSERT INTO customer_outreach_drafts
+      (customer_id, contact_id, channel, draft_type, subject, body, language, personalization_summary, recommended_products_snapshot, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', ?) RETURNING id`).get(id, Number(body.contact_id) || null,
+      allowedType(body.channel || 'Email', outreachChannels, 'Channel'), allowedType(body.draft_type || 'First Touch', outreachTypes, 'Draft type'),
+      String(body.subject || '').trim() || null, requiredText(body.body, 'Body'), String(body.language || 'English').trim(),
+      String(body.personalization_summary || '').trim() || null, JSON.stringify(body.recommended_products_snapshot || []), user.id).id);
+    customerActivity(id, 'draft generated', 'Manual outreach draft created.', user.id, { draftId });
+    return json(res, 201, { draft: db.prepare('SELECT * FROM customer_outreach_drafts WHERE id = ?').get(draftId) });
+  },
+
+  async updateCustomerOutreachDraft(req, res, id, draftId) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canEditDraft) return json(res, user ? 403 : 401, { error: 'Outreach draft editing is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM customer_outreach_drafts WHERE id = ? AND customer_id = ?').get(draftId, id);
+    if (!existing) return json(res, 404, { error: 'Outreach draft not found.' });
+    const body = await readJson(req);
+    db.prepare(`UPDATE customer_outreach_drafts SET channel = ?, draft_type = ?, subject = ?, body = ?, language = ?,
+      personalization_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      allowedType(body.channel ?? existing.channel, outreachChannels, 'Channel'), allowedType(body.draft_type ?? existing.draft_type, outreachTypes, 'Draft type'),
+      String(body.subject ?? existing.subject ?? '').trim() || null, requiredText(body.body ?? existing.body, 'Body'),
+      String(body.language ?? existing.language ?? 'English').trim(), String(body.personalization_summary ?? existing.personalization_summary ?? '').trim() || null, draftId
+    );
+    customerActivity(id, 'manual update', `Outreach draft ${draftId} edited.`, user.id);
+    return json(res, 200, { draft: db.prepare('SELECT * FROM customer_outreach_drafts WHERE id = ?').get(draftId) });
+  },
+
+  async updateOutreachStatus(req, res, id, draftId, action) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (action === 'approve' && !capabilities.canApproveDraft) return json(res, user ? 403 : 401, { error: 'Outreach approval is not allowed for this role.' });
+    if (action === 'mark-sent-manually' && !capabilities.canEditDraft) return json(res, user ? 403 : 401, { error: 'Manual send status is not allowed for this role.' });
+    const existing = db.prepare('SELECT * FROM customer_outreach_drafts WHERE id = ? AND customer_id = ?').get(draftId, id);
+    if (!existing) return json(res, 404, { error: 'Outreach draft not found.' });
+    const status = action === 'approve' ? 'Approved' : 'Sent Manually';
+    db.prepare('UPDATE customer_outreach_drafts SET status = ?, approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(status, action === 'approve' ? user.id : existing.approved_by, draftId);
+    customerActivity(id, action === 'approve' ? 'draft approved' : 'status changed', `Outreach draft ${draftId} marked ${status}.`, user.id);
+    return json(res, 200, { draft: db.prepare('SELECT * FROM customer_outreach_drafts WHERE id = ?').get(draftId) });
+  },
+
+  opportunityQueue(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const rows = db.prepare(`SELECT customers.*, users.name AS assigned_sales_name,
+      (SELECT full_name FROM customer_contacts cc WHERE cc.customer_id = customers.id AND cc.is_primary_decision_maker = TRUE ORDER BY cc.id LIMIT 1) AS decision_maker
+      FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id
+      WHERE customers.opportunity_grade IN ('A+', 'A') AND customers.opportunity_status NOT IN ('Won', 'Lost')
+      ORDER BY CASE customers.opportunity_grade WHEN 'A+' THEN 1 ELSE 2 END, customers.opportunity_score DESC,
+      CASE WHEN customers.email IS NOT NULL OR customers.whatsapp IS NOT NULL OR customers.website IS NOT NULL THEN 0 ELSE 1 END,
+      customers.next_action_date ASC`).all().map(row => ({ ...mappedCustomer(row), recommended_products: customerRecommendationNames(row.id).join(', ') }));
+    return json(res, 200, { customers: rows });
+  },
+
+  salesHandoff(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const rows = db.prepare(`SELECT customers.*, users.name AS assigned_sales_name,
+      (SELECT full_name FROM customer_contacts cc WHERE cc.customer_id = customers.id AND cc.is_primary_decision_maker = TRUE ORDER BY cc.id LIMIT 1) AS decision_maker,
+      (SELECT body FROM customer_outreach_drafts cod WHERE cod.customer_id = customers.id ORDER BY cod.updated_at DESC LIMIT 1) AS recommended_first_message
+      FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id
+      WHERE customers.opportunity_status IN ('Ready for Sales', 'Contacted', 'In Progress') ORDER BY customers.opportunity_score DESC`).all().map(row => ({ ...mappedCustomer(row), recommended_products: customerRecommendationNames(row.id).join(', ') }));
+    return json(res, 200, { customers: rows });
+  },
+
+  async createSalesHandoff(req, res, id) {
+    const user = currentUser(req);
+    if (!['Admin', 'Owner'].includes(user?.role)) return json(res, user ? 403 : 401, { error: 'Sales handoff creation is not allowed for this role.' });
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    if (!customer) return json(res, 404, { error: 'Customer not found.' });
+    const contactable = Boolean(customer.email || customer.whatsapp || customer.website || db.prepare('SELECT id FROM customer_contacts WHERE customer_id = ? AND is_primary_decision_maker = TRUE').get(id));
+    if (!['A+', 'A'].includes(customer.opportunity_grade) || !contactable) return json(res, 409, { error: 'Customer does not meet sales handoff rules.' });
+    const body = await readJson(req);
+    db.prepare("UPDATE customers SET opportunity_status = 'Ready for Sales', assigned_sales_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(Number(body.assigned_sales_id) || customer.assigned_sales_id || null, id);
+    customerActivity(id, 'handoff created', 'Customer manually moved to Ready for Sales.', user.id);
+    return json(res, 200, { customer: customerDetailData(id) });
+  },
+
+  async acceptLead(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canAcceptLead) return json(res, user ? 403 : 401, { error: 'Lead acceptance is not allowed for this role.' });
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(id);
+    if (!customer) return json(res, 404, { error: 'Customer not found.' });
+    if (!['Ready for Sales', 'Contacted', 'In Progress'].includes(customer.opportunity_status)) return json(res, 409, { error: 'Customer is not ready for sales acceptance.' });
+    db.prepare("UPDATE customers SET opportunity_status = 'In Progress', assigned_sales_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(user.role === 'Sales' ? user.id : customer.assigned_sales_id, id);
+    customerActivity(id, 'sales accepted', `${user.name} accepted the lead.`, user.id);
+    audit(user.id, 'accept_lead', 'customers', String(id));
+    return json(res, 200, { customer: customerDetailData(id) });
+  },
+
   opportunities(req, res) {
     const user = currentUser(req);
     if (!requires(user, 'crm')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
@@ -1898,6 +2394,7 @@ const server = createServer(async (req, res) => {
         productIntelligence: productIntelligenceDashboardData(),
         aiProductFactory: aiFactoryDebugData(),
         aiImageGeneration: aiImageGenerationDebugData(),
+        opportunityIntelligence: opportunityDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
     }
@@ -1906,6 +2403,38 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/auth/me') return handlers.me(req, res);
     if (req.method === 'GET' && url.pathname === '/api/dashboard') return handlers.dashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/system/ai-image-provider/status') return handlers.aiImageProviderStatus(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/opportunity/dashboard') return handlers.opportunityDashboard(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/opportunity-queue') return handlers.opportunityQueue(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/customers/sales-handoff') return handlers.salesHandoff(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/customers/run-ai-selected') return await handlers.runSelectedCustomerAi(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/customers/import') return await handlers.importCustomers(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/customers') return handlers.customers(req, res, url);
+    if (req.method === 'POST' && url.pathname === '/api/customers') return await handlers.createCustomer(req, res);
+    const outreachActionMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/outreach-drafts\/(\d+)\/(approve|mark-sent-manually)$/);
+    if (outreachActionMatch && req.method === 'POST') return await handlers.updateOutreachStatus(req, res, Number(outreachActionMatch[1]), Number(outreachActionMatch[2]), outreachActionMatch[3]);
+    const outreachDraftMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/outreach-drafts\/(\d+)$/);
+    if (outreachDraftMatch && req.method === 'PUT') return await handlers.updateCustomerOutreachDraft(req, res, Number(outreachDraftMatch[1]), Number(outreachDraftMatch[2]));
+    const outreachDraftsMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/outreach-drafts$/);
+    if (outreachDraftsMatch && req.method === 'GET') return handlers.customerOutreachDrafts(req, res, Number(outreachDraftsMatch[1]));
+    if (outreachDraftsMatch && req.method === 'POST') return await handlers.createCustomerOutreachDraft(req, res, Number(outreachDraftsMatch[1]));
+    const customerContactMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/contacts\/(\d+)$/);
+    if (customerContactMatch && req.method === 'PUT') return await handlers.updateCustomerContact(req, res, Number(customerContactMatch[1]), Number(customerContactMatch[2]));
+    const customerContactsMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/contacts$/);
+    if (customerContactsMatch && req.method === 'GET') return handlers.customerContacts(req, res, Number(customerContactsMatch[1]));
+    if (customerContactsMatch && req.method === 'POST') return await handlers.createCustomerContact(req, res, Number(customerContactsMatch[1]));
+    const customerGapMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/gaps\/(\d+)$/);
+    if (customerGapMatch && req.method === 'PUT') return await handlers.updateCustomerGap(req, res, Number(customerGapMatch[1]), Number(customerGapMatch[2]));
+    const customerGapsMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/gaps$/);
+    if (customerGapsMatch && req.method === 'GET') return handlers.customerGaps(req, res, Number(customerGapsMatch[1]));
+    const customerRunAiMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/run-ai$/);
+    if (customerRunAiMatch && req.method === 'POST') return await handlers.runCustomerAi(req, res, Number(customerRunAiMatch[1]));
+    const customerHandoffMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/sales-handoff$/);
+    if (customerHandoffMatch && req.method === 'POST') return await handlers.createSalesHandoff(req, res, Number(customerHandoffMatch[1]));
+    const customerAcceptMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/accept-lead$/);
+    if (customerAcceptMatch && req.method === 'POST') return await handlers.acceptLead(req, res, Number(customerAcceptMatch[1]));
+    const customerMatch = url.pathname.match(/^\/api\/customers\/(\d+)$/);
+    if (customerMatch && req.method === 'GET') return handlers.customerDetail(req, res, Number(customerMatch[1]));
+    if (customerMatch && req.method === 'PUT') return await handlers.updateCustomer(req, res, Number(customerMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/products') return handlers.products(req, res);
     if (req.method === 'POST' && url.pathname === '/api/products') return await handlers.mutateProduct(req, res);
     if (req.method === 'GET' && url.pathname === '/api/knowledge/dashboard') return handlers.knowledgeDashboard(req, res);

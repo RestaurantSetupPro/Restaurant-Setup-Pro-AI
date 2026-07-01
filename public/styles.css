@@ -539,6 +539,27 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
   .settings-nav { display: flex; overflow-x: auto; }
   .settings-nav button { width: auto; min-width: max-content; }
 }
+.opportunity-tabs { overflow-x: auto; margin-bottom: 18px; }
+.opportunity-tabs button { white-space: nowrap; }
+.opportunity-metrics { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
+.opportunity-import-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.opportunity-form { align-self: start; }
+.opportunity-form > p { margin: -4px 0 18px; color: var(--muted); }
+.opportunity-form .foundation-form { grid-template-columns: 1fr; }
+.opportunity-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.opportunity-card { min-height: 150px; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-soft); color: inherit; text-align: left; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; cursor: pointer; }
+.opportunity-card strong { font-size: 16px; }
+.opportunity-card small { color: var(--muted); line-height: 1.55; }
+.outreach-editor { padding: 18px 0; border-top: 1px solid var(--line); }
+.outreach-editor:first-of-type { border-top: 0; }
+.outreach-editor input, .outreach-editor textarea { width: 100%; margin: 8px 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); color: var(--text); font: inherit; }
+.outreach-editor .row-actions { justify-content: flex-start; margin-top: 8px; }
+
+@media (max-width: 1100px) {
+  .opportunity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opportunity-import-grid, .opportunity-card-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 680px) {
   .page { padding: 22px 15px 45px; }
   .page-header { align-items: flex-start; flex-direction: column; }
@@ -563,4 +584,5 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
   .login-heading h2 { font-size: 29px; }
   .knowledge-metrics, .knowledge-detail-grid, .knowledge-lists, .knowledge-hero { grid-template-columns: 1fr; }
   .knowledge-hero-summary { padding: 14px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+  .opportunity-metrics { grid-template-columns: 1fr; }
 }

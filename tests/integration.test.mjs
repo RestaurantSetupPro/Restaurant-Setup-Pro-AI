@@ -37,7 +37,7 @@ test.before(async () => {
   server = spawn(process.execPath, ['src/server.mjs'], {
     cwd: root,
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATABASE_PATH: databasePath },
-    stdio: 'ignore'
+    stdio: process.env.TEST_SERVER_LOGS ? 'inherit' : 'ignore'
   });
   await waitForServer();
 });
@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '004_real_ai_image_generation');
+  assert.equal(database.migrationVersion, '005_opportunity_intelligence_engine');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -68,7 +68,7 @@ test('admin login creates a session with full access', async () => {
   const admin = await login('admin@rspro.ai');
   assert.equal(admin.response.status, 200);
   assert.equal(admin.body.user.role, 'Admin');
-  assert.equal(admin.body.user.permissions.length, 13);
+  assert.equal(admin.body.user.permissions.length, 14);
 
   const dashboard = await fetch(`http://127.0.0.1:${port}/api/dashboard`, { headers: { Cookie: admin.cookie } });
   const dashboardBody = await dashboard.json();
@@ -86,6 +86,7 @@ test('admin login creates a session with full access', async () => {
   assert.equal(debugBody.database.migration, true);
   assert.ok(debugBody.events.some(event => event.message.includes('Database ready')));
   assert.equal(typeof debugBody.productIntelligence.missingAiTags, 'number');
+  assert.equal(debugBody.opportunityIntelligence.scoring_engine_status, 'rules-ready');
 
   const products = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
   assert.ok(products.products.every(product => product.size && product.price_range && product.moq && product.tags));
@@ -490,6 +491,105 @@ test('Module 05.2 runs mock image providers with limits, review, retry, apply, a
   assert.equal(debug.aiImageGeneration.currentProvider, 'mock');
   assert.ok(debug.aiImageGeneration.appliedTasks >= 2);
   assert.ok(debug.aiImageGeneration.failedTasks >= 0);
+});
+
+test('Module 06A imports, scores, matches, drafts, hands off, and enforces role permissions', async () => {
+  const admin = await login('admin@rspro.ai');
+  const create = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: '  pacific bean group  ', business_type: 'coffee shop', country: 'united states', city: 'los angeles',
+      website: 'pacificbean.example', email: 'HELLO@PACIFICBEAN.EXAMPLE', whatsapp: '+1 (310) 555-0102', phone: '310-555-0101',
+      store_count: 4, opening_year: 2018, source: 'Google Maps', source_url: 'https://maps.example/pacific-bean',
+      source_confidence: 92, expansion_probability: 95, renovation_probability: 85, furniture_need_probability: 100,
+      budget_estimate: 'Premium', style_signal: 'California'
+    })
+  });
+  const created = await create.json();
+  assert.equal(create.status, 201);
+  assert.equal(created.customer.company_name, 'Pacific Bean Group');
+  assert.equal(created.customer.website, 'https://pacificbean.example');
+  const customerId = created.customer.id;
+
+  const contact = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/contacts`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ full_name: 'Maya Chen', role: 'Founder', email: 'maya@pacificbean.example', source: 'LinkedIn', confidence_score: 95, is_primary_decision_maker: true })
+  });
+  assert.equal(contact.status, 201);
+
+  const run = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/run-ai`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: '{}'
+  });
+  const processed = await run.json();
+  assert.equal(run.status, 200);
+  assert.ok(processed.customer.opportunity_score >= 90);
+  assert.equal(processed.customer.opportunity_grade, 'A+');
+  assert.equal(processed.customer.opportunity_status, 'Ready for Sales');
+  assert.ok(processed.customer.recommended_products.length > 0);
+  assert.ok(processed.customer.recommended_products.every(item => item.product_id || item.category_id));
+  assert.ok(processed.customer.outreach_drafts.some(draft => draft.status === 'Ready'));
+  assert.ok(processed.customer.activity.some(item => item.activity_type === 'product matched'));
+  assert.ok(processed.customer.gaps.some(gap => gap.gap_type === 'Missing LinkedIn'));
+
+  const queue = await fetch(`http://127.0.0.1:${port}/api/opportunity-queue`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(queue.customers.some(customer => customer.id === customerId));
+  const handoff = await fetch(`http://127.0.0.1:${port}/api/customers/sales-handoff`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(handoff.customers.some(customer => customer.id === customerId));
+
+  const draft = processed.customer.outreach_drafts[0];
+  const editDraft = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/outreach-drafts/${draft.id}`, {
+    method: 'PUT', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ subject: 'Pacific Bean expansion furniture', body: `${draft.body}\n\nPrepared for review.` })
+  });
+  assert.equal(editDraft.status, 200);
+  const approve = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/outreach-drafts/${draft.id}/approve`, { method: 'POST', headers: { Cookie: admin.cookie } });
+  assert.equal(approve.status, 200);
+
+  const csv = await fetch(`http://127.0.0.1:${port}/api/customers/import`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: 'CSV', csv: 'company_name,business_type,city,country,email\nHarbor Sushi,Restaurant,Seattle,United States,hello@harborsushi.example' })
+  }).then(response => response.json());
+  assert.equal(csv.imported, 1);
+  const text = await fetch(`http://127.0.0.1:${port}/api/customers/import`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: 'Manual', text: 'Moon Bakery | Bakery | Austin | United States | hi@moonbakery.example | moonbakery.example' })
+  }).then(response => response.json());
+  assert.equal(text.imported, 1);
+
+  const va = await login('va@rspro.ai');
+  const vaImport = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST', headers: { Cookie: va.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ company_name: 'VA Research Lead', source: 'Manual' })
+  });
+  assert.equal(vaImport.status, 201);
+  const vaRun = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/run-ai`, { method: 'POST', headers: { Cookie: va.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(vaRun.status, 403);
+  const vaScoreAttempt = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}`, {
+    method: 'PUT', headers: { Cookie: va.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ opportunity_score: 1, city: 'Los Angeles' })
+  }).then(response => response.json());
+  assert.equal(vaScoreAttempt.customer.opportunity_score, processed.customer.opportunity_score);
+  const openGap = processed.customer.gaps.find(gap => gap.status === 'Open');
+  const gapUpdate = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/gaps/${openGap.id}`, {
+    method: 'PUT', headers: { Cookie: va.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'Filled', notes: 'Research completed.' })
+  });
+  assert.equal(gapUpdate.status, 200);
+
+  const sales = await login('sales@rspro.ai');
+  const accept = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/accept-lead`, { method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  const accepted = await accept.json();
+  assert.equal(accept.status, 200);
+  assert.equal(accepted.customer.opportunity_status, 'In Progress');
+  assert.equal(accepted.customer.assigned_sales_id, sales.body.user.id);
+  const sent = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/outreach-drafts/${draft.id}/mark-sent-manually`, { method: 'POST', headers: { Cookie: sales.cookie } });
+  assert.equal(sent.status, 200);
+  const salesDelete = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}`, { method: 'DELETE', headers: { Cookie: sales.cookie } });
+  assert.equal(salesDelete.status, 404);
+
+  const designer = await login('designer@rspro.ai');
+  const designerAccess = await fetch(`http://127.0.0.1:${port}/api/customers`, { headers: { Cookie: designer.cookie } });
+  assert.equal(designerAccess.status, 403);
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(debug.opportunityIntelligence.customers_count >= 3);
+  assert.ok(debug.opportunityIntelligence.contacts_count >= 1);
+  assert.equal(debug.opportunityIntelligence.product_matching_status, 'product-intelligence-connected');
 });
 
 test('sales access is scoped and cannot reach settings', async () => {

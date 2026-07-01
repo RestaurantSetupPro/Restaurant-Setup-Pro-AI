@@ -24,3 +24,6 @@ Migration 004, provider status, mock generation, batch cap, lifecycle history, f
 ## Deferred
 
 Supabase Storage/R2, durable cloud object storage, async workers, webhooks, provider billing reconciliation, source-image editing fidelity and any next module require separate approval.
+# Current milestone: Module 06A
+
+Opportunity Intelligence Engine is implemented as the first governed customer-intelligence workflow. External enrichment and sending integrations remain future work and must preserve source attribution and human approval.

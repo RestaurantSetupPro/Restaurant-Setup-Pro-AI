@@ -20,3 +20,10 @@
 ## Template
 
 Record date, environment, severity, reproduction, expected/actual result, non-secret logs, owner and status.
+# Module 06A known limitations
+
+- CSV parsing supports straightforward comma-separated rows and does not yet handle quoted commas.
+- Batch text format is pipe-delimited and limited to 500 rows per request.
+- The rules provider does not call external enrichment or LLM APIs.
+- No automated email, WhatsApp, Facebook, or LinkedIn sending is implemented.
+- Production enrichment must add compliance, rate-limit, and source-confidence controls.

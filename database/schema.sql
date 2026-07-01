@@ -410,6 +410,67 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS customers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_name TEXT NOT NULL, brand_name TEXT, business_type TEXT, country TEXT, city TEXT, address TEXT,
+  website TEXT, google_maps_url TEXT, facebook_url TEXT, instagram_url TEXT, linkedin_url TEXT, tiktok_url TEXT,
+  phone TEXT, email TEXT, whatsapp TEXT, store_count INTEGER, opening_year INTEGER, years_in_business INTEGER,
+  source TEXT NOT NULL, source_url TEXT, source_confidence REAL NOT NULL DEFAULT 50,
+  data_quality_score INTEGER NOT NULL DEFAULT 0, opportunity_score INTEGER NOT NULL DEFAULT 0,
+  opportunity_grade TEXT NOT NULL DEFAULT 'D' CHECK (opportunity_grade IN ('A+', 'A', 'B', 'C', 'D')),
+  opportunity_status TEXT NOT NULL DEFAULT 'Imported', expansion_probability INTEGER NOT NULL DEFAULT 0,
+  renovation_probability INTEGER NOT NULL DEFAULT 0, furniture_need_probability INTEGER NOT NULL DEFAULT 0,
+  budget_estimate TEXT, style_signal TEXT, ai_summary TEXT, ai_recommendation TEXT, next_action TEXT, next_action_date TEXT,
+  assigned_sales_id INTEGER REFERENCES users(id) ON DELETE SET NULL, confidence_score REAL NOT NULL DEFAULT 0,
+  last_ai_run_at TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL, role TEXT NOT NULL, email TEXT, phone TEXT, whatsapp TEXT, linkedin_url TEXT, facebook_url TEXT,
+  instagram_url TEXT, source TEXT NOT NULL DEFAULT 'Manual', source_url TEXT, confidence_score REAL NOT NULL DEFAULT 50,
+  is_primary_decision_maker INTEGER NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_data_gaps (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  gap_type TEXT NOT NULL, priority TEXT NOT NULL, assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Open', notes TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(customer_id, gap_type)
+);
+
+CREATE TABLE IF NOT EXISTS customer_ai_analysis_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  run_type TEXT NOT NULL, input_snapshot TEXT NOT NULL DEFAULT '{}', output_snapshot TEXT NOT NULL DEFAULT '{}',
+  engine_version TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'rules', status TEXT NOT NULL DEFAULT 'pending',
+  error_message TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS customer_product_recommendations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  product_id INTEGER REFERENCES products(id) ON DELETE CASCADE, category_id INTEGER REFERENCES product_categories(id) ON DELETE CASCADE,
+  recommendation_reason TEXT NOT NULL, sales_angle TEXT, score INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(customer_id, product_id), UNIQUE(customer_id, category_id)
+);
+
+CREATE TABLE IF NOT EXISTS customer_outreach_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  contact_id INTEGER REFERENCES customer_contacts(id) ON DELETE SET NULL, channel TEXT NOT NULL, draft_type TEXT NOT NULL,
+  subject TEXT, body TEXT NOT NULL, language TEXT NOT NULL DEFAULT 'English', personalization_summary TEXT,
+  recommended_products_snapshot TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'Draft',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  activity_type TEXT NOT NULL, description TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
@@ -438,3 +499,11 @@ CREATE INDEX IF NOT EXISTS idx_ai_content_drafts_review ON ai_product_content_dr
 CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_product_status ON ai_image_generation_tasks(product_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_provider_status ON ai_image_generation_tasks(provider, status);
 CREATE INDEX IF NOT EXISTS idx_products_materials ON products(materials);
+CREATE INDEX IF NOT EXISTS idx_customers_queue ON customers(opportunity_grade, opportunity_score DESC, next_action_date);
+CREATE INDEX IF NOT EXISTS idx_customers_status ON customers(opportunity_status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_contacts_customer ON customer_contacts(customer_id, is_primary_decision_maker);
+CREATE INDEX IF NOT EXISTS idx_customer_gaps_open ON customer_data_gaps(customer_id, status, priority);
+CREATE INDEX IF NOT EXISTS idx_customer_ai_runs_customer ON customer_ai_analysis_runs(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_recommendations ON customer_product_recommendations(customer_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_outreach_status ON customer_outreach_drafts(customer_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_activity ON customer_activity_log(customer_id, created_at DESC);

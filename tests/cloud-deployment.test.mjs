@@ -11,6 +11,7 @@ test('cloud deployment files are safe and complete', () => {
   const intelligenceMigration = read('database/migrations/002_product_intelligence.sql');
   const factoryMigration = read('database/migrations/003_ai_product_content_factory.sql');
   const imageMigration = read('database/migrations/004_real_ai_image_generation.sql');
+  const opportunityMigration = read('database/migrations/005_opportunity_intelligence_engine.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -31,6 +32,11 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(imageMigration, /ADD COLUMN IF NOT EXISTS lifecycle_status/);
   assert.match(imageMigration, /ADD COLUMN IF NOT EXISTS provider_request_id/);
   assert.match(imageMigration, /'004_real_ai_image_generation'/);
+  assert.doesNotMatch(opportunityMigration, /\b(DROP TABLE|DROP COLUMN|TRUNCATE)\b/i);
+  assert.match(opportunityMigration, /CREATE TABLE IF NOT EXISTS customers/);
+  assert.match(opportunityMigration, /CREATE TABLE IF NOT EXISTS customer_product_recommendations/);
+  assert.match(opportunityMigration, /CREATE TABLE IF NOT EXISTS customer_outreach_drafts/);
+  assert.match(opportunityMigration, /'005_opportunity_intelligence_engine'/);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);

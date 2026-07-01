@@ -9,7 +9,7 @@ export default {
   },
   roles: { Admin: '管理员', Owner: '老板', Sales: '外贸销售', Designer: '设计师', VA: 'VA 助理' },
   nav: {
-    dashboard: '数据看板', products: '产品知识中心', knowledgeDashboard: '知识完整度看板', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
+    dashboard: '数据看板', products: '产品知识中心', knowledgeDashboard: '知识完整度看板', opportunityIntelligence: '商机智能引擎', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
     cases: '项目案例库', crm: '商机客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置中心', debugCenter: '系统调试中心', settings: '系统设置'
   },
   login: {

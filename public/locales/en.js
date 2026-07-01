@@ -10,7 +10,7 @@ export default {
   },
   roles: { Admin: 'Admin', Owner: 'Owner', Sales: 'Sales', Designer: 'Designer', VA: 'VA' },
   nav: {
-    dashboard: 'Dashboard', products: 'Product Knowledge Center', knowledgeDashboard: 'Knowledge Dashboard', imports: 'Product Import Center', images: 'AI Image Center',
+    dashboard: 'Dashboard', products: 'Product Knowledge Center', knowledgeDashboard: 'Knowledge Dashboard', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
     proposals: 'Proposal Builder', cases: 'Project Case Library', crm: 'Opportunity CRM', salesAi: 'AI Sales Center',
     contentAi: 'AI Content Center', coreFoundation: 'Core Foundation Center', debugCenter: 'System Debug Center', settings: 'Settings'
   },

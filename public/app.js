@@ -13,7 +13,10 @@ const state = {
   team: null,
   foundation: null,
   foundationTab: 'configs',
-  debugCenter: null
+  debugCenter: null,
+  opportunityIntelligence: null,
+  opportunityView: 'dashboard',
+  customerDetail: null
 };
 
 const icons = {
@@ -29,6 +32,7 @@ const icons = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V3h4v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   'core-foundation': '<path d="M4 5h7v6H4V5Zm9 0h7v6h-7V5ZM4 13h7v6H4v-6Zm9 0h7v6h-7v-6Z"/>',
   'debug-center': '<path d="M9 3h6v3H9V3ZM8 8h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-5a4 4 0 0 1 4-4Z"/><path d="M9 13h.01M15 13h.01M9 17h6M4 13H2M22 13h-2"/>',
+  'opportunity-intelligence': '<path d="M4 20V9l8-6 8 6v11H4Z"/><path d="M8 20v-6h8v6M8 10h.01M12 10h.01M16 10h.01"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 8.5h18C21 15 18 15 18 8Z"/><path d="M10 20h4"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
@@ -66,6 +70,7 @@ const navItems = [
   { groupKey: 'common.workspace', route: 'dashboard', labelKey: 'nav.dashboard' },
   { groupKey: 'common.workspace', route: 'products', labelKey: 'nav.products' },
   { groupKey: 'common.workspace', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard' },
+  { groupKey: 'common.growth', route: 'opportunity-intelligence', labelKey: 'nav.opportunityIntelligence' },
   { groupKey: 'common.workspace', route: 'imports', labelKey: 'nav.imports' },
   { groupKey: 'common.workspace', route: 'images', labelKey: 'nav.images' },
   { groupKey: 'common.workspace', route: 'proposals', labelKey: 'nav.proposals', badge: '3' },
@@ -258,6 +263,7 @@ async function navigate(route, replace = false) {
     dashboard: renderDashboard,
     products: renderProducts,
     'knowledge-dashboard': renderKnowledgeDashboard,
+    'opportunity-intelligence': renderOpportunityIntelligence,
     imports: renderImports,
     images: renderImages,
     proposals: renderProposals,
@@ -295,8 +301,8 @@ function userAvatar(initials, name = '') {
 }
 
 async function renderDashboard() {
-  const { metrics, pipeline, knowledge, productIntelligence } = await api('/api/dashboard');
-  state.dashboard = { metrics, pipeline, knowledge, productIntelligence };
+  const { metrics, pipeline, knowledge, productIntelligence, opportunityIntelligence } = await api('/api/dashboard');
+  state.dashboard = { metrics, pipeline, knowledge, productIntelligence, opportunityIntelligence };
   const today = new Intl.DateTimeFormat(localeForIntl(), { month: 'long', day: 'numeric', year: 'numeric' }).format(new Date());
   const firstName = state.user.name.split(' ')[0];
   $('#page').innerHTML = `
@@ -307,6 +313,10 @@ async function renderDashboard() {
       ${metricCard(t('dashboard.proposalsInProgress'), metrics.proposals, t('dashboard.dueThisWeek'), 'proposals', 'blue', true)}
       ${metricCard(t('dashboard.salesReadyProducts'), metrics.approvedProducts, t('dashboard.addedThisMonth'), 'products', 'purple')}
     </section>
+    <article class="panel section-gap">
+      ${panelHeader('Opportunity Intelligence Metrics', 'Today’s customer intelligence and sales handoff readiness', 'Open Engine', 'opportunity-intelligence')}
+      <div class="module-grid intelligence-dashboard-grid">${[['totalCustomers','Total Customers','users'],['importedToday','Imported Today','imports'],['aiProcessed','AI Processed','sparkles'],['gradeAPlus','A+ Opportunities','briefcase'],['gradeA','A Opportunities','briefcase'],['readyForSales','Ready for Sales','sales-ai'],['missingDecisionMaker','Missing Decision Maker','users'],['missingEmail','Missing Email','mail'],['missingWhatsApp','Missing WhatsApp','help'],['salesAcceptedLeads','Sales Accepted Leads','check']].map(([key,label,iconName]) => `<article class="stat-tile"><span class="metric-icon">${icon(iconName)}</span><div><strong>${opportunityIntelligence[key] || 0}</strong><small>${label}</small></div></article>`).join('')}</div>
+    </article>
     <article class="panel section-gap">
       ${panelHeader(t('intelligence.libraryStatus'), t('intelligence.libraryStatusSub'))}
       <div class="module-grid intelligence-dashboard-grid">
@@ -826,6 +836,143 @@ function previewImageTask(taskId) {
   document.body.append(backdrop);
 }
 
+function opportunityScore(score, grade) {
+  return `<span class="knowledge-score ${Number(score) >= 75 ? 'is-ready' : ''}"><strong>${Number(score || 0)}</strong><small>${esc(grade || 'D')}</small></span>`;
+}
+
+function opportunityTabs(active, counts = {}) {
+  const tabs = [
+    ['dashboard', 'Opportunity Dashboard'], ['import', 'Import Customers'], ['customers', `Customer List (${counts.customers || 0})`],
+    ['queue', `AI Opportunity Queue (${counts.queue || 0})`], ['outreach', 'Outreach Drafts'], ['handoff', `Sales Handoff (${counts.handoff || 0})`]
+  ];
+  return `<nav class="knowledge-tabs opportunity-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" class="${active === key ? 'is-active' : ''}" data-action="opportunity-tab" data-tab="${key}" role="tab">${label}</button>`).join('')}</nav>`;
+}
+
+function opportunityMetricsCards(metrics) {
+  const cards = [
+    ['Total Customers', metrics.totalCustomers, 'users'], ['Imported Today', metrics.importedToday, 'imports'],
+    ['AI Processed', metrics.aiProcessed, 'sparkles'], ['A+ Opportunities', metrics.gradeAPlus, 'briefcase'],
+    ['A Opportunities', metrics.gradeA, 'briefcase'], ['Ready for Sales', metrics.readyForSales, 'sales-ai'],
+    ['Missing Decision Maker', metrics.missingDecisionMaker, 'users'], ['Missing Email', metrics.missingEmail, 'mail'],
+    ['Missing WhatsApp', metrics.missingWhatsApp, 'help'], ['Sales Accepted Leads', metrics.salesAcceptedLeads, 'check']
+  ];
+  return `<section class="metrics-grid opportunity-metrics">${cards.map(([label, value, iconName], index) => metricCard(label, value, index < 3 ? 'Live' : '', iconName, index % 3 === 1 ? 'gold' : 'blue')).join('')}</section>`;
+}
+
+function customerTable(customers, capabilities, queue = false) {
+  return `<div class="table-scroll"><table class="data-table" id="opportunity-customer-table"><thead><tr>
+    ${capabilities.canRunAi && !queue ? '<th></th>' : ''}<th>Customer</th><th>Country / City</th><th>Business Type</th><th>Score</th><th>Grade</th><th>Recommended Products</th><th>Next Action</th><th>Contact</th><th>Assigned Sales</th><th></th>
+    </tr></thead><tbody>${customers.map(customer => `<tr>
+      ${capabilities.canRunAi && !queue ? `<td><input type="checkbox" data-customer-select value="${customer.id}" aria-label="Select ${esc(customer.company_name)}" /></td>` : ''}
+      <td class="primary-cell"><strong>${esc(customer.brand_name || customer.company_name)}</strong><small>${esc(customer.source)} · ${esc(customer.opportunity_status)}</small></td>
+      <td>${esc([customer.country, customer.city].filter(Boolean).join(' / ') || '—')}</td><td>${esc(customer.business_type || '—')}</td>
+      <td>${Number(customer.opportunity_score || 0)}</td><td>${badge(customer.opportunity_grade)}</td>
+      <td>${esc(customer.recommended_products || customer.recommended_categories || '—')}</td><td>${esc(customer.next_action || 'Run AI to generate')}</td>
+      <td>${esc(customer.email || customer.whatsapp || customer.website || customer.decision_maker || 'Missing')}</td><td>${esc(customer.assigned_sales_name || 'Unassigned')}</td>
+      <td><button class="button button--compact" data-action="view-customer" data-id="${customer.id}">Open</button></td>
+    </tr>`).join('') || '<tr><td colspan="11"><div class="empty-state">No customers yet.</div></td></tr>'}</tbody></table></div>`;
+}
+
+function renderOpportunityPane(data) {
+  const view = state.opportunityView || 'dashboard';
+  const counts = { customers: data.customers.length, queue: data.queue.length, handoff: data.handoff.length };
+  const capabilities = data.capabilities;
+  const sourceOptions = data.sources.map(source => `<option>${esc(source)}</option>`).join('');
+  if (view === 'dashboard') return `${opportunityMetricsCards(data.metrics)}
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Today’s Priority Queue', 'Highest-value A+/A opportunities ready for human action')}${customerTable(data.queue.slice(0, 5), capabilities, true)}</article>
+    <article class="panel"><div class="panel-header"><div class="panel-title"><h2>AI Pipeline Status</h2><p>Rule provider is active; external AI remains optional.</p></div>${badge(data.debug.scoring_engine_status)}</div>
+      <div class="debug-list"><div><span>Product Matching</span><strong>${esc(data.debug.product_matching_status)}</strong></div><div><span>Duplicate Check</span><strong>${esc(data.debug.duplicate_check_status)}</strong></div><div><span>Open Data Gaps</span><strong>${data.debug.gaps_open}</strong></div><div><span>Last AI Run</span><strong>${esc(data.debug.last_ai_run_at || 'Not run')}</strong></div></div></article></section>`;
+  if (view === 'import') return `<section class="opportunity-import-grid">
+    <form id="customer-manual-form" class="panel opportunity-form"><h2>Manual Customer</h2><p>Create one sourced customer record.</p>
+      <div class="foundation-form"><label class="field"><span>Company Name</span><input name="company_name" required /></label><label class="field"><span>Business Type</span><input name="business_type" placeholder="Coffee Shop" /></label>
+      <label class="field"><span>Country</span><input name="country" /></label><label class="field"><span>City</span><input name="city" /></label><label class="field"><span>Email</span><input name="email" type="email" /></label>
+      <label class="field"><span>Website</span><input name="website" /></label><label class="field"><span>Store Count</span><input name="store_count" type="number" min="0" /></label>
+      <label class="field"><span>Source</span><select name="source">${sourceOptions}</select></label></div><button class="button button--primary" type="submit">Import Customer</button></form>
+    <form id="customer-csv-form" class="panel opportunity-form"><h2>CSV Paste Import</h2><p>Header example: company_name,business_type,city,country,email,website</p><label class="field"><span>Source</span><select name="source"><option>CSV</option>${sourceOptions}</select></label><label class="field"><span>CSV Data</span><textarea name="csv" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import CSV</button></form>
+    <form id="customer-text-form" class="panel opportunity-form"><h2>Batch Text Import</h2><p>One line: Company | Type | City | Country | Email | Website</p><label class="field"><span>Source</span><select name="source">${sourceOptions}</select></label><label class="field"><span>Customer Lines</span><textarea name="text" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import Text</button></form>
+    </section>`;
+  if (view === 'customers') return `<article class="panel">${panelHeader('Customer List', 'Clean, score, and route customer records through one governed workflow')}
+    <div class="filter-bar"><label class="filter-search">${icon('search')}<input data-filter-table="opportunity-customer-table" placeholder="Search customers" /></label>${capabilities.canRunAi ? '<button class="button button--primary" data-action="run-selected-customers">Run AI for Selected</button>' : ''}</div>${customerTable(data.customers, capabilities)}</article>`;
+  if (view === 'queue') return `<article class="panel">${panelHeader('AI Opportunity Queue', 'A+/A opportunities ordered by score, contactability, decision maker, and due date')}${customerTable(data.queue, capabilities, true)}</article>`;
+  if (view === 'outreach') return `<article class="panel">${panelHeader('Outreach Drafts', 'Draft-only messages; sending always requires a human and happens outside this platform')}
+    <div class="opportunity-card-grid">${data.customers.filter(customer => customer.last_ai_run_at).map(customer => `<button class="opportunity-card" data-action="view-customer" data-id="${customer.id}"><span>${badge(customer.opportunity_grade)}</span><strong>${esc(customer.company_name)}</strong><small>${esc(customer.ai_recommendation || 'Open to review outreach')}</small></button>`).join('') || '<div class="empty-state">Run AI to create reviewable outreach drafts.</div>'}</div></article>`;
+  return `<article class="panel">${panelHeader('Sales Handoff', 'Qualified opportunities that meet grade and contactability rules')}${customerTable(data.handoff, capabilities, true)}</article>`;
+}
+
+async function renderOpportunityIntelligence() {
+  const [dashboard, customersData, queueData, handoffData] = await Promise.all([
+    api('/api/opportunity/dashboard'), api('/api/customers'), api('/api/opportunity-queue'), api('/api/customers/sales-handoff')
+  ]);
+  state.opportunityIntelligence = {
+    metrics: dashboard.metrics, debug: dashboard.debug, capabilities: dashboard.capabilities,
+    customers: customersData.customers, sources: customersData.sources, statuses: customersData.statuses,
+    queue: queueData.customers, handoff: handoffData.customers
+  };
+  $('#page').innerHTML = `${pageHeader('Opportunity Intelligence', 'Turn sourced customer data into clean, scored, product-matched, human-approved sales opportunities.',
+    dashboard.capabilities.canImport ? '<button class="button button--primary" data-action="opportunity-tab" data-tab="import">Import Customers</button>' : '')}
+    ${opportunityTabs(state.opportunityView, { customers: customersData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length })}
+    <div class="opportunity-pane">${renderOpportunityPane(state.opportunityIntelligence)}</div>`;
+  $('#customer-manual-form')?.addEventListener('submit', submitManualCustomer);
+  $('#customer-csv-form')?.addEventListener('submit', event => submitCustomerImport(event, 'csv'));
+  $('#customer-text-form')?.addEventListener('submit', event => submitCustomerImport(event, 'text'));
+}
+
+async function submitManualCustomer(event) {
+  event.preventDefault();
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  await api('/api/customers', { method: 'POST', body: JSON.stringify(body) });
+  toast('Customer imported.'); state.opportunityView = 'customers'; await renderOpportunityIntelligence();
+}
+
+async function submitCustomerImport(event, type) {
+  event.preventDefault();
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  const result = await api('/api/customers/import', { method: 'POST', body: JSON.stringify({ source: body.source, [type]: body[type] }) });
+  toast(`${result.imported} imported; ${result.duplicates} duplicates skipped.`); state.opportunityView = 'customers'; await renderOpportunityIntelligence();
+}
+
+async function renderCustomerDetail(id) {
+  const data = await api(`/api/customers/${id}`);
+  const customer = data.customer;
+  state.customerDetail = customer;
+  const recommendations = customer.recommended_products.map(item => `<article class="knowledge-related-card"><span>${esc(item.category || '')}</span><strong>${esc(item.product_name || item.category)}</strong><small>${esc(item.recommendation_reason)}</small><p>${esc(item.sales_angle || '')}</p></article>`).join('') || '<div class="empty-state">Run AI to match products.</div>';
+  $('#page').innerHTML = `${pageHeader(esc(customer.company_name), `${esc(customer.business_type || 'Hospitality')} · ${esc(customer.city || '')} ${esc(customer.country || '')}`,
+    data.capabilities.canRunAi ? `<button class="button button--primary" data-action="run-customer-ai" data-id="${id}">${icon('sparkles')} Run AI</button>` : '', '<button class="button" data-action="back-opportunities">Back</button>')}
+    <section class="knowledge-hero panel"><div>${opportunityScore(customer.opportunity_score, customer.opportunity_grade)}<div><span class="eyebrow-label">Opportunity Status</span><strong>${esc(customer.opportunity_status)}</strong><small>Data quality ${customer.data_quality_score}% · confidence ${customer.confidence_score}%</small></div></div><div class="knowledge-hero-summary"><span>AI Summary</span><p>${esc(customer.ai_summary || 'Run AI to generate an opportunity summary.')}</p></div></section>
+    <section class="detail-grid section-gap"><article class="panel knowledge-section"><h2>Basic Info</h2><div class="debug-list"><div><span>Source</span><strong>${esc(customer.source)}</strong></div><div><span>Website</span><strong>${esc(customer.website || 'Missing')}</strong></div><div><span>Email</span><strong>${esc(customer.email || 'Missing')}</strong></div><div><span>WhatsApp</span><strong>${esc(customer.whatsapp || 'Missing')}</strong></div><div><span>Stores</span><strong>${customer.store_count || 'Unknown'}</strong></div><div><span>Years</span><strong>${customer.years_in_business || 'Unknown'}</strong></div></div></article>
+    <article class="panel knowledge-section"><h2>Next Action</h2><p>${esc(customer.next_action || 'Run AI to calculate next action.')}</p><strong>${esc(customer.next_action_date || '')}</strong><h3>AI Recommendation</h3><p>${esc(customer.ai_recommendation || '—')}</p></article></section>
+    <article class="panel section-gap">${panelHeader('Recommended Products', 'Live references from Product Intelligence Center—no product data is copied')}<div class="knowledge-related-grid">${recommendations}</div></article>
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Contacts', 'Decision makers and contact confidence')}${customer.contacts.map(contact => `<div class="list-row"><div><strong>${esc(contact.full_name)}</strong><small>${esc(contact.role)} · ${esc(contact.email || contact.whatsapp || 'No direct channel')}</small></div>${contact.is_primary_decision_maker ? badge('Decision Maker') : ''}</div>`).join('') || '<div class="empty-state">No contacts.</div>'}</article>
+    <article class="panel">${panelHeader('Missing Data', 'VA workflow for research gaps')}${customer.gaps.map(gap => `<div class="list-row"><div><strong>${esc(gap.gap_type)}</strong><small>${esc(gap.priority)} priority</small></div>${badge(gap.status)}</div>`).join('') || '<div class="empty-state">No open data gaps.</div>'}</article></section>
+    <article class="panel section-gap">${panelHeader('Outreach Drafts', 'Editable drafts only—no automatic sending')}${customer.outreach_drafts.map(draft => `<div class="outreach-editor" data-draft="${draft.id}"><div class="panel-header"><div><strong>${esc(draft.channel)} · ${esc(draft.draft_type)}</strong><small>${esc(draft.status)}</small></div></div><input name="subject" value="${esc(draft.subject || '')}" /><textarea name="body" rows="8">${esc(draft.body)}</textarea><div class="row-actions">${data.capabilities.canEditDraft ? `<button class="button" data-action="save-outreach" data-id="${draft.id}">Save Draft</button>` : ''}${data.capabilities.canApproveDraft && draft.status !== 'Approved' ? `<button class="button button--primary" data-action="approve-outreach" data-id="${draft.id}">Approve</button>` : ''}${data.capabilities.canEditDraft ? `<button class="button button--soft" data-action="sent-outreach" data-id="${draft.id}">Mark Sent Manually</button>` : ''}</div></div>`).join('') || '<div class="empty-state">Run AI to generate a personalized first-touch draft.</div>'}</article>
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Activity History', 'Immutable workflow events')}${customer.activity.map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.activity_type)}</strong><p>${esc(item.description)}</p><small>${esc(item.created_at)}</small></div></div>`).join('')}</article>
+    <article class="panel">${panelHeader('Sales Handoff', 'A+/A plus at least one contactability signal')}<p>${esc(customer.ai_recommendation || '')}</p>${data.capabilities.canAcceptLead && ['Ready for Sales', 'Contacted', 'In Progress'].includes(customer.opportunity_status) ? `<button class="button button--primary" data-action="accept-lead" data-id="${id}">Accept Lead</button>` : `<p class="empty-state">${['A+', 'A'].includes(customer.opportunity_grade) ? 'Add a contact method to qualify handoff.' : 'Customer must reach grade A or A+.'}</p>`}</article></section>`;
+}
+
+async function runCustomerAi(id) {
+  await api(`/api/customers/${id}/run-ai`, { method: 'POST', body: '{}' }); toast('Opportunity AI completed.'); await renderCustomerDetail(id);
+}
+
+async function runSelectedCustomers() {
+  const ids = [...document.querySelectorAll('[data-customer-select]:checked')].map(input => Number(input.value));
+  if (!ids.length) return toast('Select at least one customer.');
+  await api('/api/customers/run-ai-selected', { method: 'POST', body: JSON.stringify({ customer_ids: ids }) }); toast(`${ids.length} customers processed.`); await renderOpportunityIntelligence();
+}
+
+async function saveOutreach(id, action = null) {
+  const customerId = state.customerDetail.id;
+  if (action) await api(`/api/customers/${customerId}/outreach-drafts/${id}/${action}`, { method: 'POST', body: '{}' });
+  else {
+    const editor = document.querySelector(`[data-draft="${id}"]`);
+    await api(`/api/customers/${customerId}/outreach-drafts/${id}`, { method: 'PUT', body: JSON.stringify({ subject: editor.querySelector('[name="subject"]').value, body: editor.querySelector('[name="body"]').value }) });
+  }
+  toast('Outreach draft updated.'); await renderCustomerDetail(customerId);
+}
+
+async function acceptLead(id) {
+  await api(`/api/customers/${id}/accept-lead`, { method: 'POST', body: '{}' }); toast('Lead accepted by sales.'); await renderCustomerDetail(id);
+}
+
 async function renderImports() {
   const data = state.imports || await api('/api/imports');
   state.imports = data;
@@ -1160,6 +1307,12 @@ async function renderDebugCenter() {
       </div>
       ${data.aiImageGeneration.lastError ? `<div class="debug-error section-gap"><strong>${t('imageGeneration.lastError')}</strong><pre>${esc(data.aiImageGeneration.lastError)}</pre></div>` : ''}
     </article>
+    <article class="panel section-gap">
+      ${panelHeader('Opportunity Intelligence Status', `${esc(data.opportunityIntelligence.provider)} · ${esc(data.opportunityIntelligence.engine_version)}`)}
+      <div class="provider-status-grid debug-provider-grid"><span><small>Scoring Engine</small><strong>${esc(data.opportunityIntelligence.scoring_engine_status)}</strong></span><span><small>Product Matching</small><strong>${esc(data.opportunityIntelligence.product_matching_status)}</strong></span><span><small>Duplicate Check</small><strong>${esc(data.opportunityIntelligence.duplicate_check_status)}</strong></span><span><small>Last AI Run</small><strong>${esc(data.opportunityIntelligence.last_ai_run_at || 'Not run')}</strong></span></div>
+      <div class="metrics-grid compact-metrics section-gap">${[['customers_count','Customers'],['contacts_count','Contacts'],['gaps_open','Open Gaps'],['outreach_drafts_count','Outreach Drafts'],['opportunity_queue_count','Opportunity Queue']].map(([key,label]) => metricCard(label, data.opportunityIntelligence[key] || 0, 'Module 06A', 'briefcase', key === 'gaps_open' ? 'gold' : 'green', true)).join('')}</div>
+      ${data.opportunityIntelligence.last_error ? `<div class="debug-error"><strong>Last Error</strong><pre>${esc(data.opportunityIntelligence.last_error)}</pre></div>` : ''}
+    </article>
     <section class="split-grid section-gap">
       <div class="stack">
         <article class="panel">
@@ -1193,7 +1346,7 @@ async function renderSettings() {
   const roles = ['Admin', 'Owner', 'Sales', 'Designer', 'VA'];
   const permissions = [
     ['nav.dashboard', 'dashboard'], ['nav.products', 'products'], ['nav.imports', 'imports'], ['nav.images', 'images'], ['nav.proposals', 'proposals'],
-    ['nav.cases', 'cases'], ['nav.crm', 'crm'], ['nav.salesAi', 'sales-ai'], ['nav.contentAi', 'content-ai'], ['nav.coreFoundation', 'core-foundation'], ['nav.debugCenter', 'debug-center'], ['nav.settings', 'settings']
+    ['nav.cases', 'cases'], ['nav.opportunityIntelligence', 'opportunity-intelligence'], ['nav.crm', 'crm'], ['nav.salesAi', 'sales-ai'], ['nav.contentAi', 'content-ai'], ['nav.coreFoundation', 'core-foundation'], ['nav.debugCenter', 'debug-center'], ['nav.settings', 'settings']
   ];
   $('#page').innerHTML = `
     ${pageHeader(t('settings.title'), t('settings.subtitle'), `<button class="button button--primary" data-action="invite-user">${icon('plus')} ${t('settings.invite')}</button>`)}
@@ -1287,6 +1440,26 @@ async function handleAction(action, node) {
     state.debugCenter = null;
     await renderDebugCenter();
     toast(t('debug.refreshed'));
+  } else if (action === 'opportunity-tab') {
+    state.opportunityView = node.dataset.tab;
+    await renderOpportunityIntelligence();
+  } else if (action === 'view-customer') {
+    await renderCustomerDetail(node.dataset.id);
+  } else if (action === 'back-opportunities') {
+    state.customerDetail = null;
+    await renderOpportunityIntelligence();
+  } else if (action === 'run-customer-ai') {
+    await runCustomerAi(node.dataset.id);
+  } else if (action === 'run-selected-customers') {
+    await runSelectedCustomers();
+  } else if (action === 'save-outreach') {
+    await saveOutreach(node.dataset.id);
+  } else if (action === 'approve-outreach') {
+    await saveOutreach(node.dataset.id, 'approve');
+  } else if (action === 'sent-outreach') {
+    await saveOutreach(node.dataset.id, 'mark-sent-manually');
+  } else if (action === 'accept-lead') {
+    await acceptLead(node.dataset.id);
   } else if (action === 'generate-intelligence') {
     await applyIntelligenceGeneration(node.dataset.type);
   } else if (action === 'generate-ai-factory') {
