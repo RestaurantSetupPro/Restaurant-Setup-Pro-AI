@@ -39,3 +39,6 @@ Module 06A documentation: [OPPORTUNITY_INTELLIGENCE_ENGINE.md](./OPPORTUNITY_INT
 # AI Cost Control
 
 Platform AI operations now share budget limits, human confirmation, provider fallback, audit logs, and a seven-day default cache. See `AI_COST_CONTROL.md`.
+# Sales Intelligence
+
+Module 07 Part 1 provides the streamlined inquiry-to-order Sales workspace. See `SALES_INTELLIGENCE_PART1.md`.

@@ -22,3 +22,6 @@ Status: Implemented locally, pending product acceptance.
 # Module 06A Supplement 01 — AI Cost Control
 
 Adds the platform-wide AI budget, estimate, confirmation, logging, cache, and provider-control layer. See `AI_COST_CONTROL.md`.
+# Module 07 Part 1 — Sales Intelligence
+
+Adds the simplified Sales workspace, inquiry analysis, Product Intelligence recommendations, quote creation, tasks, customer timeline, and quote-to-order conversion. See `SALES_INTELLIGENCE_PART1.md`.

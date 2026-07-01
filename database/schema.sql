@@ -542,3 +542,50 @@ CREATE INDEX IF NOT EXISTS idx_customer_activity ON customer_activity_log(custom
 CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_created ON ai_cost_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_module ON ai_cost_logs(module_name, action_name, status);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_cache_records(module_name, action_name, entity_type, entity_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS sales_inquiries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  company TEXT, country TEXT, inquiry_type TEXT NOT NULL, customer_message TEXT NOT NULL, attachments TEXT NOT NULL DEFAULT '[]',
+  priority TEXT NOT NULL DEFAULT 'Normal', sales_notes TEXT, status TEXT NOT NULL DEFAULT 'New',
+  assigned_sales_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sales_inquiry_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id) ON DELETE CASCADE,
+  customer_intent TEXT NOT NULL, opportunity_size TEXT NOT NULL, restaurant_type TEXT, estimated_budget TEXT,
+  furniture_categories TEXT NOT NULL DEFAULT '[]', missing_information TEXT NOT NULL DEFAULT '[]', suggested_next_question TEXT,
+  recommended_package TEXT, notes TEXT, provider TEXT NOT NULL DEFAULT 'rules', created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sales_inquiry_products (
+  inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  match_reason TEXT, selected INTEGER NOT NULL DEFAULT 0, quantity INTEGER NOT NULL DEFAULT 1, proposed_unit_price REAL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(inquiry_id, product_id)
+);
+CREATE TABLE IF NOT EXISTS sales_quotes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, quote_number TEXT NOT NULL UNIQUE, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id),
+  customer_id INTEGER NOT NULL REFERENCES customers(id), quote_type TEXT NOT NULL DEFAULT 'Quote', currency TEXT NOT NULL DEFAULT 'USD', destination TEXT,
+  trade_term TEXT, status TEXT NOT NULL DEFAULT 'Draft', subtotal REAL NOT NULL DEFAULT 0, discount_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sales_quote_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER NOT NULL REFERENCES sales_quotes(id) ON DELETE CASCADE,
+  product_id INTEGER NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL DEFAULT 1, unit_price REAL NOT NULL DEFAULT 0,
+  discount_percent REAL NOT NULL DEFAULT 0, remark TEXT, sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sales_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT NOT NULL UNIQUE, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id), quote_id INTEGER REFERENCES sales_quotes(id),
+  customer_id INTEGER NOT NULL REFERENCES customers(id), status TEXT NOT NULL DEFAULT 'Confirmed', total REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'USD',
+  created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sales_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id) ON DELETE CASCADE, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Open', due_at TEXT, assigned_to INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS customer_sales_timeline (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE, inquiry_id INTEGER REFERENCES sales_inquiries(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL, description TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sales_inquiries_owner ON sales_inquiries(assigned_sales_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_quotes_inquiry ON sales_quotes(inquiry_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_tasks_owner ON sales_tasks(assigned_to, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_customer_sales_timeline ON customer_sales_timeline(customer_id, created_at DESC);

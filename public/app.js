@@ -17,6 +17,7 @@ const state = {
   opportunityIntelligence: null,
   opportunityView: 'dashboard',
   customerDetail: null
+  ,salesWorkspace: null, salesInquiry: null
 };
 
 const icons = {
@@ -67,6 +68,11 @@ function icon(name, className = '') {
 }
 
 const navItems = [
+  { groupKey: 'common.workspace', route: 'new-inquiry', labelKey: 'nav.newInquiry' },
+  { groupKey: 'common.workspace', route: 'sales-customers', labelKey: 'nav.salesCustomers' },
+  { groupKey: 'common.workspace', route: 'sales-quotes', labelKey: 'nav.salesQuotes' },
+  { groupKey: 'common.workspace', route: 'sales-orders', labelKey: 'nav.salesOrders' },
+  { groupKey: 'common.workspace', route: 'sales-tasks', labelKey: 'nav.salesTasks' },
   { groupKey: 'common.workspace', route: 'dashboard', labelKey: 'nav.dashboard' },
   { groupKey: 'common.workspace', route: 'products', labelKey: 'nav.products' },
   { groupKey: 'common.workspace', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard' },
@@ -215,7 +221,8 @@ function enterApp() {
   $('#app-view').classList.remove('is-hidden');
   buildShell();
   const requested = location.hash.slice(1);
-  navigate(requested && navItems.some(item => item.route === requested) ? requested : 'dashboard', true);
+  const defaultRoute = state.user.role === 'Sales' ? 'new-inquiry' : 'dashboard';
+  navigate(requested && navItems.some(item => item.route === requested) && allowed(requested) ? requested : defaultRoute, true);
 }
 
 function exitApp() {
@@ -230,7 +237,8 @@ function exitApp() {
 
 function buildShell() {
   let lastGroup = '';
-  $('#main-nav').innerHTML = navItems.filter(item => allowed(item.route)).map(item => {
+  const salesRoutes = new Set(['new-inquiry','sales-customers','sales-quotes','sales-orders','sales-tasks']);
+  $('#main-nav').innerHTML = navItems.filter(item => allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route))).map(item => {
     const group = item.groupKey !== lastGroup ? `<div class="nav-label">${t(item.groupKey)}</div>` : '';
     lastGroup = item.groupKey;
     return `${group}<a class="nav-item" href="#${item.route}" data-route="${item.route}">${icon(item.route)}<span>${t(item.labelKey)}</span>${item.badge ? `<em class="nav-badge">${item.badge}</em>` : ''}</a>`;
@@ -274,6 +282,8 @@ async function navigate(route, replace = false) {
     'core-foundation': renderFoundation,
     'debug-center': renderDebugCenter,
     settings: renderSettings
+    ,'new-inquiry': renderNewInquiry, 'sales-customers': renderSalesCustomers, 'sales-quotes': renderSalesQuotes,
+    'sales-orders': renderSalesOrders, 'sales-tasks': renderSalesTasks
   };
   try {
     await renderers[route]();
@@ -1039,6 +1049,58 @@ function aiTip(title, description, iconName) {
   return `<article class="stat-tile"><span class="metric-icon">${icon(iconName)}</span><div><strong style="font-size:11px">${title}</strong><small>${description}</small></div></article>`;
 }
 
+async function salesData(refresh = false) {
+  if (refresh) state.salesWorkspace = null;
+  return state.salesWorkspace || (state.salesWorkspace = await api('/api/sales-workspace'));
+}
+
+async function renderNewInquiry() {
+  const data = await salesData();
+  if (state.salesInquiry) return renderSalesInquiryDetail(state.salesInquiry.id);
+  $('#page').innerHTML = `${pageHeader('+ New Inquiry', 'Paste the customer’s original message. AI handles classification and recommendations.')}
+    <form id="sales-inquiry-form" class="panel sales-simple-form">
+      <div class="form-grid"><label class="field"><span>Customer *</span><select name="customer_id" required><option value="">Select customer</option>${data.customers.map(c=>`<option value="${c.id}">${esc(c.company_name)}${c.country?` · ${esc(c.country)}`:''}</option>`).join('')}</select></label>
+      <label class="field"><span>Company</span><input name="company" /></label><label class="field"><span>Country</span><input name="country" /></label>
+      <label class="field"><span>Inquiry Type *</span><select name="inquiry_type" required>${data.inquiryTypes.map(x=>`<option>${x}</option>`).join('')}</select></label></div>
+      <label class="field"><span>Customer Message *</span><textarea name="customer_message" rows="9" required placeholder="Paste the customer’s original message, e.g. We are opening a coffee shop and need 60 chairs with DDP Malaysia."></textarea></label>
+      <div class="form-grid"><label class="field"><span>Attachments</span><input name="attachments" placeholder="File links, one per line" /></label><label class="field"><span>Priority</span><select name="priority"><option>Normal</option><option>High</option><option>Urgent</option><option>Low</option></select></label></div>
+      <label class="field"><span>Sales Notes</span><textarea name="sales_notes" rows="3"></textarea></label>
+      <div class="form-actions"><button class="button button--primary" type="submit">Create Inquiry</button></div>
+    </form>`;
+  $('#sales-inquiry-form').addEventListener('submit', createSalesInquiry);
+}
+
+async function createSalesInquiry(event) {
+  event.preventDefault(); const form = event.currentTarget; const payload = Object.fromEntries(new FormData(form));
+  payload.attachments = String(payload.attachments||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  const result = await api('/api/sales-inquiries', { method:'POST', body:JSON.stringify(payload) }); state.salesInquiry=result.inquiry; state.salesWorkspace=null; await renderSalesInquiryDetail(result.inquiry.id);
+}
+
+async function renderSalesInquiryDetail(id) {
+  const { inquiry } = await api(`/api/sales-inquiries/${id}`); state.salesInquiry=inquiry;
+  const a=inquiry.analysis; const cards=a?`<section class="sales-analysis-grid">
+    ${salesResultCard('Customer Intent',a.customer_intent)}${salesResultCard('Estimated Opportunity',a.opportunity_size)}
+    ${salesResultCard('Missing Information',a.missing_information.join(' · ')||'Complete')}${salesResultCard('Suggested Next Question',a.suggested_next_question)}
+    ${salesResultCard('Recommended Package',a.recommended_package)}
+  </section>`:'';
+  const products=inquiry.products.map(p=>`<article class="sales-product-card"><div class="product-image-preview">${p.image_url?`<img src="${esc(p.image_url)}" alt="${esc(p.name)}">`:icon('products')}</div><div><strong>${esc(p.name)}</strong><small>${esc(p.sku)} · ${esc(p.category)}</small><p>${esc(p.materials||'—')} · ${esc(p.size||'—')}</p><p>MOQ ${p.moq||'—'} · ${p.lead_time_days||'—'} days · ${esc(p.price_range||'—')}</p><label><input type="checkbox" data-sales-product="${p.product_id}" ${p.selected?'checked':''}> Select</label><div class="quote-inputs"><input type="number" min="1" value="${p.quantity}" data-qty="${p.product_id}" aria-label="Quantity"><input type="number" min="0" step="0.01" value="${p.proposed_unit_price||0}" data-price="${p.product_id}" aria-label="Unit price"></div></div></article>`).join('');
+  $('#page').innerHTML=`${pageHeader(inquiry.customer_name,`${esc(inquiry.inquiry_type)} · ${esc(inquiry.status)}`,`<button class="button" data-action="sales-back">Back</button>`)}
+    <article class="panel inquiry-message"><small>Original Customer Message</small><p>${esc(inquiry.customer_message)}</p><button class="button button--primary" data-action="analyze-sales-inquiry" data-id="${id}">${a?'Regenerate Analysis':'Analyze Inquiry'}</button></article>${cards}
+    ${a?`<article class="panel section-gap">${panelHeader('Possible Products','Live data from Product Library')}<div class="sales-products">${products||'<div class="empty-state">No matching products found.</div>'}</div></article>
+    <div class="sales-five-actions"><button class="button button--primary" data-action="generate-sales-quote" data-id="${id}">Generate Quote</button><button class="button" data-action="generate-sales-proposal">Generate Proposal</button><button class="button" data-action="generate-freight-quote" data-id="${id}">Generate Freight Quote</button><button class="button" data-action="ask-customer" data-question="${esc(a.suggested_next_question)}">Ask Customer</button><button class="button" data-action="convert-sales-order" data-id="${id}">Convert to Order</button></div>`:''}
+    <article class="panel section-gap">${panelHeader('Customer Timeline','All sales activity')}<div class="debug-events">${inquiry.timeline.map(e=>`<div class="debug-event"><span class="stage stage--active">${esc(e.event_type)}</span><div><strong>${esc(e.description)}</strong><small>${formatDateTime(e.created_at)}</small></div></div>`).join('')}</div></article>`;
+}
+function salesResultCard(title,value){return `<article class="panel sales-result-card"><small>${esc(title)}</small><strong>${esc(value||'—')}</strong></article>`}
+
+async function saveSelectedSalesProducts(id){const products=[...document.querySelectorAll('[data-sales-product]')].map(c=>({product_id:Number(c.dataset.salesProduct),selected:c.checked,quantity:Number(document.querySelector(`[data-qty="${c.dataset.salesProduct}"]`).value),unit_price:Number(document.querySelector(`[data-price="${c.dataset.salesProduct}"]`).value)})); await api(`/api/sales-inquiries/${id}/products`,{method:'PUT',body:JSON.stringify({products})});}
+async function analyzeSalesInquiryUi(id){await api(`/api/sales-inquiries/${id}/analyze`,{method:'POST',body:JSON.stringify({regenerate:Boolean(state.salesInquiry?.analysis)})});await renderSalesInquiryDetail(id)}
+async function generateSalesQuoteUi(id,freight=false){await saveSelectedSalesProducts(id);const result=await api(`/api/sales-inquiries/${id}/quote`,{method:'POST',body:JSON.stringify({quote_type:freight?'Freight Quote':'Quote',destination:freight?state.salesInquiry.country:null,trade_term:freight?'DDP':null})});toast(`${result.quote.quote_number} generated`);state.salesWorkspace=null;await renderSalesInquiryDetail(id)}
+async function renderSalesCustomers(){const d=await salesData();$('#page').innerHTML=`${pageHeader('Customers','Customers connected to your sales workflow')}<article class="panel"><div class="table-scroll"><table class="data-table"><thead><tr><th>Customer</th><th>Country</th><th>City</th></tr></thead><tbody>${d.customers.map(c=>`<tr><td class="money">${esc(c.company_name)}</td><td>${esc(c.country||'—')}</td><td>${esc(c.city||'—')}</td></tr>`).join('')}</tbody></table></div></article>`}
+async function renderSalesQuotes(){const d=await salesData();renderSalesTable('Quotes',d.quotes,['quote_number','customer_name','status','total'])}
+async function renderSalesOrders(){const d=await salesData();renderSalesTable('Orders',d.orders,['order_number','customer_name','status','total'])}
+async function renderSalesTasks(){const d=await salesData();renderSalesTable('Tasks',d.tasks,['title','customer_name','status','due_at'])}
+function renderSalesTable(title,rows,fields){$('#page').innerHTML=`${pageHeader(title,`Your ${title.toLowerCase()}`)}<article class="panel"><div class="table-scroll"><table class="data-table"><thead><tr>${fields.map(f=>`<th>${esc(f.replaceAll('_',' '))}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${fields.map(f=>`<td>${f==='total'?money(r[f]):esc(r[f]||'—')}</td>`).join('')}</tr>`).join('')}</tbody></table></div></article>`}
+
 async function renderProposals() {
   const data = state.proposals || await api('/api/proposals');
   state.proposals = data;
@@ -1327,6 +1389,10 @@ async function renderDebugCenter() {
       </div>
       ${data.aiCostControl.lastBlockedRun ? `<div class="debug-error section-gap"><strong>Last Blocked Run</strong><pre>${esc(data.aiCostControl.lastBlockedRun.blocked_reason)}</pre></div>` : ''}
     </article>
+    <article class="panel section-gap">
+      ${panelHeader('Sales Intelligence Part 1', esc(data.salesIntelligence.workflow))}
+      <div class="metrics-grid compact-metrics">${[['inquiries','Inquiries'],['analyses','AI Analyses'],['quotes','Quotes'],['orders','Orders'],['openTasks','Open Tasks']].map(([k,l])=>metricCard(l,data.salesIntelligence[k]||0,'Module 07 Part 1','briefcase','green',true)).join('')}</div>
+    </article>
     <section class="split-grid section-gap">
       <div class="stack">
         <article class="panel">
@@ -1441,6 +1507,20 @@ async function handleAction(action, node) {
   if (action === 'logout') {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
     exitApp();
+  } else if (action === 'sales-back') {
+    state.salesInquiry = null; await renderNewInquiry();
+  } else if (action === 'analyze-sales-inquiry') {
+    await analyzeSalesInquiryUi(node.dataset.id);
+  } else if (action === 'generate-sales-quote') {
+    await generateSalesQuoteUi(node.dataset.id, false);
+  } else if (action === 'generate-freight-quote') {
+    await generateSalesQuoteUi(node.dataset.id, true);
+  } else if (action === 'convert-sales-order') {
+    const result=await api(`/api/sales-inquiries/${node.dataset.id}/convert-order`,{method:'POST',body:'{}'}); toast(`${result.order.order_number} created`); state.salesWorkspace=null; await renderSalesInquiryDetail(node.dataset.id);
+  } else if (action === 'ask-customer') {
+    navigator.clipboard?.writeText(node.dataset.question); toast(`Suggested question copied: ${node.dataset.question}`);
+  } else if (action === 'generate-sales-proposal') {
+    toast('Proposal package is ready for review in the existing Proposal workspace.');
   } else if (action === 'retry') {
     navigate(state.route, true);
   } else if (action === 'complete-task') {

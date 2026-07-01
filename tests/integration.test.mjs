@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '006_ai_cost_control');
+  assert.equal(database.migrationVersion, '007_sales_intelligence_part1');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -68,7 +68,7 @@ test('admin login creates a session with full access', async () => {
   const admin = await login('admin@rspro.ai');
   assert.equal(admin.response.status, 200);
   assert.equal(admin.body.user.role, 'Admin');
-  assert.equal(admin.body.user.permissions.length, 14);
+  assert.equal(admin.body.user.permissions.length, 19);
 
   const dashboard = await fetch(`http://127.0.0.1:${port}/api/dashboard`, { headers: { Cookie: admin.cookie } });
   const dashboardBody = await dashboard.json();
@@ -773,4 +773,64 @@ test('Module 06A Supplement 01 controls AI budgets, confirmations, logs, provide
   assert.equal(debug.aiCostControl.settingsStatus, 'ready');
   assert.ok(debug.aiCostControl.logsCount > 0);
   assert.ok(debug.aiCostControl.cacheRecordsCount > 0);
+});
+
+test('Module 07 Part 1 completes the simple inquiry to quote and order workflow', async () => {
+  const admin = await login('admin@rspro.ai');
+  await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_name: 'Module 07 Coffee Group', country: 'Malaysia', city: 'Kuala Lumpur', source: 'Manual' })
+  });
+  const sales = await login('sales@rspro.ai');
+  assert.ok(['new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'].every(permission => sales.body.user.permissions.includes(permission)));
+  const workspace = await fetch(`http://127.0.0.1:${port}/api/sales-workspace`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.ok(workspace.customers.length > 0);
+  assert.deepEqual(workspace.inquiryTypes, ['Product Inquiry', 'Restaurant Project', 'Freight Quote', 'Mixed Inquiry']);
+  const customer = workspace.customers[0];
+  const createResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: customer.id, inquiry_type: 'Mixed Inquiry', customer_message: 'We are opening a coffee shop and need 60 chairs and tables with DDP Malaysia.', country: 'Malaysia', priority: 'High' })
+  });
+  const created = await createResponse.json();
+  assert.equal(createResponse.status, 201);
+  assert.equal(created.inquiry.status, 'New');
+
+  const analyzedResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}/analyze`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}'
+  });
+  const analyzed = await analyzedResponse.json();
+  assert.equal(analyzedResponse.status, 200);
+  assert.equal(analyzed.inquiry.analysis.restaurant_type, 'Coffee Shop');
+  assert.equal(analyzed.inquiry.analysis.opportunity_size, 'Large');
+  assert.ok(analyzed.inquiry.products.length > 0);
+  assert.ok(analyzed.inquiry.products.every(item => item.product_id && item.sku && item.name));
+
+  const selected = analyzed.inquiry.products.slice(0, 2).map(item => ({ product_id: item.product_id, selected: true, quantity: 60, unit_price: 125 }));
+  const selectionResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}/products`, {
+    method: 'PUT', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ products: selected })
+  });
+  assert.equal(selectionResponse.status, 200);
+  const quoteResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}/quote`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_term: 'DDP', destination: 'Malaysia' })
+  });
+  const quote = await quoteResponse.json();
+  assert.equal(quoteResponse.status, 201);
+  assert.match(quote.quote.quote_number, /^PI-/);
+  assert.ok(quote.quote.total > 0);
+
+  const orderResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}/convert-order`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}'
+  });
+  const order = await orderResponse.json();
+  assert.equal(orderResponse.status, 201);
+  assert.match(order.order.order_number, /^SO-/);
+  const finalDetail = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.ok(finalDetail.inquiry.timeline.some(event => event.event_type === 'AI Analysis'));
+  assert.ok(finalDetail.inquiry.timeline.some(event => event.event_type === 'Quote Generated'));
+  assert.ok(finalDetail.inquiry.timeline.some(event => event.event_type === 'Order Created'));
+
+  const finalWorkspace = await fetch(`http://127.0.0.1:${port}/api/sales-workspace`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.ok(finalWorkspace.quotes.some(item => item.id === quote.quote.id));
+  assert.ok(finalWorkspace.orders.some(item => item.id === order.order.id));
+  assert.ok(finalWorkspace.tasks.some(item => item.inquiry_id === created.inquiry.id));
 });

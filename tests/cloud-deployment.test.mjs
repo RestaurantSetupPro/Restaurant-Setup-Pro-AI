@@ -13,6 +13,7 @@ test('cloud deployment files are safe and complete', () => {
   const imageMigration = read('database/migrations/004_real_ai_image_generation.sql');
   const opportunityMigration = read('database/migrations/005_opportunity_intelligence_engine.sql');
   const costMigration = read('database/migrations/006_ai_cost_control.sql');
+  const salesMigration = read('database/migrations/007_sales_intelligence_part1.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -43,6 +44,11 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(costMigration, /CREATE TABLE IF NOT EXISTS ai_cost_logs/);
   assert.match(costMigration, /CREATE TABLE IF NOT EXISTS ai_cache_records/);
   assert.doesNotMatch(costMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(salesMigration, /'007_sales_intelligence_part1'/);
+  assert.match(salesMigration, /CREATE TABLE IF NOT EXISTS sales_inquiries/);
+  assert.match(salesMigration, /CREATE TABLE IF NOT EXISTS sales_quotes/);
+  assert.match(salesMigration, /CREATE TABLE IF NOT EXISTS sales_orders/);
+  assert.doesNotMatch(salesMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);

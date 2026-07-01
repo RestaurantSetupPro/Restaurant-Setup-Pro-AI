@@ -10,6 +10,7 @@ export default {
   },
   roles: { Admin: 'Admin', Owner: 'Owner', Sales: 'Sales', Designer: 'Designer', VA: 'VA' },
   nav: {
+    newInquiry: '+ New Inquiry', salesCustomers: 'Customers', salesQuotes: 'Quotes', salesOrders: 'Orders', salesTasks: 'Tasks',
     dashboard: 'Dashboard', products: 'Product Knowledge Center', knowledgeDashboard: 'Knowledge Dashboard', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
     proposals: 'Proposal Builder', cases: 'Project Case Library', crm: 'Opportunity CRM', salesAi: 'AI Sales Center',
     contentAi: 'AI Content Center', coreFoundation: 'Core Foundation Center', debugCenter: 'System Debug Center', settings: 'Settings'

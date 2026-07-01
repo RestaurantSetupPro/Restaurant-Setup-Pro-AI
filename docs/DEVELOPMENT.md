@@ -41,3 +41,6 @@ Node.js 24+ is required. SQLite is the local fallback; PostgreSQL is used when `
 # AI Cost Control Development Rule
 
 Every new AI action must estimate, confirm when required, authorize its provider, write an `ai_cost_logs` result, and define a cache policy before it is considered complete. Business handlers must not call a paid provider directly.
+# Module 07 Sales Rule
+
+Sales quote lines must reference Product Intelligence records. Sales may edit quantity, unit price, discount, and remark only; product specifications must never be copied into a second source of truth.

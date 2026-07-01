@@ -30,3 +30,6 @@ Opportunity Intelligence Engine is implemented as the first governed customer-in
 # Current Delivery
 
 Module 06A Supplement 01 AI Cost Control is complete. Paid-provider activation remains an explicit Admin/Owner production decision.
+# Current Delivery
+
+Module 07 Part 1 Business Workflow & Frontend is complete. Later Module 07 parts may add document export and deeper order tracking after acceptance.

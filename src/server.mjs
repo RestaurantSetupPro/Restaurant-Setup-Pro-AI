@@ -8,6 +8,7 @@ import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
+import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import {
   buildOutreachDraft, contactRoles, customerSources, dataQualityScore, detectGaps, nextActionFor,
   normalizeCustomer, opportunityEngineVersion, parseImportPayload, scoreOpportunity
@@ -104,14 +105,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('006_ai_cost_control');
-      databaseDiagnostics.migration = migration?.version === '006_ai_cost_control';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('007_sales_intelligence_part1');
+      databaseDiagnostics.migration = migration?.version === '007_sales_intelligence_part1';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 006_ai_cost_control was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 007_sales_intelligence_part1 was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -119,7 +120,7 @@ function initializeDatabase() {
       ensureMediaColumns();
       ensureImageTaskColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '006_ai_cost_control';
+      databaseDiagnostics.migrationVersion = '007_sales_intelligence_part1';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     aiCostControl = createAiCostControl(db);
@@ -227,9 +228,9 @@ function ensureImageTaskColumns() {
 }
 
 const rolePermissions = Object.freeze({
-  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
-  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings'],
-  Sales: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation'],
+  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
+  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
+  Sales: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
   Designer: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'content-ai', 'core-foundation'],
   VA: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
 });
@@ -1200,6 +1201,41 @@ function aiCostDebugData() {
   };
 }
 
+function salesCapabilities(user) {
+  const enabled = ['Admin', 'Owner', 'Sales'].includes(user?.role);
+  return { canView: enabled, canCreate: enabled, canAnalyze: enabled, canQuote: enabled, canConvert: enabled };
+}
+
+function salesScope(user, alias = 'sales_inquiries') {
+  return user.role === 'Sales' ? { sql: ` AND ${alias}.assigned_sales_id = ?`, params: [user.id] } : { sql: '', params: [] };
+}
+
+function timeline(customerId, inquiryId, eventType, description, user, metadata = {}) {
+  db.prepare('INSERT INTO customer_sales_timeline (customer_id, inquiry_id, event_type, description, metadata, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(customerId, inquiryId, eventType, description, JSON.stringify(metadata), user.id);
+}
+
+function salesInquiryDetail(id, user) {
+  const scope = salesScope(user);
+  const inquiry = db.prepare(`SELECT sales_inquiries.*, customers.company_name AS customer_name FROM sales_inquiries
+    JOIN customers ON customers.id = sales_inquiries.customer_id WHERE sales_inquiries.id = ?${scope.sql}`).get(id, ...scope.params);
+  if (!inquiry) return null;
+  const analysis = db.prepare('SELECT * FROM sales_inquiry_analyses WHERE inquiry_id = ? ORDER BY created_at DESC, id DESC LIMIT 1').get(id);
+  inquiry.analysis = analysis ? { ...analysis, furniture_categories: parseJsonValue(analysis.furniture_categories, []), missing_information: parseJsonValue(analysis.missing_information, []) } : null;
+  inquiry.products = db.prepare(`SELECT sip.*, products.name, products.sku, products.materials, products.size, products.moq,
+    products.lead_time_days, products.price_range, products.status AS inventory_status, product_categories.name AS category,
+    (SELECT ma.file_url FROM product_media_links pml JOIN media_assets ma ON ma.id = pml.media_id WHERE pml.product_id = products.id ORDER BY pml.is_primary DESC LIMIT 1) AS image_url
+    FROM sales_inquiry_products sip JOIN products ON products.id = sip.product_id LEFT JOIN product_categories ON product_categories.id = products.category_id
+    WHERE sip.inquiry_id = ? ORDER BY sip.selected DESC, products.name`).all(id);
+  inquiry.timeline = db.prepare('SELECT * FROM customer_sales_timeline WHERE customer_id = ? ORDER BY created_at DESC, id DESC LIMIT 50').all(inquiry.customer_id).map(row => ({ ...row, metadata: parseJsonValue(row.metadata) }));
+  return inquiry;
+}
+
+function salesDebugData() {
+  const count = table => Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
+  return { status: 'ready', inquiries: count('sales_inquiries'), analyses: count('sales_inquiry_analyses'), quotes: count('sales_quotes'), orders: count('sales_orders'), openTasks: Number(db.prepare("SELECT COUNT(*) AS count FROM sales_tasks WHERE status = 'Open'").get().count), workflow: 'Inquiry → Analysis → Recommendation → Quote → Order' };
+}
+
 const opportunityStatuses = Object.freeze(['Imported', 'Cleaned', 'Enriched', 'Scored', 'Recommended', 'Ready for Sales', 'Contacted', 'In Progress', 'Replied', 'Qualified', 'Proposal Needed', 'Won', 'Lost', 'Nurture']);
 const outreachChannels = Object.freeze(['Email', 'WhatsApp', 'LinkedIn', 'Facebook']);
 const outreachTypes = Object.freeze(['First Touch', 'Follow Up 1', 'Follow Up 2', 'Reply Response']);
@@ -1418,6 +1454,90 @@ function runOpportunityEngine(customerId, user) {
 }
 
 const handlers = {
+  salesWorkspace(req, res) {
+    const user = currentUser(req); if (!salesCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Sales Intelligence access denied.' });
+    const scope = salesScope(user);
+    const inquiries = db.prepare(`SELECT sales_inquiries.*, customers.company_name AS customer_name FROM sales_inquiries JOIN customers ON customers.id = sales_inquiries.customer_id WHERE 1=1${scope.sql} ORDER BY sales_inquiries.updated_at DESC`).all(...scope.params);
+    const quoteScope = user.role === 'Sales' ? ' WHERE sales_quotes.created_by = ?' : '';
+    const quotes = db.prepare(`SELECT sales_quotes.*, customers.company_name AS customer_name FROM sales_quotes JOIN customers ON customers.id = sales_quotes.customer_id${quoteScope} ORDER BY sales_quotes.created_at DESC`).all(...(user.role === 'Sales' ? [user.id] : []));
+    const orders = db.prepare(`SELECT sales_orders.*, customers.company_name AS customer_name FROM sales_orders JOIN customers ON customers.id = sales_orders.customer_id${user.role === 'Sales' ? ' WHERE sales_orders.created_by = ?' : ''} ORDER BY sales_orders.created_at DESC`).all(...(user.role === 'Sales' ? [user.id] : []));
+    const tasks = db.prepare(`SELECT sales_tasks.*, customers.company_name AS customer_name FROM sales_tasks JOIN customers ON customers.id = sales_tasks.customer_id${user.role === 'Sales' ? ' WHERE sales_tasks.assigned_to = ?' : ''} ORDER BY sales_tasks.status, sales_tasks.due_at`).all(...(user.role === 'Sales' ? [user.id] : []));
+    const customers = db.prepare('SELECT id, company_name, country, city FROM customers ORDER BY company_name LIMIT 1000').all();
+    return json(res, 200, { inquiries, quotes, orders, tasks, customers, inquiryTypes, inquiryStatuses, capabilities: salesCapabilities(user) });
+  },
+
+  async createSalesInquiry(req, res) {
+    const user = currentUser(req); if (!salesCapabilities(user).canCreate) return json(res, user ? 403 : 401, { error: 'Sales Intelligence access denied.' });
+    const body = await readJson(req); const customerId = Number(body.customer_id);
+    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId); if (!customer) return json(res, 400, { error: 'Customer is required.' });
+    const type = allowedType(body.inquiry_type, inquiryTypes, 'Inquiry type');
+    const id = Number(db.prepare(`INSERT INTO sales_inquiries (customer_id, company, country, inquiry_type, customer_message, attachments, priority, sales_notes, assigned_sales_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(customerId, String(body.company || customer.company_name).trim() || null, String(body.country || customer.country || '').trim() || null,
+      type, requiredText(body.customer_message, 'Customer message'), JSON.stringify(body.attachments || []), ['Low','Normal','High','Urgent'].includes(body.priority) ? body.priority : 'Normal', String(body.sales_notes || '').trim() || null, user.id, user.id).id);
+    db.prepare("INSERT INTO sales_tasks (inquiry_id, customer_id, title, status, due_at, assigned_to) VALUES (?, ?, ?, 'Open', ?, ?)").run(id, customerId, `Follow up: ${customer.company_name}`, new Date(Date.now() + 86400000).toISOString(), user.id);
+    timeline(customerId, id, 'Inquiry Received', `${type} received.`, user, { priority: body.priority || 'Normal' });
+    audit(user.id, 'create', 'sales_inquiry', String(id));
+    return json(res, 201, { inquiry: salesInquiryDetail(id, user) });
+  },
+
+  salesInquiry(req, res, id) {
+    const user = currentUser(req); if (!salesCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Sales Intelligence access denied.' });
+    const inquiry = salesInquiryDetail(id, user); return inquiry ? json(res, 200, { inquiry }) : json(res, 404, { error: 'Inquiry not found.' });
+  },
+
+  async analyzeSalesInquiry(req, res, id) {
+    const user = currentUser(req); if (!salesCapabilities(user).canAnalyze) return json(res, user ? 403 : 401, { error: 'Analysis is not allowed.' });
+    const body = await readJson(req); const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
+    const costInput = aiCostInput({ moduleName: 'sales-intelligence', actionName: 'analyze-inquiry', entityType: 'sales-inquiry', entityId: id, provider: 'rules', estimatedCost: 0, user, fingerprint: `${id}:${inquiry.customer_message}` });
+    const cached = body.regenerate ? null : aiCostControl.cacheGet(costInput); if (cached) return json(res, 200, { inquiry: salesInquiryDetail(id, user), cached: true });
+    const analysis = analyzeInquiry(inquiry);
+    db.prepare(`INSERT INTO sales_inquiry_analyses (inquiry_id, customer_intent, opportunity_size, restaurant_type, estimated_budget, furniture_categories, missing_information, suggested_next_question, recommended_package, notes, provider, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rules', ?)`).run(id, analysis.customer_intent, analysis.opportunity_size, analysis.restaurant_type, analysis.estimated_budget, JSON.stringify(analysis.furniture_categories), JSON.stringify(analysis.missing_information), analysis.suggested_next_question, analysis.recommended_package, analysis.notes, user.id);
+    db.prepare('DELETE FROM sales_inquiry_products WHERE inquiry_id = ?').run(id);
+    const add = db.prepare('INSERT INTO sales_inquiry_products (inquiry_id, product_id, match_reason, proposed_unit_price) VALUES (?, ?, ?, ?)');
+    const categories = analysis.furniture_categories; if (categories.length) {
+      const rows = db.prepare(`SELECT products.id, products.price_range, product_categories.name AS category FROM products JOIN product_categories ON product_categories.id = products.category_id WHERE product_categories.name IN (${categories.map(()=>'?').join(',')}) AND products.status != 'archived' ORDER BY products.proposal_ready_status DESC, products.ai_recommendation_weight DESC LIMIT 12`).all(...categories);
+      for (const product of rows) add.run(id, product.id, `Matched to ${product.category} requirement`, Number(String(product.price_range || '').match(/[\d,.]+/)?.[0].replace(',','') || 0));
+    }
+    db.prepare("UPDATE sales_inquiries SET status = 'Preparing Quote', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    timeline(inquiry.customer_id, id, 'AI Analysis', `Intent: ${analysis.customer_intent}.`, user, { opportunitySize: analysis.opportunity_size });
+    recordAiExecution(costInput, 'rules', 0); aiCostControl.cacheSet(costInput, { analyzed: true });
+    return json(res, 200, { inquiry: salesInquiryDetail(id, user) });
+  },
+
+  async selectSalesProducts(req, res, id) {
+    const user = currentUser(req); if (!salesCapabilities(user).canQuote) return json(res, user ? 403 : 401, { error: 'Quote editing is not allowed.' });
+    const body = await readJson(req); const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
+    for (const item of Array.isArray(body.products) ? body.products : []) db.prepare('UPDATE sales_inquiry_products SET selected = ?, quantity = ?, proposed_unit_price = ? WHERE inquiry_id = ? AND product_id = ?').run(item.selected === true ? 1 : 0, Math.max(1, Number(item.quantity || 1)), Math.max(0, Number(item.unit_price || 0)), id, Number(item.product_id));
+    return json(res, 200, { inquiry: salesInquiryDetail(id, user) });
+  },
+
+  async generateSalesQuote(req, res, id) {
+    const user = currentUser(req); if (!salesCapabilities(user).canQuote) return json(res, user ? 403 : 401, { error: 'Quote generation is not allowed.' });
+    const body = await readJson(req); const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
+    const items = inquiry.products.filter(item => item.selected); if (!items.length && inquiry.inquiry_type !== 'Freight Quote') return json(res, 400, { error: 'Select at least one product.' });
+    const quoteNumber = `PI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`; let quoteId;
+    db.exec('BEGIN IMMEDIATE'); try {
+      quoteId = Number(db.prepare(`INSERT INTO sales_quotes (quote_number, inquiry_id, customer_id, quote_type, currency, destination, trade_term, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(quoteNumber, id, inquiry.customer_id, body.quote_type || 'Quote', body.currency || 'USD', body.destination || null, body.trade_term || null, user.id).id);
+      const insert = db.prepare('INSERT INTO sales_quote_items (quote_id, product_id, quantity, unit_price, discount_percent, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      items.forEach((item, index) => insert.run(quoteId, item.product_id, item.quantity, item.proposed_unit_price || 0, 0, body.remark || null, index));
+      const totals = db.prepare('SELECT COALESCE(SUM(quantity * unit_price * (1-discount_percent/100)),0) AS total, COALESCE(SUM(quantity * unit_price),0) AS subtotal FROM sales_quote_items WHERE quote_id = ?').get(quoteId);
+      db.prepare("UPDATE sales_quotes SET subtotal = ?, total = ?, status = 'Generated' WHERE id = ?").run(totals.subtotal, totals.total, quoteId);
+      db.prepare("UPDATE sales_inquiries SET status = 'Quoted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); db.exec('COMMIT');
+    } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
+    timeline(inquiry.customer_id, id, 'Quote Generated', `${quoteNumber} generated from Product Library data.`, user, { quoteId });
+    return json(res, 201, { quote: db.prepare('SELECT * FROM sales_quotes WHERE id = ?').get(quoteId), inquiry: salesInquiryDetail(id, user) });
+  },
+
+  async convertSalesOrder(req, res, id) {
+    const user = currentUser(req); if (!salesCapabilities(user).canConvert) return json(res, user ? 403 : 401, { error: 'Order conversion is not allowed.' });
+    const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
+    const quote = db.prepare("SELECT * FROM sales_quotes WHERE inquiry_id = ? ORDER BY created_at DESC LIMIT 1").get(id); if (!quote) return json(res, 409, { error: 'Generate a quote before converting to order.' });
+    const number = `SO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+    const order = db.prepare(`INSERT INTO sales_orders (order_number, inquiry_id, quote_id, customer_id, total, currency, created_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(number, id, quote.id, inquiry.customer_id, quote.total, quote.currency, user.id);
+    db.prepare("UPDATE sales_inquiries SET status = 'Won', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); timeline(inquiry.customer_id, id, 'Order Created', `${number} created.`, user, { orderId: order.id });
+    return json(res, 201, { order });
+  },
   aiCostSettings(req, res) {
     const user = currentUser(req);
     if (!user) return json(res, 401, { error: 'Authentication required.' });
@@ -2566,6 +2686,7 @@ const server = createServer(async (req, res) => {
         aiImageGeneration: aiImageGenerationDebugData(),
         opportunityIntelligence: opportunityDebugData(),
         aiCostControl: aiCostDebugData(),
+        salesIntelligence: salesDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
     }
@@ -2573,6 +2694,18 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handlers.logout(req, res);
     if (req.method === 'GET' && url.pathname === '/api/auth/me') return handlers.me(req, res);
     if (req.method === 'GET' && url.pathname === '/api/dashboard') return handlers.dashboard(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/sales-workspace') return handlers.salesWorkspace(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/sales-inquiries') return await handlers.createSalesInquiry(req, res);
+    const salesAnalyzeMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)\/analyze$/);
+    if (salesAnalyzeMatch && req.method === 'POST') return await handlers.analyzeSalesInquiry(req, res, Number(salesAnalyzeMatch[1]));
+    const salesProductsMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)\/products$/);
+    if (salesProductsMatch && req.method === 'PUT') return await handlers.selectSalesProducts(req, res, Number(salesProductsMatch[1]));
+    const salesQuoteMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)\/quote$/);
+    if (salesQuoteMatch && req.method === 'POST') return await handlers.generateSalesQuote(req, res, Number(salesQuoteMatch[1]));
+    const salesOrderMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)\/convert-order$/);
+    if (salesOrderMatch && req.method === 'POST') return await handlers.convertSalesOrder(req, res, Number(salesOrderMatch[1]));
+    const salesInquiryMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)$/);
+    if (salesInquiryMatch && req.method === 'GET') return handlers.salesInquiry(req, res, Number(salesInquiryMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/ai-cost/settings') return handlers.aiCostSettings(req, res);
     if (req.method === 'PUT' && url.pathname === '/api/ai-cost/settings') return await handlers.updateAiCostSettings(req, res);
     if (req.method === 'POST' && url.pathname === '/api/ai-cost/estimate') return await handlers.estimateAiCost(req, res);

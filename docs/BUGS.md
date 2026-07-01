@@ -31,3 +31,7 @@ Record date, environment, severity, reproduction, expected/actual result, non-se
 
 - No known blocking defect.
 - Real provider actual-cost reconciliation depends on future provider billing metadata; current paid estimates are logged conservatively.
+# Module 07 Part 1
+
+- No known blocking defects.
+- PDF/PI export and real freight-rate calculation are intentionally outside Part 1.
