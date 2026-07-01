@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '005_opportunity_intelligence_engine');
+  assert.equal(database.migrationVersion, '006_ai_cost_control');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -268,7 +268,7 @@ test('Module 05.1 creates reviewable content drafts and image tasks before apply
 
   const generate = mode => fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/generate`, {
     method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ generation_mode: mode, source_media_id: source.id })
+    body: JSON.stringify({ generation_mode: mode, source_media_id: source.id, confirmed: true })
   });
   const standardResponse = await generate('standard');
   const standard = await standardResponse.json();
@@ -352,7 +352,7 @@ test('Module 05.1 creates reviewable content drafts and image tasks before apply
 
   const designer = await login('designer@rspro.ai');
   const designerGenerate = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/ai-content/generate`, {
-    method: 'POST', headers: { Cookie: designer.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_mode: 'fast', source_media_id: source.id })
+    method: 'POST', headers: { Cookie: designer.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ generation_mode: 'fast', source_media_id: source.id, confirmed: true })
   });
   assert.equal(designerGenerate.status, 201);
 
@@ -705,4 +705,72 @@ test('designer foundation access is limited to styles, materials, tags, and medi
   assert.equal(body.capabilities.canViewMedia, true);
   assert.equal(body.capabilities.canEditMedia, false);
   assert.equal(body.capabilities.canViewPrompts, false);
+});
+
+test('Module 06A Supplement 01 controls AI budgets, confirmations, logs, providers, and cache', async () => {
+  const admin = await login('admin@rspro.ai');
+  const sales = await login('sales@rspro.ai');
+
+  const settingsResponse = await fetch(`http://127.0.0.1:${port}/api/ai-cost/settings`, { headers: { Cookie: admin.cookie } });
+  const settings = await settingsResponse.json();
+  assert.equal(settingsResponse.status, 200);
+  assert.equal(settings.settings.daily_budget_usd, 2);
+  assert.equal(settings.settings.monthly_budget_usd, 50);
+  assert.equal(settings.settings.allow_paid_provider, false);
+  assert.equal(settings.settings.cache_ttl_days, 7);
+
+  const salesUpdate = await fetch(`http://127.0.0.1:${port}/api/ai-cost/settings`, {
+    method: 'PUT', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allow_paid_provider: true })
+  });
+  assert.equal(salesUpdate.status, 403);
+
+  const estimateResponse = await fetch(`http://127.0.0.1:${port}/api/ai-cost/estimate`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ module_name: 'test', action_name: 'batch-test', entity_type: 'test', entity_id: '1', provider: 'openai', estimated_cost_usd: 0.02 })
+  });
+  const estimate = await estimateResponse.json();
+  assert.equal(estimateResponse.status, 201);
+  assert.equal(estimate.estimate.requires_confirmation, true);
+  const confirmation = await fetch(`http://127.0.0.1:${port}/api/ai-cost/confirm`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ log_id: estimate.estimate.id })
+  });
+  assert.equal(confirmation.status, 200);
+
+  const library = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const product = library.products.find(item => item.sku === 'CH-JP-505');
+  const detail = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const source = detail.product.media.find(media => media.image_type === 'Main Image');
+  const createTask = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/image-generation-tasks`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source_media_id: source.id, image_type: 'Detail Image', generation_mode: 'standard', provider: 'openai', prompt: 'Cost control fallback test.' })
+  }).then(response => response.json());
+  const runTask = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}/image-generation-tasks/${createTask.imageTask.id}/run`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmed: true })
+  }).then(response => response.json());
+  assert.equal(runTask.imageTask.provider, 'mock');
+
+  const customers = await fetch(`http://127.0.0.1:${port}/api/customers`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const customerId = customers.customers[0].id;
+  const firstRun = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/run-ai`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerate: true, confirmed: true })
+  }).then(response => response.json());
+  assert.ok(firstRun.customer);
+  const cachedRun = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/run-ai`, {
+    method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: '{}'
+  }).then(response => response.json());
+  assert.equal(cachedRun.cached, true);
+
+  const dashboard = await fetch(`http://127.0.0.1:${port}/api/ai-cost/dashboard`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(dashboard.blockedRuns >= 1);
+  const logs = await fetch(`http://127.0.0.1:${port}/api/ai-cost/logs`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(logs.logs.some(log => log.status === 'blocked' && log.blocked_reason === 'Paid provider is disabled.'));
+  assert.ok(logs.logs.some(log => log.status === 'cached'));
+  assert.ok(logs.logs.some(log => log.provider === 'rules' && log.status === 'executed'));
+
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.equal(debug.aiCostControl.settingsStatus, 'ready');
+  assert.ok(debug.aiCostControl.logsCount > 0);
+  assert.ok(debug.aiCostControl.cacheRecordsCount > 0);
 });

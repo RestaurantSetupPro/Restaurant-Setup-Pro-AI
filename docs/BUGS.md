@@ -27,3 +27,7 @@ Record date, environment, severity, reproduction, expected/actual result, non-se
 - The rules provider does not call external enrichment or LLM APIs.
 - No automated email, WhatsApp, Facebook, or LinkedIn sending is implemented.
 - Production enrichment must add compliance, rate-limit, and source-confidence controls.
+# Module 06A Supplement 01
+
+- No known blocking defect.
+- Real provider actual-cost reconciliation depends on future provider billing metadata; current paid estimates are logged conservatively.

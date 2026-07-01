@@ -57,3 +57,6 @@ A customer qualifies when the grade is A+ or A and at least one of email, WhatsA
 ## Future integrations
 
 Google Maps, Apollo, Hunter, LinkedIn, and email providers should be implemented as explicit adapters with rate limits, consent/compliance checks, source attribution, confidence, and audit events. External enrichment must write through the same customer pipeline. Sending providers must remain human-confirmed. Product recommendations must continue to reference Product Intelligence Center as the single source of truth.
+# AI Cost Control Integration
+
+Single and selected-customer AI runs pass through the shared cost framework. Rules-based scoring, product matching, and outreach drafting are logged at zero actual cost. Customer runs are cached for seven days by default and can be intentionally repeated with `regenerate: true`.

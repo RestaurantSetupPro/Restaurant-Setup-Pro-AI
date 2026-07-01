@@ -33,3 +33,6 @@ The Factory uses the adapter contract documented in [AI Image Generation Provide
 ## APIs
 
 Content draft APIs remain under `/api/products/:id/ai-content`. Image task create/list/update/run/batch/retry/cancel/review/apply APIs remain under `/api/products/:id/image-generation-tasks`. Every mutation validates product ownership, role and lifecycle state.
+# AI Cost Control Integration
+
+Generate Everything creates a cost estimate and requires confirmation. Rules output records zero actual cost, while future paid text providers must pass the central provider and budget guard. Draft caching is isolated by product, mode, and operator.

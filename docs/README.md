@@ -36,3 +36,6 @@ Module 05.2 development is complete and awaiting formal product-manager acceptan
 # Opportunity Intelligence
 
 Module 06A documentation: [OPPORTUNITY_INTELLIGENCE_ENGINE.md](./OPPORTUNITY_INTELLIGENCE_ENGINE.md). The module imports sourced customer data, runs rule-based opportunity analysis, references Product Intelligence for recommendations, prepares human-reviewed outreach, and routes qualified opportunities to sales.
+# AI Cost Control
+
+Platform AI operations now share budget limits, human confirmation, provider fallback, audit logs, and a seven-day default cache. See `AI_COST_CONTROL.md`.

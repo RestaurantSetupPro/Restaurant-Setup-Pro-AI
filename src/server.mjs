@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
+import { createAiCostControl } from './services/ai-cost-control.mjs';
 import {
   buildOutreachDraft, contactRoles, customerSources, dataQualityScore, detectGaps, nextActionFor,
   normalizeCustomer, opportunityEngineVersion, parseImportPayload, scoreOpportunity
@@ -24,6 +25,7 @@ const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
 
 let db;
+let aiCostControl;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -102,14 +104,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('005_opportunity_intelligence_engine');
-      databaseDiagnostics.migration = migration?.version === '005_opportunity_intelligence_engine';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('006_ai_cost_control');
+      databaseDiagnostics.migration = migration?.version === '006_ai_cost_control';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 005_opportunity_intelligence_engine was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 006_ai_cost_control was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -117,9 +119,10 @@ function initializeDatabase() {
       ensureMediaColumns();
       ensureImageTaskColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '005_opportunity_intelligence_engine';
+      databaseDiagnostics.migrationVersion = '006_ai_cost_control';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
+    aiCostControl = createAiCostControl(db);
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
     seedDatabase();
@@ -1073,8 +1076,8 @@ function insertImageTask(product, source, mode, imageType, sceneType, userId, ov
   ).id);
 }
 
-function taskProviderEnvironment(task) {
-  const requested = ['mock', 'openai'].includes(task.provider) ? task.provider : (process.env.AI_IMAGE_PROVIDER || 'mock');
+function taskProviderEnvironment(task, providerOverride = null) {
+  const requested = providerOverride || (['mock', 'openai'].includes(task.provider) ? task.provider : (process.env.AI_IMAGE_PROVIDER || 'mock'));
   return { ...process.env, AI_IMAGE_PROVIDER: requested };
 }
 
@@ -1086,7 +1089,13 @@ async function executeImageTask(product, task, user) {
     throw error;
   }
   const source = sourceMediaForProduct(product.id, task.source_media_id);
-  const { config, provider } = createAiImageProvider(taskProviderEnvironment(task));
+  const costInput = aiCostInput({
+    moduleName: 'ai-image-generation', actionName: 'run-image-task', entityType: 'product',
+    entityId: product.id, provider: task.provider, model: process.env.AI_IMAGE_MODEL || 'gpt-image-1',
+    estimatedCost: task.cost_estimate, imageCount: 1, user, fingerprint: `${task.id}:${task.prompt_version}`
+  });
+  const authorization = aiCostControl.authorize(costInput);
+  const { config, provider } = createAiImageProvider(taskProviderEnvironment(task, authorization.provider));
   setImageTaskLifecycle(product.id, task.id, 'running', { provider: config.activeProvider });
   db.prepare(`UPDATE ai_image_generation_tasks SET provider = ?, started_at = CURRENT_TIMESTAMP, completed_at = NULL,
     error_message = NULL, provider_request_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(config.activeProvider, task.id);
@@ -1111,11 +1120,13 @@ async function executeImageTask(product, task, user) {
     );
     setImageTaskLifecycle(product.id, task.id, 'generated', { outputMediaId: mediaId });
     setImageTaskLifecycle(product.id, task.id, 'pending_review', { reviewRequired: true });
+    recordAiExecution(costInput, config.activeProvider, config.activeProvider === 'mock' ? 0 : task.cost_estimate);
     recordSystemEvent('info', 'AI image task generated', { productId: product.id, taskId: task.id, provider: config.activeProvider, outputMediaId: mediaId });
   } catch (error) {
     const message = String(error?.message || 'Image generation failed.').slice(0, 2_000);
     db.prepare('UPDATE ai_image_generation_tasks SET error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(message, task.id);
     setImageTaskLifecycle(product.id, task.id, 'failed', { provider: config.activeProvider, error: message });
+    aiCostControl.failed({ ...costInput, provider: config.activeProvider }, message);
     recordSystemEvent('error', 'AI image task failed', { productId: product.id, taskId: task.id, provider: config.activeProvider, error: message });
   }
   audit(user.id, 'run', 'ai_image_generation_task', String(task.id), { productId: product.id, provider: config.activeProvider });
@@ -1134,6 +1145,59 @@ function requireImageTaskConfirmation(body) {
     error.status = 400;
     throw error;
   }
+}
+
+function aiCostInput({ moduleName, actionName, entityType, entityId, provider = 'rules', model = null,
+  estimatedCost = 0, imageCount = 0, user, fingerprint = '' }) {
+  return {
+    module_name: moduleName, action_name: actionName, entity_type: entityType, entity_id: entityId,
+    provider, model, estimated_cost_usd: Number(estimatedCost || 0), image_count: Number(imageCount || 0),
+    user_id: user?.id, user_role: user?.role, fingerprint
+  };
+}
+
+function prepareAiCostRun(input, body = {}, { requireConfirmation = false } = {}) {
+  const estimate = aiCostControl.estimate(input);
+  const paid = ['openai', 'gemini', 'claude', 'qwen', 'flux', 'ideogram'].includes(String(input.provider).toLowerCase());
+  if (paid && estimate.requires_confirmation && !['Admin', 'Owner'].includes(input.user_role) && !body.confirmation_id) {
+    const error = new Error('Admin or Owner confirmation is required for this paid AI run.');
+    error.status = 403;
+    error.estimate = estimate;
+    throw error;
+  }
+  if ((requireConfirmation || estimate.requires_confirmation) && body.confirmed !== true && !body.confirmation_id) {
+    const error = new Error('Estimated AI cost must be confirmed before execution.');
+    error.status = 409;
+    error.estimate = estimate;
+    throw error;
+  }
+  if (body.confirmation_id) {
+    const confirmed = db.prepare("SELECT id FROM ai_cost_logs WHERE id = ? AND status = 'confirmed'").get(Number(body.confirmation_id));
+    if (!confirmed) { const error = new Error('Confirmed AI cost approval was not found.'); error.status = 409; throw error; }
+  } else if (body.confirmed === true) {
+    db.prepare("UPDATE ai_cost_logs SET status = 'confirmed' WHERE id = ?").run(estimate.id);
+  }
+  const authorization = aiCostControl.authorize({ ...input, estimated_cost_usd: estimate.estimated_cost_usd });
+  return { estimate, authorization, provider: authorization.provider };
+}
+
+function recordAiExecution(input, provider, actualCost = 0) {
+  return aiCostControl.executed({ ...input, provider, actual_cost_usd: actualCost });
+}
+
+function aiCostDebugData() {
+  const dashboard = aiCostControl.dashboard();
+  const lastError = db.prepare("SELECT blocked_reason FROM ai_cost_logs WHERE status = 'failed' ORDER BY created_at DESC, id DESC LIMIT 1").get();
+  return {
+    settingsStatus: 'ready',
+    logsCount: Number(db.prepare('SELECT COUNT(*) AS count FROM ai_cost_logs').get().count),
+    budgetRemaining: dashboard.budgetRemaining,
+    providerMode: aiCostControl.settings().allow_paid_provider ? 'paid-enabled' : 'mock-rules',
+    cacheRecordsCount: Number(db.prepare('SELECT COUNT(*) AS count FROM ai_cache_records WHERE expires_at > CURRENT_TIMESTAMP').get().count),
+    lastBlockedRun: dashboard.lastBlockedRun,
+    lastCostError: lastError?.blocked_reason || null,
+    dashboard
+  };
 }
 
 const opportunityStatuses = Object.freeze(['Imported', 'Cleaned', 'Enriched', 'Scored', 'Recommended', 'Ready for Sales', 'Contacted', 'In Progress', 'Replied', 'Qualified', 'Proposal Needed', 'Won', 'Lost', 'Nurture']);
@@ -1290,6 +1354,7 @@ function runOpportunityEngine(customerId, user) {
   const runId = Number(db.prepare(`INSERT INTO customer_ai_analysis_runs
     (customer_id, run_type, input_snapshot, engine_version, provider, status, created_by)
     VALUES (?, 'Full Run', ?, ?, ?, 'running', ?) RETURNING id`).get(customerId, JSON.stringify(existing), opportunityEngineVersion, process.env.OPPORTUNITY_AI_PROVIDER || 'rules', user.id).id);
+  const baseCost = { module_name: 'opportunity-intelligence', entity_type: 'customer', entity_id: customerId, provider: 'rules', estimated_cost_usd: 0, user_id: user.id };
   try {
     const normalized = normalizeCustomer(existing);
     const hasDecisionMaker = Boolean(db.prepare('SELECT id FROM customer_contacts WHERE customer_id = ? AND is_primary_decision_maker = TRUE LIMIT 1').get(customerId));
@@ -1341,6 +1406,7 @@ function runOpportunityEngine(customerId, user) {
     customerActivity(customerId, 'draft generated', 'Personalized first-touch outreach draft generated for human review.', user.id);
     if (status === 'Ready for Sales') customerActivity(customerId, 'handoff created', 'Opportunity is ready for sales handoff.', user.id);
     db.exec('COMMIT');
+    for (const action_name of ['run-ai', 'product-matching', 'outreach-draft-generation']) aiCostControl.executed({ ...baseCost, action_name, actual_cost_usd: 0 });
     audit(user.id, 'run_ai', 'customers', String(customerId), { runId, score: scoring.score, grade: scoring.grade });
   } catch (error) {
     if (db.isTransaction) db.exec('ROLLBACK');
@@ -1352,6 +1418,71 @@ function runOpportunityEngine(customerId, user) {
 }
 
 const handlers = {
+  aiCostSettings(req, res) {
+    const user = currentUser(req);
+    if (!user) return json(res, 401, { error: 'Authentication required.' });
+    return json(res, 200, { settings: aiCostControl.settings(), canManage: ['Admin', 'Owner'].includes(user.role) });
+  },
+
+  async updateAiCostSettings(req, res) {
+    const user = currentUser(req);
+    if (!['Admin', 'Owner'].includes(user?.role)) return json(res, user ? 403 : 401, { error: 'Only Admin or Owner can update AI budgets.' });
+    const body = await readJson(req);
+    const current = aiCostControl.settings();
+    const amount = (name, fallback) => Math.max(0, Number(body[name] ?? fallback));
+    const cacheDays = Math.max(1, Math.min(365, Number(body.cache_ttl_days ?? current.cache_ttl_days)));
+    const provider = String(body.default_provider ?? current.default_provider).trim().toLowerCase() || 'mock';
+    db.prepare(`UPDATE ai_cost_settings SET daily_budget_usd = ?, monthly_budget_usd = ?, text_budget_usd = ?,
+      image_budget_usd = ?, default_provider = ?, allow_paid_provider = ?, require_confirmation_over_usd = ?,
+      cache_ttl_days = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      amount('daily_budget_usd', current.daily_budget_usd), amount('monthly_budget_usd', current.monthly_budget_usd),
+      amount('text_budget_usd', current.text_budget_usd), amount('image_budget_usd', current.image_budget_usd),
+      provider, body.allow_paid_provider === undefined ? current.allow_paid_provider : body.allow_paid_provider === true,
+      amount('require_confirmation_over_usd', current.require_confirmation_over_usd), cacheDays, current.id
+    );
+    audit(user.id, 'update', 'ai_cost_settings', String(current.id), { provider, allowPaid: body.allow_paid_provider });
+    return json(res, 200, { settings: aiCostControl.settings() });
+  },
+
+  async estimateAiCost(req, res) {
+    const user = currentUser(req);
+    if (!user) return json(res, 401, { error: 'Authentication required.' });
+    const body = await readJson(req);
+    const estimate = aiCostControl.estimate({
+      module_name: requiredText(body.module_name, 'Module name'), action_name: requiredText(body.action_name, 'Action name'),
+      entity_type: String(body.entity_type || '').trim() || null, entity_id: body.entity_id,
+      provider: String(body.provider || aiCostControl.settings().default_provider).toLowerCase(), model: body.model,
+      input_tokens: Number(body.input_tokens || 0), output_tokens: Number(body.output_tokens || 0),
+      image_count: Number(body.image_count || 0), estimated_cost_usd: body.estimated_cost_usd,
+      image_unit_cost_usd: body.image_unit_cost_usd, token_cost_per_million: body.token_cost_per_million, user_id: user.id
+    });
+    return json(res, 201, { estimate });
+  },
+
+  async confirmAiCost(req, res) {
+    const user = currentUser(req);
+    if (!user) return json(res, 401, { error: 'Authentication required.' });
+    const body = await readJson(req);
+    const confirmation = aiCostControl.confirm(Number(body.log_id), user);
+    return confirmation ? json(res, 200, { confirmation }) : json(res, 404, { error: 'AI cost estimate not found.' });
+  },
+
+  aiCostLogs(req, res, url) {
+    const user = currentUser(req);
+    if (!user) return json(res, 401, { error: 'Authentication required.' });
+    const admin = ['Admin', 'Owner'].includes(user.role);
+    const rows = db.prepare(`SELECT ai_cost_logs.*, users.name AS user_name FROM ai_cost_logs
+      LEFT JOIN users ON users.id = ai_cost_logs.user_id ${admin ? '' : 'WHERE ai_cost_logs.user_id = ?'}
+      ORDER BY ai_cost_logs.created_at DESC, ai_cost_logs.id DESC LIMIT ?`).all(...(admin ? [] : [user.id]), Math.min(500, Number(url.searchParams.get('limit') || 100)));
+    return json(res, 200, { logs: rows, scope: admin ? 'all' : 'own' });
+  },
+
+  aiCostDashboard(req, res) {
+    const user = currentUser(req);
+    if (!user) return json(res, 401, { error: 'Authentication required.' });
+    return json(res, 200, { ...aiCostControl.dashboard(), settings: aiCostControl.settings() });
+  },
+
   async login(req, res) {
     const { email, password } = await readJson(req);
     const user = db.prepare("SELECT * FROM users WHERE email = ? AND status = 'active'").get(String(email || '').trim().toLowerCase());
@@ -1406,6 +1537,7 @@ const handlers = {
       knowledge: knowledgeDashboardData().metrics,
       productIntelligence: productIntelligenceDashboardData(),
       opportunityIntelligence: opportunityMetrics(),
+      aiCostControl: aiCostControl.dashboard(),
       pipeline: pipelineRows,
       generatedAt: new Date().toISOString()
     });
@@ -1488,6 +1620,11 @@ const handlers = {
     if (!product) return json(res, 404, { error: 'Product not found.' });
     const body = await readJson(req);
     const mode = allowedType(String(body.generation_mode || 'standard').toLowerCase(), aiFactoryModes, 'Generation mode');
+    const costInput = aiCostInput({ moduleName: 'ai-product-factory', actionName: 'generate-everything', entityType: 'product',
+      entityId: id, provider: 'rules', estimatedCost: 0.01, user, fingerprint: `${id}:${mode}:${user.id}` });
+    const cached = body.regenerate === true ? null : aiCostControl.cacheGet(costInput);
+    if (cached) return json(res, 200, { cached: true, ...cached.cache_value, factory: aiFactorySummary(id, user) });
+    prepareAiCostRun(costInput, body, { requireConfirmation: true });
     const source = sourceMediaForProduct(id, body.source_media_id);
     const generated = factoryGeneratedContent(product);
     let draftId;
@@ -1520,7 +1657,10 @@ const handlers = {
     recordSystemEvent('info', 'AI Product Factory draft generated', { productId: id, draftId, mode, imageTasks: taskIds.length, provider: 'rules' });
     audit(user.id, 'generate', 'ai_product_content_draft', String(draftId), { productId: id, mode, taskIds });
     const factory = aiFactorySummary(id, user);
-    return json(res, 201, { draft: factory.drafts.find(draft => draft.id === draftId), imageTasks: factory.imageTasks.filter(task => taskIds.includes(task.id)), factory });
+    const response = { draft: factory.drafts.find(draft => draft.id === draftId), imageTasks: factory.imageTasks.filter(task => taskIds.includes(task.id)) };
+    recordAiExecution(costInput, 'rules', 0);
+    aiCostControl.cacheSet(costInput, response);
+    return json(res, 201, { ...response, factory });
   },
 
   aiContentDrafts(req, res, id) {
@@ -1655,6 +1795,8 @@ const handlers = {
     if (!product) return json(res, 404, { error: 'Product not found.' });
     const task = imageTaskById(id, taskId);
     if (!task) return json(res, 404, { error: 'Image generation task not found.' });
+    prepareAiCostRun(aiCostInput({ moduleName: 'ai-image-generation', actionName: 'run-image-task', entityType: 'image-task',
+      entityId: taskId, provider: task.provider, estimatedCost: task.cost_estimate, imageCount: 1, user }), body, { requireConfirmation: true });
     return json(res, 200, { imageTask: await executeImageTask(product, task, user), provider: aiImageProviderConfig() });
   },
 
@@ -1671,6 +1813,9 @@ const handlers = {
     if (ids.length > maxPerRun) return json(res, 400, { error: `A maximum of ${maxPerRun} image tasks can run at once.` });
     const tasks = ids.map(taskId => imageTaskById(id, taskId));
     if (tasks.some(task => !task)) return json(res, 404, { error: 'One or more image tasks were not found.' });
+    prepareAiCostRun(aiCostInput({ moduleName: 'ai-image-generation', actionName: 'run-selected-image-tasks', entityType: 'product',
+      entityId: id, provider: tasks.some(task => task.provider === 'openai') ? 'openai' : 'mock',
+      estimatedCost: tasks.reduce((sum, task) => sum + Number(task.cost_estimate || 0), 0), imageCount: tasks.length, user }), body, { requireConfirmation: true });
     const imageTasks = await executeImageTaskBatch(product, tasks, user);
     return json(res, 200, { imageTasks, limit: maxPerRun });
   },
@@ -1686,6 +1831,9 @@ const handlers = {
     const taskRows = db.prepare(`SELECT id FROM ai_image_generation_tasks WHERE product_id = ?
       AND COALESCE(lifecycle_status, status) IN ('draft', 'pending') ORDER BY created_at, id LIMIT ?`).all(id, maxPerRun);
     const tasks = taskRows.map(row => imageTaskById(id, row.id));
+    prepareAiCostRun(aiCostInput({ moduleName: 'ai-image-generation', actionName: 'run-all-image-tasks', entityType: 'product',
+      entityId: id, provider: tasks.some(task => task.provider === 'openai') ? 'openai' : 'mock',
+      estimatedCost: tasks.reduce((sum, task) => sum + Number(task.cost_estimate || 0), 0), imageCount: tasks.length, user }), body, { requireConfirmation: true });
     const imageTasks = await executeImageTaskBatch(product, tasks, user);
     const remaining = db.prepare("SELECT COUNT(*) AS count FROM ai_image_generation_tasks WHERE product_id = ? AND COALESCE(lifecycle_status, status) IN ('draft', 'pending')").get(id).count;
     return json(res, 200, { imageTasks, limit: maxPerRun, remaining });
@@ -1701,6 +1849,8 @@ const handlers = {
     const task = imageTaskById(id, taskId);
     if (!task) return json(res, 404, { error: 'Image generation task not found.' });
     if (task.status !== 'failed') return json(res, 409, { error: 'Only a failed task can be retried.' });
+    prepareAiCostRun(aiCostInput({ moduleName: 'ai-image-generation', actionName: 'retry-image-task', entityType: 'image-task',
+      entityId: taskId, provider: task.provider, estimatedCost: task.cost_estimate, imageCount: 1, user }), body, { requireConfirmation: true });
     setImageTaskLifecycle(id, taskId, 'pending', { source: 'retry' });
     return json(res, 200, { imageTask: await executeImageTask(product, imageTaskById(id, taskId), user) });
   },
@@ -1760,7 +1910,14 @@ const handlers = {
     if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     const product = productKnowledge(id);
     if (!product) return json(res, 404, { error: 'Product not found.' });
+    const body = await readJson(req);
+    const costInput = aiCostInput({ moduleName: 'product-intelligence', actionName: `generate-${type}`, entityType: 'product',
+      entityId: id, provider: 'rules', estimatedCost: 0, user, fingerprint: `${id}:${type}:${product.updated_at}` });
+    const cached = body.regenerate === true ? null : aiCostControl.cacheGet(costInput);
+    if (cached) return json(res, 200, { generated: cached.cache_value, mode: 'cache', cached: true, requiresHumanReview: true });
     const generated = generateProductContent(product, type);
+    recordAiExecution(costInput, 'rules', 0);
+    aiCostControl.cacheSet(costInput, generated);
     audit(user.id, 'generate', 'product_intelligence', String(id), { type, mode: 'rules' });
     return json(res, 200, { generated, mode: 'rules', requiresHumanReview: true });
   },
@@ -2036,8 +2193,17 @@ const handlers = {
   async runCustomerAi(req, res, id) {
     const user = currentUser(req);
     if (!opportunityCapabilities(user).canRunAi) return json(res, user ? 403 : 401, { error: 'Running Opportunity AI is not allowed for this role.' });
-    await readJson(req);
-    return json(res, 200, { customer: runOpportunityEngine(id, user) });
+    const body = await readJson(req);
+    const current = db.prepare('SELECT updated_at FROM customers WHERE id = ?').get(id);
+    if (!current) return json(res, 404, { error: 'Customer not found.' });
+    const costInput = aiCostInput({ moduleName: 'opportunity-intelligence', actionName: 'run-ai', entityType: 'customer',
+      entityId: id, provider: 'rules', estimatedCost: 0, user, fingerprint: String(id) });
+    const cached = body.regenerate === true ? null : aiCostControl.cacheGet(costInput);
+    if (cached) return json(res, 200, { customer: customerDetailData(id), cached: true });
+    prepareAiCostRun(costInput, body);
+    const customer = runOpportunityEngine(id, user);
+    aiCostControl.cacheSet(costInput, { customerId: id });
+    return json(res, 200, { customer });
   },
 
   async runSelectedCustomerAi(req, res) {
@@ -2046,7 +2212,11 @@ const handlers = {
     const body = await readJson(req);
     const ids = normalizedIds(body.customer_ids).slice(0, 50);
     if (!ids.length) return json(res, 400, { error: 'Select at least one customer.' });
+    const costInput = aiCostInput({ moduleName: 'opportunity-intelligence', actionName: 'run-ai-selected', entityType: 'customer-batch',
+      entityId: ids.join(','), provider: 'rules', estimatedCost: ids.length * 0.001, user, fingerprint: ids.join(',') });
+    prepareAiCostRun(costInput, body, { requireConfirmation: true });
     const results = ids.map(id => runOpportunityEngine(id, user));
+    recordAiExecution(costInput, 'rules', 0);
     return json(res, 200, { customers: results });
   },
 
@@ -2395,6 +2565,7 @@ const server = createServer(async (req, res) => {
         aiProductFactory: aiFactoryDebugData(),
         aiImageGeneration: aiImageGenerationDebugData(),
         opportunityIntelligence: opportunityDebugData(),
+        aiCostControl: aiCostDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
     }
@@ -2402,6 +2573,12 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handlers.logout(req, res);
     if (req.method === 'GET' && url.pathname === '/api/auth/me') return handlers.me(req, res);
     if (req.method === 'GET' && url.pathname === '/api/dashboard') return handlers.dashboard(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/ai-cost/settings') return handlers.aiCostSettings(req, res);
+    if (req.method === 'PUT' && url.pathname === '/api/ai-cost/settings') return await handlers.updateAiCostSettings(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/ai-cost/estimate') return await handlers.estimateAiCost(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/ai-cost/confirm') return await handlers.confirmAiCost(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/ai-cost/logs') return handlers.aiCostLogs(req, res, url);
+    if (req.method === 'GET' && url.pathname === '/api/ai-cost/dashboard') return handlers.aiCostDashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/system/ai-image-provider/status') return handlers.aiImageProviderStatus(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity/dashboard') return handlers.opportunityDashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity-queue') return handlers.opportunityQueue(req, res);
@@ -2495,7 +2672,7 @@ const server = createServer(async (req, res) => {
     return serveStatic(req, res, url.pathname);
   } catch (error) {
     console.error(error);
-    return json(res, error.status || 500, { error: error.status ? error.message : 'The server could not complete this request.' });
+    return json(res, error.status || 500, { error: error.status ? error.message : 'The server could not complete this request.', ...(error.estimate ? { estimate: error.estimate } : {}) });
   }
 });
 

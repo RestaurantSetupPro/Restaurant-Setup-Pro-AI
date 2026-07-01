@@ -31,3 +31,6 @@ Provider output creates an unlinked AI Generated `media_assets` row. Reject mark
 ## Production Storage
 
 Local files are a temporary adapter. Production should upload bytes to a private Supabase Storage or Cloudflare R2 bucket, return a durable/signed URL, retain content type and dimensions, and add lifecycle/retention policies. Database records should store URLs and object keys, never large base64 payloads.
+# AI Cost Control Integration
+
+Single, selected, all, and retry image runs are estimated before execution. If a paid provider is disabled or over budget, the request is logged as blocked and runs through the mock adapter so the application remains usable. API keys are never written to cost logs.

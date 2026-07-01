@@ -19,3 +19,6 @@ Status: Implemented locally, pending product acceptance.
 - Live Product Intelligence matching using product/category references.
 - Human-editable outreach drafts, AI priority queue, and sales handoff.
 - Admin/Owner, Sales, VA, and Designer role boundaries.
+# Module 06A Supplement 01 — AI Cost Control
+
+Adds the platform-wide AI budget, estimate, confirmation, logging, cache, and provider-control layer. See `AI_COST_CONTROL.md`.

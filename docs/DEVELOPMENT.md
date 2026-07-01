@@ -38,3 +38,6 @@ Node.js 24+ is required. SQLite is the local fallback; PostgreSQL is used when `
 - Every AI run records input/output snapshots, provider, version, status, and error.
 - All generated outreach remains editable and manually sent.
 - New customer APIs require explicit role checks and activity logging.
+# AI Cost Control Development Rule
+
+Every new AI action must estimate, confirm when required, authorize its provider, write an `ai_cost_logs` result, and define a cache policy before it is considered complete. Business handlers must not call a paid provider directly.

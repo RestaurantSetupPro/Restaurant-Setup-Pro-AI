@@ -733,7 +733,8 @@ async function generateAiFactory() {
   const productId = state.productDetail.product.id;
   const sourceMediaId = Number($('#factory-source-media')?.value);
   const generationMode = $('#factory-mode')?.value || 'standard';
-  await api(`/api/products/${productId}/ai-content/generate`, { method: 'POST', body: JSON.stringify({ source_media_id: sourceMediaId, generation_mode: generationMode }) });
+  if (!window.confirm('Estimated text cost: $0.01. Generate this AI content draft?')) return;
+  await api(`/api/products/${productId}/ai-content/generate`, { method: 'POST', body: JSON.stringify({ source_media_id: sourceMediaId, generation_mode: generationMode, confirmed: true }) });
   toast(t('factory.generated'));
   await renderProductDetail(productId, 'factory');
 }
@@ -950,13 +951,14 @@ async function renderCustomerDetail(id) {
 }
 
 async function runCustomerAi(id) {
-  await api(`/api/customers/${id}/run-ai`, { method: 'POST', body: '{}' }); toast('Opportunity AI completed.'); await renderCustomerDetail(id);
+  await api(`/api/customers/${id}/run-ai`, { method: 'POST', body: JSON.stringify({ confirmed: true }) }); toast('Opportunity AI completed.'); await renderCustomerDetail(id);
 }
 
 async function runSelectedCustomers() {
   const ids = [...document.querySelectorAll('[data-customer-select]:checked')].map(input => Number(input.value));
   if (!ids.length) return toast('Select at least one customer.');
-  await api('/api/customers/run-ai-selected', { method: 'POST', body: JSON.stringify({ customer_ids: ids }) }); toast(`${ids.length} customers processed.`); await renderOpportunityIntelligence();
+  if (!window.confirm(`Estimated cost: $${(ids.length * 0.001).toFixed(3)}. Run AI for ${ids.length} selected customers?`)) return;
+  await api('/api/customers/run-ai-selected', { method: 'POST', body: JSON.stringify({ customer_ids: ids, confirmed: true }) }); toast(`${ids.length} customers processed.`); await renderOpportunityIntelligence();
 }
 
 async function saveOutreach(id, action = null) {
@@ -1312,6 +1314,18 @@ async function renderDebugCenter() {
       <div class="provider-status-grid debug-provider-grid"><span><small>Scoring Engine</small><strong>${esc(data.opportunityIntelligence.scoring_engine_status)}</strong></span><span><small>Product Matching</small><strong>${esc(data.opportunityIntelligence.product_matching_status)}</strong></span><span><small>Duplicate Check</small><strong>${esc(data.opportunityIntelligence.duplicate_check_status)}</strong></span><span><small>Last AI Run</small><strong>${esc(data.opportunityIntelligence.last_ai_run_at || 'Not run')}</strong></span></div>
       <div class="metrics-grid compact-metrics section-gap">${[['customers_count','Customers'],['contacts_count','Contacts'],['gaps_open','Open Gaps'],['outreach_drafts_count','Outreach Drafts'],['opportunity_queue_count','Opportunity Queue']].map(([key,label]) => metricCard(label, data.opportunityIntelligence[key] || 0, 'Module 06A', 'briefcase', key === 'gaps_open' ? 'gold' : 'green', true)).join('')}</div>
       ${data.opportunityIntelligence.last_error ? `<div class="debug-error"><strong>Last Error</strong><pre>${esc(data.opportunityIntelligence.last_error)}</pre></div>` : ''}
+    </article>
+    <article class="panel section-gap">
+      ${panelHeader('AI Cost Control', `${esc(data.aiCostControl.providerMode)} · unified budget guard`)}
+      <div class="metrics-grid compact-metrics">
+        ${metricCard('Today AI Cost', `$${Number(data.aiCostControl.dashboard.todayAiCost || 0).toFixed(4)}`, 'Daily spend', 'money', 'green', true)}
+        ${metricCard('Monthly AI Cost', `$${Number(data.aiCostControl.dashboard.monthlyAiCost || 0).toFixed(4)}`, 'Monthly spend', 'money', 'green', true)}
+        ${metricCard('Budget Remaining', `$${Number(data.aiCostControl.budgetRemaining || 0).toFixed(2)}`, 'Effective remaining budget', 'check', 'green', true)}
+        ${metricCard('Cost Logs', data.aiCostControl.logsCount || 0, 'All AI operations', 'document', 'green', true)}
+        ${metricCard('Cache Records', data.aiCostControl.cacheRecordsCount || 0, 'Active cache entries', 'sparkles', 'green', true)}
+        ${metricCard('Blocked Runs', data.aiCostControl.dashboard.blockedRuns || 0, 'Paid runs protected', 'warning', data.aiCostControl.dashboard.blockedRuns ? 'gold' : 'green', true)}
+      </div>
+      ${data.aiCostControl.lastBlockedRun ? `<div class="debug-error section-gap"><strong>Last Blocked Run</strong><pre>${esc(data.aiCostControl.lastBlockedRun.blocked_reason)}</pre></div>` : ''}
     </article>
     <section class="split-grid section-gap">
       <div class="stack">

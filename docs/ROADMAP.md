@@ -27,3 +27,6 @@ Supabase Storage/R2, durable cloud object storage, async workers, webhooks, prov
 # Current milestone: Module 06A
 
 Opportunity Intelligence Engine is implemented as the first governed customer-intelligence workflow. External enrichment and sending integrations remain future work and must preserve source attribution and human approval.
+# Current Delivery
+
+Module 06A Supplement 01 AI Cost Control is complete. Paid-provider activation remains an explicit Admin/Owner production decision.

@@ -471,6 +471,38 @@ CREATE TABLE IF NOT EXISTS customer_activity_log (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS ai_cost_settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  daily_budget_usd REAL NOT NULL DEFAULT 2, monthly_budget_usd REAL NOT NULL DEFAULT 50,
+  text_budget_usd REAL NOT NULL DEFAULT 20, image_budget_usd REAL NOT NULL DEFAULT 30,
+  default_provider TEXT NOT NULL DEFAULT 'mock', allow_paid_provider INTEGER NOT NULL DEFAULT 0,
+  require_confirmation_over_usd REAL NOT NULL DEFAULT 0.01, cache_ttl_days INTEGER NOT NULL DEFAULT 7,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_cost_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, module_name TEXT NOT NULL, action_name TEXT NOT NULL,
+  entity_type TEXT, entity_id TEXT, provider TEXT NOT NULL, model TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, image_count INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_usd REAL NOT NULL DEFAULT 0, actual_cost_usd REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('estimated', 'confirmed', 'executed', 'blocked', 'failed', 'cached')),
+  blocked_reason TEXT, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_cache_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, module_name TEXT NOT NULL, action_name TEXT NOT NULL,
+  entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, cache_key TEXT NOT NULL UNIQUE,
+  cache_value TEXT NOT NULL DEFAULT '{}', expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO ai_cost_settings
+  (daily_budget_usd, monthly_budget_usd, text_budget_usd, image_budget_usd, default_provider,
+   allow_paid_provider, require_confirmation_over_usd, cache_ttl_days)
+SELECT 2, 50, 20, 30, 'mock', 0, 0.01, 7
+WHERE NOT EXISTS (SELECT 1 FROM ai_cost_settings);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
@@ -507,3 +539,6 @@ CREATE INDEX IF NOT EXISTS idx_customer_ai_runs_customer ON customer_ai_analysis
 CREATE INDEX IF NOT EXISTS idx_customer_recommendations ON customer_product_recommendations(customer_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_outreach_status ON customer_outreach_drafts(customer_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_activity ON customer_activity_log(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_created ON ai_cost_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_module ON ai_cost_logs(module_name, action_name, status);
+CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_cache_records(module_name, action_name, entity_type, entity_id, expires_at);
