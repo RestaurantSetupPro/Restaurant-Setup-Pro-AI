@@ -14,6 +14,8 @@ test('cloud deployment files are safe and complete', () => {
   const opportunityMigration = read('database/migrations/005_opportunity_intelligence_engine.sql');
   const costMigration = read('database/migrations/006_ai_cost_control.sql');
   const salesMigration = read('database/migrations/007_sales_intelligence_part1.sql');
+  const quoteMigration = read('database/migrations/008_quote_pi_builder.sql');
+  const customQuoteMigration = read('database/migrations/009_custom_quote_items.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -49,6 +51,14 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(salesMigration, /CREATE TABLE IF NOT EXISTS sales_quotes/);
   assert.match(salesMigration, /CREATE TABLE IF NOT EXISTS sales_orders/);
   assert.doesNotMatch(salesMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(quoteMigration, /'008_quote_pi_builder'/);
+  assert.match(quoteMigration, /CREATE TABLE IF NOT EXISTS sales_quote_versions/);
+  assert.match(quoteMigration, /CREATE TABLE IF NOT EXISTS sales_order_items/);
+  assert.doesNotMatch(quoteMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(customQuoteMigration, /'009_custom_quote_items'/);
+  assert.match(customQuoteMigration, /CREATE TABLE IF NOT EXISTS sales_quote_custom_items/);
+  assert.match(customQuoteMigration, /CREATE TABLE IF NOT EXISTS sales_order_custom_items/);
+  assert.doesNotMatch(customQuoteMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
   assert.match(render, /healthCheckPath: \/api\/health/);

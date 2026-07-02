@@ -44,3 +44,8 @@ Every new AI action must estimate, confirm when required, authorize its provider
 # Module 07 Sales Rule
 
 Sales quote lines must reference Product Intelligence records. Sales may edit quantity, unit price, discount, and remark only; product specifications must never be copied into a second source of truth.
+# Quote Calculation Rule
+
+Pricing and totals must use deterministic server-side calculations. AI may draft wording or remarks but must never set or calculate price. Quote product facts always join Product Intelligence at read time.
+
+Custom Quote Items must remain quote-scoped, have no `product_id`, and be copied to orders as snapshots. They must never silently create or overwrite Product Library records.

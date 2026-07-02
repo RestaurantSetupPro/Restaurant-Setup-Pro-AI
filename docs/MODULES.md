@@ -25,3 +25,8 @@ Adds the platform-wide AI budget, estimate, confirmation, logging, cache, and pr
 # Module 07 Part 1 — Sales Intelligence
 
 Adds the simplified Sales workspace, inquiry analysis, Product Intelligence recommendations, quote creation, tasks, customer timeline, and quote-to-order conversion. See `SALES_INTELLIGENCE_PART1.md`.
+# Module 07 Part 2 — Quote & PI Builder
+
+Adds the four-section Quote Builder, deterministic totals, payment/freight terms, PI preview, version history, PDF/Excel export, customer messages, and lossless order conversion. See `QUOTE_PI_BUILDER.md`.
+
+Acceptance adjustment 009 adds independent Custom Quote Items without forcing Product Library creation.

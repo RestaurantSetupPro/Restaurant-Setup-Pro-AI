@@ -42,3 +42,6 @@ Platform AI operations now share budget limits, human confirmation, provider fal
 # Sales Intelligence
 
 Module 07 Part 1 provides the streamlined inquiry-to-order Sales workspace. See `SALES_INTELLIGENCE_PART1.md`.
+# Quote & PI Builder
+
+Module 07 Part 2 replaces spreadsheet PI preparation with a versioned, exportable Quote Builder. See `QUOTE_PI_BUILDER.md`.

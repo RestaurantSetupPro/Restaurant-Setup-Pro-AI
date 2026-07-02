@@ -33,3 +33,6 @@ Module 06A Supplement 01 AI Cost Control is complete. Paid-provider activation r
 # Current Delivery
 
 Module 07 Part 1 Business Workflow & Frontend is complete. Later Module 07 parts may add document export and deeper order tracking after acceptance.
+# Current Delivery
+
+Module 07 Part 2 Quote Builder & PI Builder is complete. Automatic message sending and live freight integrations remain future work.

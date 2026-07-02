@@ -35,3 +35,9 @@ Record date, environment, severity, reproduction, expected/actual result, non-se
 
 - No known blocking defects.
 - PDF/PI export and real freight-rate calculation are intentionally outside Part 1.
+# Module 07 Part 2
+
+- No known blocking defects.
+- WhatsApp/email are generated for human sending; direct provider sending is intentionally excluded.
+- Freight cost is entered after external confirmation; no carrier API is connected.
+- Custom item reference images currently use URLs/references; binary object-storage upload remains future work.

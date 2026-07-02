@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '007_sales_intelligence_part1');
+  assert.equal(database.migrationVersion, '009_custom_quote_items');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -784,8 +784,21 @@ test('Module 07 Part 1 completes the simple inquiry to quote and order workflow'
   const sales = await login('sales@rspro.ai');
   assert.ok(['new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'].every(permission => sales.body.user.permissions.includes(permission)));
   const workspace = await fetch(`http://127.0.0.1:${port}/api/sales-workspace`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
-  assert.ok(workspace.customers.length > 0);
+  assert.ok(workspace.customers.length >= 4);
+  assert.ok(['California Coffee Lab', 'Tokyo Sushi House', 'Harbor Bakery Cafe', 'Metro Bubble Tea'].every(name => workspace.customers.some(customer => customer.company_name === name)));
   assert.deepEqual(workspace.inquiryTypes, ['Product Inquiry', 'Restaurant Project', 'Freight Quote', 'Mixed Inquiry']);
+  const newLeadResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_mode: 'new', new_customer: { customer_name: 'Alpha Test Bistro', company: 'Alpha Test Hospitality LLC', country: 'United States', contact_name: 'Alex Rivera', email: 'alex@example.com', phone: '+1 555 0100', source: 'Website' }, inquiry_type: 'Restaurant Project', customer_message: 'We are opening a modern restaurant and need dining chairs, tables and booth seating.', priority: 'High' })
+  });
+  const newLead = await newLeadResponse.json();
+  assert.equal(newLeadResponse.status, 201);
+  assert.equal(newLead.customer_created, true);
+  assert.equal(newLead.inquiry.customer_name, 'Alpha Test Hospitality LLC');
+  const newLeadAnalyze = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${newLead.inquiry.id}/analyze`, { method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(newLeadAnalyze.status, 200);
+  const newLeadWorkspace = await fetch(`http://127.0.0.1:${port}/api/sales-workspace`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.ok(newLeadWorkspace.customers.some(customer => customer.company_name === 'Alpha Test Hospitality LLC'));
   const customer = workspace.customers[0];
   const createResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`, {
     method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
@@ -804,6 +817,7 @@ test('Module 07 Part 1 completes the simple inquiry to quote and order workflow'
   assert.equal(analyzed.inquiry.analysis.opportunity_size, 'Large');
   assert.ok(analyzed.inquiry.products.length > 0);
   assert.ok(analyzed.inquiry.products.every(item => item.product_id && item.sku && item.name));
+  assert.ok(analyzed.inquiry.products.slice(0, Math.min(3, analyzed.inquiry.products.length)).every(item => item.selected), 'top AI recommendations are selected by default');
 
   const selected = analyzed.inquiry.products.slice(0, 2).map(item => ({ product_id: item.product_id, selected: true, quantity: 60, unit_price: 125 }));
   const selectionResponse = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${created.inquiry.id}/products`, {
@@ -833,4 +847,83 @@ test('Module 07 Part 1 completes the simple inquiry to quote and order workflow'
   assert.ok(finalWorkspace.quotes.some(item => item.id === quote.quote.id));
   assert.ok(finalWorkspace.orders.some(item => item.id === order.order.id));
   assert.ok(finalWorkspace.tasks.some(item => item.inquiry_id === created.inquiry.id));
+});
+
+test('Module 07 Part 2 builds, versions, previews, exports, and converts a complete PI', async () => {
+  const sales = await login('sales@rspro.ai');
+  const workspace = await fetch(`http://127.0.0.1:${port}/api/sales-workspace`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  const quote = workspace.quotes[0];
+  const detailResponse = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}`, { headers: { Cookie: sales.cookie } });
+  const detail = await detailResponse.json();
+  assert.equal(detailResponse.status, 200);
+  assert.ok(detail.quote.items.every(item => item.product_id && item.name && item.sku && item.category));
+  assert.equal(detail.quote.summary.total_cbm, null);
+  assert.equal(detail.quote.versions.length, 1);
+
+  const customResponse = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/items/custom`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_name: 'Custom Channel-Back Booth', category: 'Custom Booth Seating', specification: 'Wall-to-wall project-specific design', material: 'Plywood / high-density foam / vinyl', color_finish: 'Customer-selected olive green', size_dimensions: '4200 × 650 × 1100 mm', quantity: 1, unit_price: 4800, cbm: '', gross_weight_kg: '', net_weight_kg: '', remark: 'Final dimensions subject to site measurement.' })
+  });
+  const withCustom = await customResponse.json();
+  assert.equal(customResponse.status, 201);
+  assert.equal(withCustom.quote.custom_items[0].product_id, undefined);
+  assert.equal(withCustom.quote.custom_items[0].item_name, 'Custom Channel-Back Booth');
+  assert.equal(withCustom.quote.custom_items[0].cbm, null);
+
+  const items = detail.quote.items.map((item, index) => ({ id: item.id, quantity: 20 + index, unit_price: 150 + index * 25, discount_percent: 5, remark: 'Approved commercial specification.' }));
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}`, {
+    method: 'PUT', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items, custom_items: withCustom.quote.custom_items, currency: 'USD', valid_until: '2026-08-01', deposit_percent: 50, balance_percent: 70,
+      payment_method: 'TT Bank Transfer', payment_note: '50% deposit before production. 50% balance before shipment.', trade_term: 'DDP',
+      shipping_method: 'Sea', destination: 'Malaysia', destination_port: 'Port Klang', destination_address: 'Kuala Lumpur',
+      freight_cost: 1250, transit_time: '28-35 days', freight_remark: 'Subject to final packing list.', other_charges: 100, other_remark: 'Final color approval required.' })
+  });
+  const updated = await updateResponse.json();
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updated.quote.current_version, 3);
+  assert.equal(updated.quote.all_items.length, updated.quote.items.length + 1);
+  assert.equal(updated.quote.summary.freight_cost, 1250);
+  assert.equal(updated.quote.deposit_percent, 50);
+  assert.equal(updated.quote.balance_percent, 50);
+  assert.ok(updated.quote.summary.grand_total > updated.quote.summary.product_total);
+  assert.equal(Math.round(updated.quote.summary.deposit_amount + updated.quote.summary.balance_amount), Math.round(updated.quote.summary.grand_total));
+
+  const version = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/versions/1`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.equal(version.version.version_number, 1);
+  const whatsapp = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/whatsapp`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.match(whatsapp.message, /quotation .* is ready/i);
+  assert.match(whatsapp.message, /Custom Channel-Back Booth/);
+  const email = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/email`, { headers: { Cookie: sales.cookie } }).then(r => r.json());
+  assert.match(email.subject, /Quotation \/ PI/);
+  const pdf = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/export/pdf`, { headers: { Cookie: sales.cookie } });
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  const pdfBytes = Buffer.from(await pdf.arrayBuffer());
+  assert.equal(pdfBytes.subarray(0, 4).toString(), '%PDF');
+  assert.match(pdfBytes.toString(), /Custom Channel-Back Booth/);
+  const excel = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/export/excel`, { headers: { Cookie: sales.cookie } });
+  assert.match(excel.headers.get('content-type'), /excel/);
+  const excelBody = await excel.text();
+  assert.match(excelBody, /Workbook/);
+  assert.match(excelBody, /Custom Channel-Back Booth/);
+  assert.match(excelBody, /CBM TBC/);
+
+  const duplicateLibrary = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/items/duplicate`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ item_type: 'library', item_id: updated.quote.items[0].id })
+  }).then(r => r.json());
+  assert.equal(duplicateLibrary.quote.items.length, updated.quote.items.length + 1);
+  assert.equal(duplicateLibrary.quote.items.at(-1).quantity, updated.quote.items[0].quantity);
+  const duplicateCustom = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/items/duplicate`, {
+    method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ item_type: 'custom', item_id: updated.quote.custom_items[0].id })
+  }).then(r => r.json());
+  assert.equal(duplicateCustom.quote.custom_items.length, updated.quote.custom_items.length + 1);
+  assert.equal(duplicateCustom.quote.custom_items.at(-1).size_dimensions, updated.quote.custom_items[0].size_dimensions);
+
+  const convert = await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${quote.inquiry_id}/convert-order`, { method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  const order = await convert.json();
+  assert.equal(convert.status, 201);
+  const snapshot = typeof order.order.order_snapshot === 'string' ? JSON.parse(order.order.order_snapshot) : order.order.order_snapshot;
+  assert.equal(snapshot.payment_method, 'TT Bank Transfer');
+  assert.equal(snapshot.trade_term, 'DDP');
+  assert.ok(snapshot.items.length > 0);
+  assert.equal(snapshot.custom_items[0].item_name, 'Custom Channel-Back Booth');
 });

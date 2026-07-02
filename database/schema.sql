@@ -585,7 +585,31 @@ CREATE TABLE IF NOT EXISTS customer_sales_timeline (
   id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE, inquiry_id INTEGER REFERENCES sales_inquiries(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL, description TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS sales_quote_versions (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER NOT NULL REFERENCES sales_quotes(id) ON DELETE CASCADE,
+ version_number INTEGER NOT NULL, snapshot TEXT NOT NULL, created_by INTEGER REFERENCES users(id),
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(quote_id, version_number)
+);
+CREATE TABLE IF NOT EXISTS sales_order_items (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+ product_id INTEGER NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL, unit_price REAL NOT NULL,
+ discount_percent REAL NOT NULL DEFAULT 0, remark TEXT, sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sales_quote_custom_items (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER NOT NULL REFERENCES sales_quotes(id) ON DELETE CASCADE,
+ reference_image_url TEXT, item_name TEXT NOT NULL, category TEXT, specification TEXT, material TEXT, color_finish TEXT,
+ size_dimensions TEXT, quantity INTEGER NOT NULL DEFAULT 1, unit_price REAL NOT NULL DEFAULT 0,
+ discount_percent REAL NOT NULL DEFAULT 0, cbm REAL, gross_weight_kg REAL, net_weight_kg REAL, remark TEXT,
+ sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS sales_order_custom_items (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+ source_quote_custom_item_id INTEGER, item_snapshot TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_sales_inquiries_owner ON sales_inquiries(assigned_sales_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sales_quotes_inquiry ON sales_quotes(inquiry_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sales_tasks_owner ON sales_tasks(assigned_to, status, due_at);
 CREATE INDEX IF NOT EXISTS idx_customer_sales_timeline ON customer_sales_timeline(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_quote_versions ON sales_quote_versions(quote_id, version_number DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_quote_custom_items ON sales_quote_custom_items(quote_id,sort_order,id);
+CREATE INDEX IF NOT EXISTS idx_sales_order_custom_items ON sales_order_custom_items(order_id,id);

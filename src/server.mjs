@@ -24,6 +24,7 @@ const databaseInitializationDelayMs = Number(process.env.DATABASE_INITIALIZATION
 const databaseRetryDelayMs = Number(process.env.DATABASE_RETRY_DELAY_MS || 30_000);
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
+const demoMode = process.env.DEMO_MODE === 'true' || (process.env.DEMO_MODE !== 'false' && process.env.NODE_ENV !== 'production');
 
 let db;
 let aiCostControl;
@@ -105,22 +106,23 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('007_sales_intelligence_part1');
-      databaseDiagnostics.migration = migration?.version === '007_sales_intelligence_part1';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('009_custom_quote_items');
+      databaseDiagnostics.migration = migration?.version === '009_custom_quote_items';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 007_sales_intelligence_part1 was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 009_custom_quote_items was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
       ensureProductColumns();
       ensureMediaColumns();
       ensureImageTaskColumns();
+      ensureQuoteBuilderColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '007_sales_intelligence_part1';
+      databaseDiagnostics.migrationVersion = '009_custom_quote_items';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     aiCostControl = createAiCostControl(db);
@@ -192,7 +194,7 @@ function ensureProductColumns() {
     installation_guide: 'TEXT',
     maintenance_guide: 'TEXT',
     common_problems: 'TEXT',
-    suggested_prompt: 'TEXT'
+    suggested_prompt: 'TEXT', specification: 'TEXT', cbm: 'REAL', gross_weight_kg: 'REAL', net_weight_kg: 'REAL'
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE products ADD COLUMN ${name} ${type}`);
@@ -350,6 +352,18 @@ function seedDatabase() {
   const adminId = db.prepare("SELECT id FROM users WHERE role = 'Admin'").get().id;
   const salesId = db.prepare("SELECT id FROM users WHERE role = 'Sales'").get().id;
   const ownerId = db.prepare("SELECT id FROM users WHERE role = 'Owner'").get().id;
+
+  const demoCustomers = [
+    ['California Coffee Lab', 'Coffee Shop', 'United States', 'San Diego', 'Website'],
+    ['Tokyo Sushi House', 'Restaurant', 'Japan', 'Tokyo', 'Manual'],
+    ['Harbor Bakery Cafe', 'Bakery Cafe', 'Australia', 'Sydney', 'Instagram'],
+    ['Metro Bubble Tea', 'Bubble Tea', 'Malaysia', 'Kuala Lumpur', 'Facebook']
+  ];
+  const findDemoCustomer = db.prepare('SELECT id FROM customers WHERE LOWER(company_name) = LOWER(?) LIMIT 1');
+  const insertDemoCustomer = db.prepare(`INSERT INTO customers
+    (company_name, business_type, country, city, source, source_confidence, confidence_score, created_by)
+    VALUES (?, ?, ?, ?, ?, 80, 80, ?)`);
+  for (const customer of demoCustomers) if (!findDemoCustomer.get(customer[0])) insertDemoCustomer.run(...customer, ownerId);
 
   const configSeeds = {
     'Product Categories': ['Booth Seating', 'Dining Chair', 'Restaurant Table', 'Bar Stool', 'Outdoor Furniture', 'Partition / Divider', 'Counter / Service Bar'],
@@ -1148,6 +1162,14 @@ function requireImageTaskConfirmation(body) {
   }
 }
 
+function ensureQuoteBuilderColumns() {
+  const existing = new Set(db.prepare('PRAGMA table_info(sales_quotes)').all().map(column => column.name));
+  const columns = { quote_date:'TEXT', valid_until:'TEXT', salesperson_id:'INTEGER', discount_percent:'REAL NOT NULL DEFAULT 0', other_charges:'REAL NOT NULL DEFAULT 0', deposit_percent:'REAL NOT NULL DEFAULT 30', balance_percent:'REAL NOT NULL DEFAULT 70', payment_method:"TEXT DEFAULT 'TT Bank Transfer'", payment_note:"TEXT DEFAULT '30% deposit, 70% balance before shipment.'", shipping_method:'TEXT', destination_port:'TEXT', destination_address:'TEXT', freight_cost:'REAL', transit_time:'TEXT', freight_remark:'TEXT', other_remark:'TEXT', current_version:'INTEGER NOT NULL DEFAULT 1' };
+  for (const [name,type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE sales_quotes ADD COLUMN ${name} ${type}`);
+  const orderColumns = new Set(db.prepare('PRAGMA table_info(sales_orders)').all().map(column => column.name));
+  if (!orderColumns.has('order_snapshot')) db.exec("ALTER TABLE sales_orders ADD COLUMN order_snapshot TEXT NOT NULL DEFAULT '{}'");
+}
+
 function aiCostInput({ moduleName, actionName, entityType, entityId, provider = 'rules', model = null,
   estimatedCost = 0, imageCount = 0, user, fingerprint = '' }) {
   return {
@@ -1233,8 +1255,33 @@ function salesInquiryDetail(id, user) {
 
 function salesDebugData() {
   const count = table => Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
-  return { status: 'ready', inquiries: count('sales_inquiries'), analyses: count('sales_inquiry_analyses'), quotes: count('sales_quotes'), orders: count('sales_orders'), openTasks: Number(db.prepare("SELECT COUNT(*) AS count FROM sales_tasks WHERE status = 'Open'").get().count), workflow: 'Inquiry → Analysis → Recommendation → Quote → Order' };
+  return { status: 'ready', inquiries: count('sales_inquiries'), analyses: count('sales_inquiry_analyses'), quotes: count('sales_quotes'), quoteVersions: count('sales_quote_versions'), orders: count('sales_orders'), openTasks: Number(db.prepare("SELECT COUNT(*) AS count FROM sales_tasks WHERE status = 'Open'").get().count), workflow: 'Inquiry → Analysis → Recommendation → Quote → Order' };
 }
+
+function salesQuoteDetail(id, user) {
+  const quote = db.prepare(`SELECT sales_quotes.*, customers.company_name AS customer_name, customers.brand_name AS company,
+    customers.country, users.name AS salesperson, users.email AS salesperson_email
+    FROM sales_quotes JOIN customers ON customers.id=sales_quotes.customer_id LEFT JOIN users ON users.id=COALESCE(sales_quotes.salesperson_id,sales_quotes.created_by)
+    WHERE sales_quotes.id=? ${user.role==='Sales'?'AND sales_quotes.created_by=?':''}`).get(id, ...(user.role==='Sales'?[user.id]:[]));
+  if (!quote) return null;
+  quote.items=db.prepare(`SELECT sqi.*, p.name, p.sku, p.summary AS specification, p.materials, p.size, p.cbm, p.gross_weight_kg, p.net_weight_kg,
+    pc.name AS category,(SELECT ma.file_url FROM product_media_links pml JOIN media_assets ma ON ma.id=pml.media_id WHERE pml.product_id=p.id ORDER BY pml.is_primary DESC LIMIT 1) AS image_url
+    FROM sales_quote_items sqi JOIN products p ON p.id=sqi.product_id LEFT JOIN product_categories pc ON pc.id=p.category_id WHERE sqi.quote_id=? ORDER BY sqi.sort_order,sqi.id`).all(id).map(item=>({...item,item_type:'library',line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}));
+  quote.custom_items=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? ORDER BY sort_order,id').all(id).map(item=>({...item,item_type:'custom',name:item.item_name,image_url:item.reference_image_url,size:item.size_dimensions,materials:item.material,line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}));
+  quote.all_items=[...quote.items,...quote.custom_items];
+  const productSubtotal=quote.all_items.reduce((sum,item)=>sum+Number(item.quantity)*Number(item.unit_price),0);
+  const itemDiscount=quote.all_items.reduce((sum,item)=>sum+Number(item.quantity)*Number(item.unit_price)*Number(item.discount_percent||0)/100,0);
+  const quoteDiscount=productSubtotal*Number(quote.discount_percent||0)/100;
+  const productTotal=productSubtotal-itemDiscount-quoteDiscount; const freight=quote.freight_cost==null?0:Number(quote.freight_cost); const grand=productTotal+freight+Number(quote.other_charges||0);
+  const sumOrTbc=field=>quote.all_items.length&&quote.all_items.every(item=>item[field]!=null)?quote.all_items.reduce((sum,item)=>sum+Number(item[field])*Number(item.quantity),0):null;
+  quote.summary={total_quantity:quote.all_items.reduce((s,i)=>s+Number(i.quantity),0),product_subtotal:productSubtotal,discount:itemDiscount+quoteDiscount,product_total:productTotal,total_cbm:sumOrTbc('cbm'),total_gross_weight:sumOrTbc('gross_weight_kg'),total_net_weight:sumOrTbc('net_weight_kg'),freight_cost:quote.freight_cost==null?null:freight,other_charges:Number(quote.other_charges||0),grand_total:grand,deposit_amount:grand*Number(quote.deposit_percent||0)/100,balance_amount:grand*Number(quote.balance_percent||0)/100};
+  quote.versions=db.prepare('SELECT id,version_number,created_at FROM sales_quote_versions WHERE quote_id=? ORDER BY version_number DESC').all(id);
+  quote.library_options=db.prepare("SELECT products.id,products.sku,products.name,product_categories.name AS category FROM products LEFT JOIN product_categories ON product_categories.id=products.category_id WHERE products.status!='archived' ORDER BY products.name LIMIT 500").all();
+  return quote;
+}
+function saveQuoteVersion(quoteId,user){const quote=salesQuoteDetail(quoteId,user);const version=Number(db.prepare('SELECT COALESCE(MAX(version_number),0)+1 AS v FROM sales_quote_versions WHERE quote_id=?').get(quoteId).v);db.prepare('INSERT INTO sales_quote_versions(quote_id,version_number,snapshot,created_by) VALUES(?,?,?,?)').run(quoteId,version,JSON.stringify(quote),user.id);db.prepare('UPDATE sales_quotes SET current_version=? WHERE id=?').run(version,quoteId);return version;}
+function quoteMessage(quote,type){const name=quote.customer_name||'Customer';const itemSummary=quote.all_items.map(item=>`${item.name} × ${item.quantity}`).join(', ');if(type==='whatsapp')return {message:`Hello ${name},\n\nThank you for your inquiry.\n\nYour quotation ${quote.quote_number} is ready. Items: ${itemSummary}. Please find the attached PI.\n\nIf you have any questions, please let us know.\n\nBest regards,\n${quote.salesperson||'Sales Team'}`};return {subject:`Quotation / PI ${quote.quote_number}`,body:`Dear ${name},\n\nThank you for your inquiry. Please find attached our Proforma Invoice ${quote.quote_number} for ${itemSummary}.\n\nThe quotation is valid until ${quote.valid_until||'the date shown in the PI'}. Please let us know if you need any clarification or adjustment.\n\nBest regards,\n${quote.salesperson||'Sales Team'}\n${quote.salesperson_email||''}`};}
+function simplePdf(text){const safe=String(text).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?');const stream=`BT /F1 11 Tf 45 790 Td ${safe.split('\n').slice(0,45).map((line,i)=>`${i?'0 -16 Td ':''}(${line}) Tj`).join(' ')} ET`;const header='%PDF-1.4\n';const objects=['1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n','2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n','3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n','4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n',`5 0 obj << /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream endobj\n`];let offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(const obj of objects){xref.push(String(offset).padStart(10,'0')+' 00000 n ');offset+=Buffer.byteLength(obj)}const body=header+objects.join('');return Buffer.from(body+`xref\n0 6\n${xref.join('\n')}\ntrailer << /Size 6 /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF`);}
 
 const opportunityStatuses = Object.freeze(['Imported', 'Cleaned', 'Enriched', 'Scored', 'Recommended', 'Ready for Sales', 'Contacted', 'In Progress', 'Replied', 'Qualified', 'Proposal Needed', 'Won', 'Lost', 'Nurture']);
 const outreachChannels = Object.freeze(['Email', 'WhatsApp', 'LinkedIn', 'Facebook']);
@@ -1468,16 +1515,44 @@ const handlers = {
 
   async createSalesInquiry(req, res) {
     const user = currentUser(req); if (!salesCapabilities(user).canCreate) return json(res, user ? 403 : 401, { error: 'Sales Intelligence access denied.' });
-    const body = await readJson(req); const customerId = Number(body.customer_id);
-    const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId); if (!customer) return json(res, 400, { error: 'Customer is required.' });
-    const type = allowedType(body.inquiry_type, inquiryTypes, 'Inquiry type');
-    const id = Number(db.prepare(`INSERT INTO sales_inquiries (customer_id, company, country, inquiry_type, customer_message, attachments, priority, sales_notes, assigned_sales_id, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(customerId, String(body.company || customer.company_name).trim() || null, String(body.country || customer.country || '').trim() || null,
-      type, requiredText(body.customer_message, 'Customer message'), JSON.stringify(body.attachments || []), ['Low','Normal','High','Urgent'].includes(body.priority) ? body.priority : 'Normal', String(body.sales_notes || '').trim() || null, user.id, user.id).id);
-    db.prepare("INSERT INTO sales_tasks (inquiry_id, customer_id, title, status, due_at, assigned_to) VALUES (?, ?, ?, 'Open', ?, ?)").run(id, customerId, `Follow up: ${customer.company_name}`, new Date(Date.now() + 86400000).toISOString(), user.id);
-    timeline(customerId, id, 'Inquiry Received', `${type} received.`, user, { priority: body.priority || 'Normal' });
-    audit(user.id, 'create', 'sales_inquiry', String(id));
-    return json(res, 201, { inquiry: salesInquiryDetail(id, user) });
+    const body = await readJson(req); const type = allowedType(body.inquiry_type, inquiryTypes, 'Inquiry type');
+    let customerId = Number(body.customer_id); let customer; let customerCreated = false;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (body.customer_mode === 'new') {
+        const input = body.new_customer || {};
+        const restaurantName = requiredText(input.customer_name, 'Customer / Restaurant name');
+        const companyName = String(input.company || '').trim() || restaurantName;
+        const created = createCustomerRecord({
+          company_name: companyName, brand_name: companyName === restaurantName ? null : restaurantName,
+          country: input.country, phone: input.phone, whatsapp: input.phone, email: input.email,
+          source: input.source || 'Manual', source_confidence: 70, confidence_score: 70
+        }, input.source || 'Manual', user);
+        customerId = created.id; customerCreated = !created.duplicate;
+        customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+        const contactName = String(input.contact_name || '').trim();
+        if (contactName && !db.prepare('SELECT id FROM customer_contacts WHERE customer_id = ? AND LOWER(full_name) = LOWER(?) LIMIT 1').get(customerId, contactName)) {
+          db.prepare(`INSERT INTO customer_contacts
+            (customer_id, full_name, role, email, phone, whatsapp, source, confidence_score, is_primary_decision_maker, created_by)
+            VALUES (?, ?, 'Other', ?, ?, ?, ?, 70, 1, ?)`).run(customerId, contactName, String(input.email || '').trim() || null,
+            String(input.phone || '').trim() || null, String(input.phone || '').trim() || null, input.source || 'Manual', user.id);
+        }
+      } else {
+        customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+        if (!customer) { const error = new Error('Please select an existing customer or create a new customer.'); error.status = 400; throw error; }
+      }
+      const id = Number(db.prepare(`INSERT INTO sales_inquiries (customer_id, company, country, inquiry_type, customer_message, attachments, priority, sales_notes, assigned_sales_id, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(customerId, String(body.company || customer.company_name).trim() || null, String(body.country || customer.country || '').trim() || null,
+        type, requiredText(body.customer_message, 'Customer message'), JSON.stringify(body.attachments || []), ['Low','Normal','High','Urgent'].includes(body.priority) ? body.priority : 'Normal', String(body.sales_notes || '').trim() || null, user.id, user.id).id);
+      db.prepare("INSERT INTO sales_tasks (inquiry_id, customer_id, title, status, due_at, assigned_to) VALUES (?, ?, ?, 'Open', ?, ?)").run(id, customerId, `Follow up: ${customer.company_name}`, new Date(Date.now() + 86400000).toISOString(), user.id);
+      timeline(customerId, id, 'Inquiry Received', `${type} received.`, user, { priority: body.priority || 'Normal', customerCreated });
+      audit(user.id, 'create', 'sales_inquiry', String(id), { customerCreated });
+      db.exec('COMMIT');
+      return json(res, 201, { inquiry: salesInquiryDetail(id, user), customer_created: customerCreated });
+    } catch (error) {
+      if (db.isTransaction) db.exec('ROLLBACK');
+      throw error;
+    }
   },
 
   salesInquiry(req, res, id) {
@@ -1494,10 +1569,10 @@ const handlers = {
     db.prepare(`INSERT INTO sales_inquiry_analyses (inquiry_id, customer_intent, opportunity_size, restaurant_type, estimated_budget, furniture_categories, missing_information, suggested_next_question, recommended_package, notes, provider, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rules', ?)`).run(id, analysis.customer_intent, analysis.opportunity_size, analysis.restaurant_type, analysis.estimated_budget, JSON.stringify(analysis.furniture_categories), JSON.stringify(analysis.missing_information), analysis.suggested_next_question, analysis.recommended_package, analysis.notes, user.id);
     db.prepare('DELETE FROM sales_inquiry_products WHERE inquiry_id = ?').run(id);
-    const add = db.prepare('INSERT INTO sales_inquiry_products (inquiry_id, product_id, match_reason, proposed_unit_price) VALUES (?, ?, ?, ?)');
+    const add = db.prepare('INSERT INTO sales_inquiry_products (inquiry_id, product_id, match_reason, proposed_unit_price, selected) VALUES (?, ?, ?, ?, ?)');
     const categories = analysis.furniture_categories; if (categories.length) {
       const rows = db.prepare(`SELECT products.id, products.price_range, product_categories.name AS category FROM products JOIN product_categories ON product_categories.id = products.category_id WHERE product_categories.name IN (${categories.map(()=>'?').join(',')}) AND products.status != 'archived' ORDER BY products.proposal_ready_status DESC, products.ai_recommendation_weight DESC LIMIT 12`).all(...categories);
-      for (const product of rows) add.run(id, product.id, `Matched to ${product.category} requirement`, Number(String(product.price_range || '').match(/[\d,.]+/)?.[0].replace(',','') || 0));
+      for (const [index, product] of rows.entries()) add.run(id, product.id, `Matched to ${product.category} requirement`, Number(String(product.price_range || '').match(/[\d,.]+/)?.[0].replace(',','') || 0), index < 3 ? 1 : 0);
     }
     db.prepare("UPDATE sales_inquiries SET status = 'Preparing Quote', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     timeline(inquiry.customer_id, id, 'AI Analysis', `Intent: ${analysis.customer_intent}.`, user, { opportunitySize: analysis.opportunity_size });
@@ -1518,7 +1593,7 @@ const handlers = {
     const items = inquiry.products.filter(item => item.selected); if (!items.length && inquiry.inquiry_type !== 'Freight Quote') return json(res, 400, { error: 'Select at least one product.' });
     const quoteNumber = `PI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`; let quoteId;
     db.exec('BEGIN IMMEDIATE'); try {
-      quoteId = Number(db.prepare(`INSERT INTO sales_quotes (quote_number, inquiry_id, customer_id, quote_type, currency, destination, trade_term, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(quoteNumber, id, inquiry.customer_id, body.quote_type || 'Quote', body.currency || 'USD', body.destination || null, body.trade_term || null, user.id).id);
+      quoteId = Number(db.prepare(`INSERT INTO sales_quotes (quote_number, inquiry_id, customer_id, quote_type, currency, destination, trade_term, quote_date, valid_until, salesperson_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, ?, ?, ?) RETURNING id`).get(quoteNumber, id, inquiry.customer_id, body.quote_type || 'Quote', body.currency || 'USD', body.destination || null, body.trade_term || null, body.valid_until||new Date(Date.now()+30*86400000).toISOString().slice(0,10), user.id, user.id).id);
       const insert = db.prepare('INSERT INTO sales_quote_items (quote_id, product_id, quantity, unit_price, discount_percent, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
       items.forEach((item, index) => insert.run(quoteId, item.product_id, item.quantity, item.proposed_unit_price || 0, 0, body.remark || null, index));
       const totals = db.prepare('SELECT COALESCE(SUM(quantity * unit_price * (1-discount_percent/100)),0) AS total, COALESCE(SUM(quantity * unit_price),0) AS subtotal FROM sales_quote_items WHERE quote_id = ?').get(quoteId);
@@ -1526,15 +1601,31 @@ const handlers = {
       db.prepare("UPDATE sales_inquiries SET status = 'Quoted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); db.exec('COMMIT');
     } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
     timeline(inquiry.customer_id, id, 'Quote Generated', `${quoteNumber} generated from Product Library data.`, user, { quoteId });
-    return json(res, 201, { quote: db.prepare('SELECT * FROM sales_quotes WHERE id = ?').get(quoteId), inquiry: salesInquiryDetail(id, user) });
+    saveQuoteVersion(quoteId,user);
+    return json(res, 201, { quote: salesQuoteDetail(quoteId,user), inquiry: salesInquiryDetail(id, user) });
   },
+
+  salesQuoteDetail(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canView)return json(res,user?403:401,{error:'Access denied.'});const quote=salesQuoteDetail(id,user);return quote?json(res,200,{quote}):json(res,404,{error:'Quote not found.'});},
+  async updateSalesQuote(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Quote editing is not allowed.'});const existing=salesQuoteDetail(id,user);if(!existing)return json(res,404,{error:'Quote not found.'});const b=await readJson(req);for(const item of b.items||[])db.prepare('UPDATE sales_quote_items SET quantity=?,unit_price=?,discount_percent=?,remark=? WHERE quote_id=? AND id=?').run(Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),String(item.remark||'').trim()||null,id,Number(item.id));
+    for(const item of b.custom_items||[])db.prepare(`UPDATE sales_quote_custom_items SET reference_image_url=?,item_name=?,category=?,specification=?,material=?,color_finish=?,size_dimensions=?,quantity=?,unit_price=?,discount_percent=?,cbm=?,gross_weight_kg=?,net_weight_kg=?,remark=?,updated_at=CURRENT_TIMESTAMP WHERE quote_id=? AND id=?`).run(String(item.reference_image_url||'').trim()||null,requiredText(item.item_name,'Custom item name'),String(item.category||'').trim()||null,String(item.specification||'').trim()||null,String(item.material||'').trim()||null,String(item.color_finish||'').trim()||null,String(item.size_dimensions||'').trim()||null,Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),item.cbm===''||item.cbm==null?null:Number(item.cbm),item.gross_weight_kg===''||item.gross_weight_kg==null?null:Number(item.gross_weight_kg),item.net_weight_kg===''||item.net_weight_kg==null?null:Number(item.net_weight_kg),String(item.remark||'').trim()||null,id,Number(item.id));
+    const deposit=Math.min(100,Math.max(0,Number(b.deposit_percent??existing.deposit_percent??30)));const balance=100-deposit;
+    db.prepare(`UPDATE sales_quotes SET currency=?,valid_until=?,discount_percent=?,other_charges=?,deposit_percent=?,balance_percent=?,payment_method=?,payment_note=?,trade_term=?,shipping_method=?,destination=?,destination_port=?,destination_address=?,freight_cost=?,transit_time=?,freight_remark=?,other_remark=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(b.currency||existing.currency,b.valid_until||existing.valid_until,Number(b.discount_percent||0),Number(b.other_charges||0),deposit,balance,b.payment_method||existing.payment_method,b.payment_note||`${deposit}% deposit before production. ${balance}% balance before shipment.`,b.trade_term||null,b.shipping_method||null,b.destination||null,b.destination_port||null,b.destination_address||null,b.freight_cost===''||b.freight_cost==null?null:Number(b.freight_cost),b.transit_time||null,b.freight_remark||null,b.other_remark||null,id);
+    const version=saveQuoteVersion(id,user);audit(user.id,'update','sales_quote',String(id),{version});return json(res,200,{quote:salesQuoteDetail(id,user)});},
+  async addQuoteLibraryItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const p=db.prepare('SELECT * FROM products WHERE id=?').get(Number(b.product_id));if(!p)return json(res,404,{error:'Product not found.'});const price=Number(String(p.price_range||'').match(/[\d,.]+/)?.[0].replace(',','')||0);const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,quantity,unit_price,discount_percent,sort_order) VALUES(?,?,1,?,0,?)').run(id,p.id,price,sort);saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
+  async addQuoteCustomItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_custom_items WHERE quote_id=?').get(id).count);const row=db.prepare(`INSERT INTO sales_quote_custom_items(quote_id,reference_image_url,item_name,category,specification,material,color_finish,size_dimensions,quantity,unit_price,discount_percent,cbm,gross_weight_kg,net_weight_kg,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).get(id,String(b.reference_image_url||'').trim()||null,requiredText(b.item_name,'Custom item name'),String(b.category||'').trim()||null,String(b.specification||'').trim()||null,String(b.material||'').trim()||null,String(b.color_finish||'').trim()||null,String(b.size_dimensions||'').trim()||null,Math.max(1,Number(b.quantity||1)),Math.max(0,Number(b.unit_price||0)),Math.min(100,Math.max(0,Number(b.discount_percent||0))),b.cbm===''||b.cbm==null?null:Number(b.cbm),b.gross_weight_kg===''||b.gross_weight_kg==null?null:Number(b.gross_weight_kg),b.net_weight_kg===''||b.net_weight_kg==null?null:Number(b.net_weight_kg),String(b.remark||'').trim()||null,sort);saveQuoteVersion(id,user);return json(res,201,{custom_item_id:Number(row.id),quote:salesQuoteDetail(id,user)});},
+  async duplicateQuoteItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const itemId=Number(b.item_id);if(b.item_type==='custom'){const source=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Custom item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_custom_items WHERE quote_id=?').get(id).count);db.prepare(`INSERT INTO sales_quote_custom_items(quote_id,reference_image_url,item_name,category,specification,material,color_finish,size_dimensions,quantity,unit_price,discount_percent,cbm,gross_weight_kg,net_weight_kg,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,source.reference_image_url,source.item_name,source.category,source.specification,source.material,source.color_finish,source.size_dimensions,source.quantity,source.unit_price,source.discount_percent,source.cbm,source.gross_weight_kg,source.net_weight_kg,source.remark,sort);}else{const source=db.prepare('SELECT * FROM sales_quote_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Library item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,quantity,unit_price,discount_percent,remark,sort_order) VALUES(?,?,?,?,?,?,?)').run(id,source.product_id,source.quantity,source.unit_price,source.discount_percent,source.remark,sort);}saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
+  salesQuoteVersion(req,res,id,version){const user=currentUser(req);if(!salesCapabilities(user).canView)return json(res,user?403:401,{error:'Access denied.'});const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});const row=db.prepare('SELECT * FROM sales_quote_versions WHERE quote_id=? AND version_number=?').get(id,version);if(!row)return json(res,404,{error:'Version not found.'});return json(res,200,{version:{...row,snapshot:parseJsonValue(row.snapshot)}});},
+  salesQuoteMessage(req,res,id,type){const user=currentUser(req);const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});return json(res,200,quoteMessage(quote,type));},
+  salesQuoteExport(req,res,id,type){const user=currentUser(req);const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});const tbc=value=>value==null?'TBC':Number(value).toFixed(2);const lines=[`PROFORMA INVOICE ${quote.quote_number}`,`Customer: ${quote.customer_name}`,`Country: ${quote.country||''}`,`Date: ${quote.quote_date||''}`,`Valid Until: ${quote.valid_until||''}`,'',...quote.all_items.map(i=>`${i.sku||'CUSTOM'} | ${i.name} | ${i.specification||''} | ${i.materials||''} | ${i.size||''} | Qty ${i.quantity} x ${i.unit_price} = ${i.line_total.toFixed(2)} | CBM ${tbc(i.cbm)} | GW ${tbc(i.gross_weight_kg)} | NW ${tbc(i.net_weight_kg)}`),'',`Product Total: ${quote.summary.product_total.toFixed(2)}`,`Freight: ${quote.summary.freight_cost==null?'Freight To Be Quoted':quote.summary.freight_cost.toFixed(2)}`,`Grand Total: ${quote.currency} ${quote.summary.grand_total.toFixed(2)}`,`Deposit ${Number(quote.deposit_percent||0)}%: ${quote.summary.deposit_amount.toFixed(2)}`,`Balance ${Number(quote.balance_percent||0)}%: ${quote.summary.balance_amount.toFixed(2)}`,quote.payment_note||'',quote.other_remark||''];if(type==='pdf'){const body=simplePdf(lines.join('\n'));res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${quote.quote_number}.pdf"`});return res.end(body);}const xml=`<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="PI" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Table>${lines.map(line=>`<Row><Cell><Data ss:Type="String">${String(line).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</Data></Cell></Row>`).join('')}</Table></Worksheet></Workbook>`;res.writeHead(200,{'Content-Type':'application/vnd.ms-excel','Content-Disposition':`attachment; filename="${quote.quote_number}.xls"`});return res.end(xml);},
 
   async convertSalesOrder(req, res, id) {
     const user = currentUser(req); if (!salesCapabilities(user).canConvert) return json(res, user ? 403 : 401, { error: 'Order conversion is not allowed.' });
     const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
     const quote = db.prepare("SELECT * FROM sales_quotes WHERE inquiry_id = ? ORDER BY created_at DESC LIMIT 1").get(id); if (!quote) return json(res, 409, { error: 'Generate a quote before converting to order.' });
     const number = `SO-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
-    const order = db.prepare(`INSERT INTO sales_orders (order_number, inquiry_id, quote_id, customer_id, total, currency, created_by) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(number, id, quote.id, inquiry.customer_id, quote.total, quote.currency, user.id);
+    const detail=salesQuoteDetail(quote.id,user);const order = db.prepare(`INSERT INTO sales_orders (order_number, inquiry_id, quote_id, customer_id, total, currency, order_snapshot, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`).get(number, id, quote.id, inquiry.customer_id, detail.summary.grand_total, quote.currency, JSON.stringify(detail), user.id);
+    const addOrderItem=db.prepare('INSERT INTO sales_order_items(order_id,product_id,quantity,unit_price,discount_percent,remark,sort_order) VALUES(?,?,?,?,?,?,?)');detail.items.forEach((item,index)=>addOrderItem.run(order.id,item.product_id,item.quantity,item.unit_price,item.discount_percent,item.remark,index));
+    const addCustomOrderItem=db.prepare('INSERT INTO sales_order_custom_items(order_id,source_quote_custom_item_id,item_snapshot) VALUES(?,?,?)');detail.custom_items.forEach(item=>addCustomOrderItem.run(order.id,item.id,JSON.stringify(item)));
     db.prepare("UPDATE sales_inquiries SET status = 'Won', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); timeline(inquiry.customer_id, id, 'Order Created', `${number} created.`, user, { orderId: order.id });
     return json(res, 201, { order });
   },
@@ -2691,6 +2782,7 @@ const server = createServer(async (req, res) => {
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/login') return await handlers.login(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { demo_mode: demoMode });
     if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handlers.logout(req, res);
     if (req.method === 'GET' && url.pathname === '/api/auth/me') return handlers.me(req, res);
     if (req.method === 'GET' && url.pathname === '/api/dashboard') return handlers.dashboard(req, res);
@@ -2706,6 +2798,21 @@ const server = createServer(async (req, res) => {
     if (salesOrderMatch && req.method === 'POST') return await handlers.convertSalesOrder(req, res, Number(salesOrderMatch[1]));
     const salesInquiryMatch = url.pathname.match(/^\/api\/sales-inquiries\/(\d+)$/);
     if (salesInquiryMatch && req.method === 'GET') return handlers.salesInquiry(req, res, Number(salesInquiryMatch[1]));
+    const quoteVersionMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/versions\/(\d+)$/);
+    if(quoteVersionMatch&&req.method==='GET')return handlers.salesQuoteVersion(req,res,Number(quoteVersionMatch[1]),Number(quoteVersionMatch[2]));
+    const quoteExportMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/export\/(pdf|excel)$/);
+    if(quoteExportMatch&&req.method==='GET')return handlers.salesQuoteExport(req,res,Number(quoteExportMatch[1]),quoteExportMatch[2]);
+    const quoteMessageMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/(whatsapp|email)$/);
+    if(quoteMessageMatch&&req.method==='GET')return handlers.salesQuoteMessage(req,res,Number(quoteMessageMatch[1]),quoteMessageMatch[2]);
+    const quoteAddLibraryMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/library$/);
+    if(quoteAddLibraryMatch&&req.method==='POST')return await handlers.addQuoteLibraryItem(req,res,Number(quoteAddLibraryMatch[1]));
+    const quoteAddCustomMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/custom$/);
+    if(quoteAddCustomMatch&&req.method==='POST')return await handlers.addQuoteCustomItem(req,res,Number(quoteAddCustomMatch[1]));
+    const quoteDuplicateMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/duplicate$/);
+    if(quoteDuplicateMatch&&req.method==='POST')return await handlers.duplicateQuoteItem(req,res,Number(quoteDuplicateMatch[1]));
+    const quoteDetailMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)$/);
+    if(quoteDetailMatch&&req.method==='GET')return handlers.salesQuoteDetail(req,res,Number(quoteDetailMatch[1]));
+    if(quoteDetailMatch&&req.method==='PUT')return await handlers.updateSalesQuote(req,res,Number(quoteDetailMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/ai-cost/settings') return handlers.aiCostSettings(req, res);
     if (req.method === 'PUT' && url.pathname === '/api/ai-cost/settings') return await handlers.updateAiCostSettings(req, res);
     if (req.method === 'POST' && url.pathname === '/api/ai-cost/estimate') return await handlers.estimateAiCost(req, res);
