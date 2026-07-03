@@ -1,5 +1,13 @@
 # Development
 
+## Pricing invariants
+
+Product Library reference prices may be recalculated; historical Quote/PI prices must never be derived again after creation. Paid/customer pricing stays in Quote/PI snapshots. Cost and rule internals must pass through server-side sensitive-data redaction.
+
+## Product confidentiality rule
+
+Supplier, purchasing-cost, cost-history, and profit fields must be removed from unauthorized API payloads, not merely hidden in the UI. New Product/Variant endpoints must use the shared redaction policy and include Sales/VA non-disclosure tests. Imports retain source audit fields and Quote/PI queries must require `library_status = 'Approved'`.
+
 All modules require Migration, API, Debug, Test and Documentation.
 
 ## Start and Test
@@ -49,3 +57,9 @@ Sales quote lines must reference Product Intelligence records. Sales may edit qu
 Pricing and totals must use deterministic server-side calculations. AI may draft wording or remarks but must never set or calculate price. Quote product facts always join Product Intelligence at read time.
 
 Custom Quote Items must remain quote-scoped, have no `product_id`, and be copied to orders as snapshots. They must never silently create or overwrite Product Library records.
+# Product Foundation Rule
+
+Product data follows Single Source of Truth. Customer-specific quantity, price, specification, finish, color, and remarks must remain in Quote/PI/Order snapshots and must never update Product Library or Variant defaults.
+# Spreadsheet Import Rule
+
+Supplier spreadsheet imports must always create traceable drafts before Product Library writes. Approval endpoints must enforce role permissions and never silently overwrite a possible product match.

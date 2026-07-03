@@ -14,6 +14,10 @@
 
 New Inquiry supports both existing customers and inline creation of a new customer. A new lead can be captured and analyzed without leaving the inquiry page. Customer and optional primary contact records are created with the inquiry, while existing-customer behavior is preserved.
 
+## Global Proforma Invoice Template V1
+
+PI Preview, PDF, and Excel share one English international PI structure. Company identity comes from `organization_settings`, receiving bank data comes from `organization_bank_accounts`, and Sales can enter buyer references, project information, addresses, packing, production, shipping, remarks, and special terms in Quote Builder. Missing logistics values display `TBC`; missing bank details display the approved fallback message.
+
 ## Objective
 
 Replace spreadsheet quotation preparation with a four-section modern Quote Builder that produces a complete Proforma Invoice in under three minutes.
@@ -71,3 +75,12 @@ Conversion creates an order snapshot and normalized order items, copying custome
 ## Boundaries
 
 Part 2 generates messages and files but does not automatically send WhatsApp or email. Freight provider integrations and electronic signatures remain future work.
+# Module 07 Final PI Optimization
+
+The customer-facing PI uses a six-column product table: Product Image, SKU, Description, Qty, Unit Price, and Amount. The description is assembled from the quote snapshot (name, size, confirmed material, finish, and color) and does not include long marketing copy.
+
+Customer-confirmed material, finish, color name, swatch image URL, and customer remark are stored on quote items. They never update Product Library defaults. The complete quote snapshot is preserved when converting a quote to an order.
+
+Packing information is presented once in Packing Summary. Total packages, CBM, gross weight, and net weight can be overridden by Sales; missing values display as TBC. All PI money values use international formatting such as `USD 7,770.00`.
+
+PDF output is A4 with consistent margins, section hierarchy, a two-page balanced layout, and page-numbered company footers. Preview, PDF, and editable Excel share the same PI information architecture.

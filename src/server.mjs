@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -9,6 +9,7 @@ import { aiImageProviderConfig, createAiImageProvider } from './services/ai-imag
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
+import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
   buildOutreachDraft, contactRoles, customerSources, dataQualityScore, detectGaps, nextActionFor,
   normalizeCustomer, opportunityEngineVersion, parseImportPayload, scoreOpportunity
@@ -106,23 +107,27 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('009_custom_quote_items');
-      databaseDiagnostics.migration = migration?.version === '009_custom_quote_items';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('017_product_price_engine');
+      databaseDiagnostics.migration = migration?.version === '017_product_price_engine';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 009_custom_quote_items was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 017_product_price_engine was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
       ensureProductColumns();
+      ensureProductMasterDataColumns();
+      ensurePimFoundationColumns();
+      ensureProductBusinessReadinessColumns();
+      ensureProductPriceEngineColumns();
       ensureMediaColumns();
       ensureImageTaskColumns();
       ensureQuoteBuilderColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '009_custom_quote_items';
+      databaseDiagnostics.migrationVersion = '017_product_price_engine';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     aiCostControl = createAiCostControl(db);
@@ -194,7 +199,9 @@ function ensureProductColumns() {
     installation_guide: 'TEXT',
     maintenance_guide: 'TEXT',
     common_problems: 'TEXT',
-    suggested_prompt: 'TEXT', specification: 'TEXT', cbm: 'REAL', gross_weight_kg: 'REAL', net_weight_kg: 'REAL'
+    suggested_prompt: 'TEXT', specification: 'TEXT', cbm: 'REAL', gross_weight_kg: 'REAL', net_weight_kg: 'REAL',
+    library_status: "TEXT NOT NULL DEFAULT 'Active'", visibility: "TEXT NOT NULL DEFAULT 'Website + Quote'",
+    short_description: 'TEXT', website_description: 'TEXT', quote_description: 'TEXT', website_price_display: "TEXT NOT NULL DEFAULT 'Request Quote'"
   };
   for (const [name, type] of Object.entries(columns)) {
     if (!existing.has(name)) db.exec(`ALTER TABLE products ADD COLUMN ${name} ${type}`);
@@ -230,15 +237,15 @@ function ensureImageTaskColumns() {
 }
 
 const rolePermissions = Object.freeze({
-  Admin: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
-  Owner: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
-  Sales: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
-  Designer: ['dashboard', 'products', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'content-ai', 'core-foundation'],
-  VA: ['dashboard', 'products', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
+  Admin: ['dashboard', 'products', 'product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes', 'product-library-variants', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
+  Owner: ['dashboard', 'products', 'product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes', 'product-library-variants', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'debug-center', 'settings', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
+  Sales: ['dashboard', 'products', 'product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes', 'product-library-variants', 'knowledge-dashboard', 'opportunity-intelligence', 'images', 'proposals', 'cases', 'crm', 'sales-ai', 'content-ai', 'core-foundation', 'new-inquiry', 'sales-customers', 'sales-quotes', 'sales-orders', 'sales-tasks'],
+  Designer: ['dashboard', 'products', 'product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes', 'product-library-variants', 'knowledge-dashboard', 'images', 'proposals', 'cases', 'content-ai', 'core-foundation'],
+  VA: ['dashboard', 'products', 'product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes', 'product-library-variants', 'knowledge-dashboard', 'opportunity-intelligence', 'imports', 'cases', 'crm', 'content-ai', 'core-foundation']
 });
 
 const foundationTypes = Object.freeze({
-  configs: ['Product Categories', 'Store Types', 'Styles', 'Materials', 'Colors', 'Countries', 'States / Regions', 'Currencies', 'Units', 'Lead Time Options', 'Product Status Options', 'Proposal Status Options', 'CRM Signal Types', 'CRM Contact Priority', 'Content Status Options'],
+  configs: ['Product Categories', 'Store Types', 'Styles', 'Materials', 'Finishes', 'Colors', 'Countries', 'States / Regions', 'Currencies', 'Units', 'Trade Terms', 'Visibility Options', 'Lead Time Options', 'Product Status Options', 'Proposal Status Options', 'CRM Signal Types', 'CRM Contact Priority', 'Content Status Options'],
   tags: ['Store Type Tags', 'Style Tags', 'Business Tags', 'Material Tags', 'Product Feature Tags', 'Customer Signal Tags', 'Content Tags', 'AI Recommendation Tags'],
   media: ['Product Photo', 'AI Generated Image', 'Project Case Photo', 'PDF', 'CAD', 'DWG', '3D Model', 'Video', 'Document'],
   prompts: ['Product Description Prompt', 'Image Generation Prompt', 'Sales DM Prompt', 'Email Prompt', 'WhatsApp Prompt', 'Proposal Prompt', 'Content Script Prompt', 'SEO Prompt']
@@ -252,7 +259,9 @@ const skuCategoryCodes = Object.freeze({
   'Bar Stool': 'ST',
   'Outdoor Furniture': 'OD',
   'Partition / Divider': 'PT',
-  'Counter / Service Bar': 'CT'
+  'Counter / Service Bar': 'CT',
+  'Table Top': 'TP', 'Table Base': 'BA', Sofa: 'SF', Cabinet: 'CB', Divider: 'DV', Lighting: 'LG', Decor: 'DC',
+  'Custom Furniture': 'CF', 'Kitchen Equipment': 'KE', Tableware: 'TW', Others: 'OT'
 });
 const skuStyleCodes = Object.freeze({
   California: 'CA', Japandi: 'JP', Industrial: 'IN', Luxury: 'LX', Modern: 'MD', Minimalist: 'MN'
@@ -265,9 +274,14 @@ const knowledgeTermSeeds = Object.freeze({
   customer_type: ['New Store', 'Expansion', 'Remodel', 'Chain Brand', 'Design Firm', 'Mature Store']
 });
 const budgetLevels = Object.freeze(['Economy', 'Standard', 'Premium', 'Luxury']);
+const productLibraryStatuses = Object.freeze(['Draft','Pending Review','Approved','Inactive','Archived']);
+const productVisibilities = Object.freeze(['Website + Quote','Quote Only','Internal Only','Hidden']);
+const variantStatuses = Object.freeze(['Active','Hidden','Coming Soon','Discontinued']);
 const productImageTypes = Object.freeze([
   'Main Image', 'Front View', 'Back View', 'Left View', 'Right View', '45 Degree View', 'Detail Image', 'White Background Image',
-  'Scene Image - Coffee Shop', 'Scene Image - Restaurant', 'Scene Image - Bubble Tea', 'Scene Image - Bar'
+  'Scene Image - Coffee Shop', 'Scene Image - Restaurant', 'Scene Image - Bubble Tea', 'Scene Image - Bar',
+  'Gallery Image', 'Dimension Drawing', 'CAD Drawing', 'Packaging Image', 'Installation Image', 'Finish / Color Sample', 'Certificate Image',
+  'Specification PDF', 'Assembly Manual', 'Installation Guide', 'Test Report', 'Warranty', 'Supplier Catalog', 'Material Certificate'
 ]);
 const productImageStatuses = Object.freeze(['Uploaded', 'AI Generated', 'Approved', 'Rejected']);
 const productIntelligenceFields = Object.freeze([
@@ -275,7 +289,8 @@ const productIntelligenceFields = Object.freeze([
   'english_description', 'short_sales_description', 'proposal_usage_notes', 'sales_talking_points',
   'seo_title', 'seo_description', 'meta_keywords', 'slug', 'canonical_url', 'image_alt', 'image_caption', 'product_keywords',
   'llm_summary', 'use_cases', 'best_for', 'not_recommended_for', 'comparison', 'advantages', 'disadvantages', 'faq', 'buying_guide',
-  'installation_guide', 'maintenance_guide', 'common_problems', 'suggested_prompt'
+  'installation_guide', 'maintenance_guide', 'common_problems', 'suggested_prompt',
+  'library_status', 'visibility', 'short_description', 'website_description', 'quote_description', 'website_price_display'
 ]);
 const aiFactoryModes = Object.freeze(['fast', 'standard', 'premium']);
 const aiDraftStatuses = Object.freeze(['draft', 'pending_review', 'approved', 'rejected', 'applied']);
@@ -304,6 +319,7 @@ const aiFactoryImagePlans = Object.freeze({
 
 const demoUsers = [
   ['Avery Brooks', 'admin@rspro.ai', 'Admin', 'AB'],
+  ['Riley Morgan', 'salesadmin@rspro.ai', 'Admin', 'RM'],
   ['Morgan Chen', 'owner@rspro.ai', 'Owner', 'MC'],
   ['Jordan Lee', 'sales@rspro.ai', 'Sales', 'JL'],
   ['Taylor Kim', 'designer@rspro.ai', 'Designer', 'TK'],
@@ -331,6 +347,9 @@ function seedDatabase() {
     const password = hashPassword(seedPassword);
     for (const user of demoUsers) insert.run(user[0], user[1], password, user[2], user[3]);
   }
+  if (!db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get('salesadmin@rspro.ai')) {
+    db.prepare('INSERT INTO users (name,email,password_hash,role,initials) VALUES (?,?,?,?,?)').run('Riley Morgan','salesadmin@rspro.ai',hashPassword(seedPassword),'Admin','RM');
+  }
 
   const categoryCount = db.prepare('SELECT COUNT(*) AS count FROM product_categories').get().count;
   if (!categoryCount) {
@@ -348,10 +367,18 @@ function seedDatabase() {
   db.prepare("UPDATE product_categories SET name = 'Restaurant Table', slug = 'restaurant-table' WHERE slug = 'dining-tables'").run();
   const ensureCategory = db.prepare('INSERT OR IGNORE INTO product_categories (name, slug) VALUES (?, ?)');
   for (const name of Object.keys(skuCategoryCodes)) ensureCategory.run(name, makeCode(name).toLowerCase());
+  for (const name of ['Dining Chair','Bar Stool','Table Top','Table Base','Booth Seating','Sofa','Outdoor Furniture','Cabinet','Divider','Lighting','Decor','Custom Furniture','Kitchen Equipment','Tableware','Others']) ensureCategory.run(name, makeCode(name).toLowerCase());
 
   const adminId = db.prepare("SELECT id FROM users WHERE role = 'Admin'").get().id;
   const salesId = db.prepare("SELECT id FROM users WHERE role = 'Sales'").get().id;
   const ownerId = db.prepare("SELECT id FROM users WHERE role = 'Owner'").get().id;
+
+  const organizationDefaults = {
+    company_logo: '/favicon.svg', company_name: 'Restaurant Setup Pro', address: '', city_state_zip: '', country: '',
+    phone: '', email: 'sales@restaurantsetuppro.com', website: 'https://restaurantsetuppro.com', registration_no: ''
+  };
+  const insertOrganizationSetting = db.prepare('INSERT OR IGNORE INTO organization_settings (key, value, updated_by) VALUES (?, ?, ?)');
+  for (const [key, value] of Object.entries(organizationDefaults)) insertOrganizationSetting.run(key, value, ownerId);
 
   const demoCustomers = [
     ['California Coffee Lab', 'Coffee Shop', 'United States', 'San Diego', 'Website'],
@@ -370,14 +397,21 @@ function seedDatabase() {
     'Store Types': ['Coffee Shop', 'Bubble Tea', 'Restaurant', 'Bar', 'Bakery Cafe', 'Fast Casual', 'Japanese Restaurant'],
     Styles: ['California', 'Japandi', 'Industrial', 'Luxury', 'Minimalist', 'Modern', 'Mediterranean', 'Scandinavian'],
     Materials: ['Solid Wood', 'Plywood', 'Metal', 'Stainless Steel', 'PU Leather', 'Fabric', 'Laminate', 'Marble Look', 'Stone Top'],
+    Finishes: ['Natural', 'Painted', 'Powder Coated', 'Brushed', 'Polished', 'Matte', 'Gloss'],
+    Colors: ['Natural', 'Black', 'White', 'Grey', 'Brown', 'Custom'],
     Currencies: ['USD', 'CNY', 'MYR', 'THB'],
     Units: ['mm', 'cm', 'inch', 'sqft', 'sqm', 'CBM'],
+    'Trade Terms': ['EXW', 'FOB', 'CIF', 'DDP'],
+    'Visibility Options': ['Website + Quote', 'Quote Only', 'Internal Only', 'Hidden'],
+    'Product Status Options': ['Draft', 'Pending Review', 'Approved', 'Inactive', 'Archived'],
     'CRM Signal Types': ['Expansion', 'New Store', 'Remodel', 'Mature Store', 'Chain Brand', 'Design Firm']
   };
   const insertConfig = db.prepare('INSERT OR IGNORE INTO system_configs (config_type, name, code, sort_order, active, is_system, created_by) VALUES (?, ?, ?, ?, 1, 1, ?)');
   for (const [type, names] of Object.entries(configSeeds)) {
     names.forEach((name, index) => insertConfig.run(type, name, makeCode(name), index + 1, adminId));
   }
+  db.prepare("UPDATE system_configs SET active=0 WHERE config_type='Product Status Options' AND name IN ('Active','Hidden','New','Best Seller','Coming Soon','Discontinued')").run();
+  db.prepare("UPDATE products SET library_status=CASE library_status WHEN 'Active' THEN 'Approved' WHEN 'New' THEN 'Approved' WHEN 'Best Seller' THEN 'Approved' WHEN 'Coming Soon' THEN 'Pending Review' WHEN 'Hidden' THEN 'Inactive' WHEN 'Discontinued' THEN 'Inactive' ELSE library_status END").run();
 
   const tagSeeds = {
     'Store Type Tags': ['Coffee Shop', 'Bubble Tea', 'Restaurant', 'Bar', 'Fast Casual', 'Japanese Restaurant', 'Bakery', 'Bakery Cafe'],
@@ -391,6 +425,29 @@ function seedDatabase() {
     names.forEach(name => insertTag.run(name, type, `TAG-${makeCode(name)}`, adminId));
   }
 
+  const categoryTemplates = {
+    'Dining Chair': [['Frame Material','Select'],['Seat Material','Select'],['Finish','Select'],['Seat Height','Number','mm'],['Overall Size','Text']],
+    'Table Top': [['Shape','Select'],['Size','Text'],['Thickness','Number','mm'],['Material','Select'],['Edge Style','Select'],['Surface Finish','Select']],
+    'Table Base': [['Base Type','Select'],['Base Size','Text'],['Height','Number','mm'],['Material','Select'],['Finish','Select'],['Suitable Top Size','Text']],
+    'Booth Seating': [['Shape','Select'],['Length','Number','mm'],['Seat Depth','Number','mm'],['Back Height','Number','mm'],['Upholstery','Select'],['Foam Density','Text']],
+    'Kitchen Equipment': [['Voltage','Text'],['Power','Text'],['Frequency','Text'],['Capacity','Text'],['Gas Type','Select'],['Certification','Multi-select']],
+    Tableware: [['Diameter','Number','mm'],['Volume','Number','ml'],['Material','Select'],['Dishwasher Safe','Boolean'],['Microwave Safe','Boolean'],['Stackable','Boolean']],
+    Lighting: [['Wattage','Text'],['Voltage','Text'],['Color Temperature','Text'],['IP Rating','Text'],['Installation Type','Select']]
+  };
+  const findAttribute = db.prepare('SELECT id FROM product_attribute_definitions WHERE code = ?');
+  const addAttribute = db.prepare('INSERT INTO product_attribute_definitions(name,code,data_type,unit,active,sort_order) VALUES(?,?,?,?,1,?)');
+  const linkAttribute = db.prepare('INSERT OR IGNORE INTO product_attribute_category_links(attribute_id,category_id) VALUES(?,?)');
+  for (const [categoryName, attributes] of Object.entries(categoryTemplates)) {
+    const categoryId = db.prepare('SELECT id FROM product_categories WHERE name = ?').get(categoryName)?.id;
+    if (!categoryId) continue;
+    attributes.forEach(([name, dataType, unit], index) => {
+      const code = `PIM-${makeCode(categoryName)}-${makeCode(name)}`;
+      let attributeId = findAttribute.get(code)?.id;
+      if (!attributeId) attributeId = Number(addAttribute.run(name, code, dataType, unit || null, index + 1).lastInsertRowid);
+      linkAttribute.run(attributeId, categoryId);
+    });
+  }
+
   const productCount = db.prepare('SELECT COUNT(*) AS count FROM products').get().count;
   if (!productCount) {
     const categoryIds = Object.fromEntries(db.prepare('SELECT slug, id FROM product_categories').all().map(row => [row.slug, row.id]));
@@ -400,7 +457,7 @@ function seedDatabase() {
       [categoryIds['booth-seating'], 'BTH-3018', 'Linework Modular Booth', 'Configurable channel-back booth for restaurant layouts.', 'Plywood / high-density foam / vinyl', 48, 'review'],
       [categoryIds['outdoor-furniture'], 'OUT-4044', 'Pacific Rope Lounge Chair', 'All-weather rope lounge chair for patios.', 'Aluminum / olefin rope', 38, 'draft']
     ];
-    const insertProduct = db.prepare('INSERT INTO products (category_id, sku, name, summary, materials, lead_time_days, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const insertProduct = db.prepare("INSERT INTO products (category_id, sku, name, summary, materials, lead_time_days, status, library_status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'Approved', ?)");
     for (const product of products) insertProduct.run(...product, adminId);
   }
 
@@ -532,7 +589,7 @@ async function readJson(req) {
   let body = '';
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 1_000_000) throw new Error('Request body too large');
+    if (body.length > 30_000_000) throw new Error('Request body too large');
   }
   return body ? JSON.parse(body) : {};
 }
@@ -543,6 +600,7 @@ function publicUser(row) {
     name: row.name,
     email: row.email,
     role: row.role,
+    businessRole: String(row.email).toLowerCase() === 'salesadmin@rspro.ai' ? 'Sales Admin' : row.role,
     initials: row.initials,
     permissions: rolePermissions[row.role] || []
   };
@@ -561,6 +619,67 @@ function currentUser(req) {
 function requires(user, permission) {
   return Boolean(user && rolePermissions[user.role]?.includes(permission));
 }
+
+function masterValues(type, fallback = []) {
+  if (fallback === variantStatuses) return [...variantStatuses];
+  const rows = db.prepare('SELECT name FROM system_configs WHERE config_type=? AND active=1 ORDER BY sort_order,name').all(type).map(row=>row.name);
+  return rows.length ? rows : [...fallback];
+}
+
+function ensureProductMasterDataColumns() {
+  const ensure = (table, columns) => {
+    const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
+    for (const [name,type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  };
+  ensure('product_categories',{active:'INTEGER NOT NULL DEFAULT 1',sort_order:'INTEGER NOT NULL DEFAULT 0',updated_at:'TEXT'});
+  ensure('system_tags',{sort_order:'INTEGER NOT NULL DEFAULT 0'});
+  ensure('product_attribute_definitions',{show_in_library:'INTEGER NOT NULL DEFAULT 1',show_on_website:'INTEGER NOT NULL DEFAULT 0',show_in_quote:'INTEGER NOT NULL DEFAULT 0',show_in_pi:'INTEGER NOT NULL DEFAULT 0',internal_only:'INTEGER NOT NULL DEFAULT 0'});
+  db.exec('CREATE INDEX IF NOT EXISTS idx_product_categories_active_sort ON product_categories(active,sort_order,name)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_system_tags_group_sort ON system_tags(tag_type,active,sort_order,tag_name)');
+  db.prepare('INSERT OR IGNORE INTO product_attribute_category_links(attribute_id,category_id) SELECT id,category_id FROM product_attribute_definitions WHERE category_id IS NOT NULL').run();
+}
+
+function ensurePimFoundationColumns() {
+  const ensure = (table, columns) => {
+    const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
+    for (const [name, type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  };
+  ensure('products', { default_supplier:'TEXT', supplier_sku:'TEXT', supplier_cost:'REAL', supplier_lead_time_days:'INTEGER', supplier_moq:'REAL', supplier_notes:'TEXT' });
+  ensure('product_variants', { material:'TEXT', finish:'TEXT', color:'TEXT', moq:'REAL', lead_time_days:'INTEGER', cbm:'REAL', gross_weight_kg:'REAL', net_weight_kg:'REAL', packing_info:'TEXT', default_supplier:'TEXT', supplier_sku:'TEXT', supplier_cost:'REAL', supplier_lead_time_days:'INTEGER', supplier_moq:'REAL', supplier_notes:'TEXT' });
+  ensure('media_assets', { variant_id:'INTEGER', document_type:'TEXT' });
+  ensure('sales_quote_items', { product_snapshot:'TEXT' });
+  db.exec('CREATE INDEX IF NOT EXISTS idx_media_assets_product_variant ON media_assets(related_module, related_record_id, variant_id)');
+}
+
+function ensureProductBusinessReadinessColumns(){
+  const ensure=(table,columns)=>{const existing=new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column=>column.name));for(const [name,type] of Object.entries(columns))if(!existing.has(name))db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)};
+  ensure('product_import_batches',{supplier_code:'TEXT',started_at:'TEXT',completed_at:'TEXT'});
+  const auditColumns={source_supplier:'TEXT',source_file:'TEXT',source_sheet:'TEXT',source_row:'INTEGER',import_batch_id:'INTEGER',imported_at:'TEXT',imported_by:'INTEGER',last_updated_by:'INTEGER'};
+  ensure('products',auditColumns);ensure('product_variants',auditColumns);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_products_import_batch ON products(import_batch_id,imported_at)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_variants_import_batch ON product_variants(import_batch_id,imported_at)');
+}
+
+function ensureProductPriceEngineColumns(){
+  const ensure=(table,columns)=>{const existing=new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column=>column.name));for(const [name,type] of Object.entries(columns))if(!existing.has(name))db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)};
+  ensure('product_variants',{supplier_currency:'TEXT',exchange_rate:'REAL',converted_cost:'REAL',pricing_rule_id:'INTEGER',pricing_status:"TEXT NOT NULL DEFAULT 'Needs Pricing Review'",pricing_confidence:'INTEGER',price_manual_override:'INTEGER NOT NULL DEFAULT 0',price_override_by:'INTEGER',price_override_at:'TEXT'});
+  ensure('sales_quote_items',{pricing_source:"TEXT NOT NULL DEFAULT 'Reference'",reference_price_snapshot:'REAL',cost_snapshot:'REAL',cost_currency_snapshot:'TEXT',final_selling_price_snapshot:'REAL'});
+  db.exec('CREATE INDEX IF NOT EXISTS idx_price_rules_match ON product_price_rules(active,effective_date,supplier_name,category_id,currency)');
+}
+
+function canManageProductLibrary(user) {
+  return Boolean(user && (['Admin', 'Owner'].includes(user.role) || String(user.email).toLowerCase() === 'salesadmin@rspro.ai'));
+}
+
+const sensitiveProductFields=new Set(['default_supplier','supplier_sku','supplier_cost','supplier_currency','supplier_moq','supplier_lead_time_days','supplier_notes','cost_price','converted_cost','exchange_rate','pricing_rule_id','pricing_rule','multiplier','fixed_addon','minimum_margin','purchase_cost_history','profit','profit_margin','source_supplier','cost_snapshot','cost_currency_snapshot']);
+function canViewSensitiveProductData(user){return Boolean(user&&['Admin','Owner','General Manager','Purchasing'].includes(user.role))}
+function redactSensitiveProductData(value,user){if(canViewSensitiveProductData(user)||value==null)return value;if(Array.isArray(value))return value.map(item=>redactSensitiveProductData(item,user));if(typeof value!=='object')return value;const result={};for(const [key,item] of Object.entries(value)){if(sensitiveProductFields.has(key))continue;if(key==='supplier')continue;result[key]=redactSensitiveProductData(item,user)}return result}
+function redactImportBatch(batch,user){if(!batch)return batch;const result=redactSensitiveProductData(batch,user);if(!canViewSensitiveProductData(user))for(const key of ['supplier_name','supplier_code','supplier_contact','supplier_country','supplier_currency','exchange_rate','import_remark'])delete result[key];return result}
+
+const pricingRoundingRules=Object.freeze(['No rounding','Round to nearest 1','Round to nearest 5','Round to nearest 10','End with .90','End with .99']);
+function roundReferencePrice(value,rule){const amount=Number(value);if(rule==='Round to nearest 1')return Math.round(amount);if(rule==='Round to nearest 5')return Math.round(amount/5)*5;if(rule==='Round to nearest 10')return Math.round(amount/10)*10;if(rule==='End with .90')return Math.floor(amount)+.9;if(rule==='End with .99')return Math.floor(amount)+.99;return Math.round(amount*100)/100}
+function matchingPriceRule({supplier,categoryId,currency='USD'}){return db.prepare(`SELECT * FROM product_price_rules WHERE active=1 AND effective_date<=CURRENT_DATE AND currency=? AND (supplier_name IS NULL OR LOWER(supplier_name)=LOWER(?)) AND (category_id IS NULL OR category_id=?) ORDER BY CASE WHEN supplier_name IS NOT NULL AND category_id IS NOT NULL THEN 1 WHEN supplier_name IS NOT NULL THEN 2 WHEN category_id IS NOT NULL THEN 3 ELSE 4 END,effective_date DESC,id DESC LIMIT 1`).get(currency,String(supplier||''),Number(categoryId)||0)}
+function calculateReferencePrice({supplierCost,supplierCurrency='USD',exchangeRate=1,supplier,categoryId,currency='USD'}){const cost=Number(supplierCost);if(!Number.isFinite(cost)||cost<0)return {reference_price:null,converted_cost:null,pricing_status:'Needs Pricing Review',pricing_confidence:0,rule:null};const rate=Number(exchangeRate)||1,converted=supplierCurrency===currency?cost:cost/rate,rule=matchingPriceRule({supplier,categoryId,currency});if(!rule)return {reference_price:null,converted_cost:Math.round(converted*100)/100,pricing_status:'Needs Pricing Review',pricing_confidence:40,rule:null};const raw=converted*Number(rule.multiplier)+Number(rule.fixed_addon||0);return {reference_price:roundReferencePrice(raw,rule.rounding_rule),converted_cost:Math.round(converted*100)/100,pricing_status:'Calculated',pricing_confidence:rule.supplier_name&&rule.category_id?100:rule.supplier_name?90:rule.category_id?80:70,rule}}
 
 function audit(userId, action, entityType, entityId = null, metadata = null) {
   db.prepare('INSERT INTO audit_log (user_id, action, entity_type, entity_id, metadata) VALUES (?, ?, ?, ?, ?)')
@@ -629,8 +748,12 @@ function productReadiness(product) {
 
 function productWithTags(id) {
   const product = db.prepare(`
-    SELECT products.*, product_categories.name AS category
+    SELECT products.*, product_categories.name AS category, pib.source_file_name AS import_batch_file,
+      imported_user.name AS imported_by_name, updated_user.name AS last_updated_by_name
     FROM products LEFT JOIN product_categories ON product_categories.id = products.category_id
+    LEFT JOIN product_import_batches pib ON pib.id=products.import_batch_id
+    LEFT JOIN users imported_user ON imported_user.id=products.imported_by
+    LEFT JOIN users updated_user ON updated_user.id=products.last_updated_by
     WHERE products.id = ?
   `).get(id);
   if (!product) return null;
@@ -650,6 +773,9 @@ function productWithTags(id) {
   product.related_count = db.prepare("SELECT COUNT(*) AS count FROM product_relationships WHERE source_product_id = ? AND relationship_type = 'recommended'").get(id).count;
   product.case_count = db.prepare('SELECT COUNT(*) AS count FROM product_case_links WHERE product_id = ?').get(id).count;
   product.media_count = db.prepare('SELECT COUNT(*) AS count FROM product_media_links WHERE product_id = ?').get(id).count;
+  product.main_image_url = db.prepare("SELECT ma.file_url FROM product_media_links pml JOIN media_assets ma ON ma.id=pml.media_id WHERE pml.product_id=? AND ma.image_status!='Rejected' ORDER BY pml.is_primary DESC,CASE WHEN ma.image_type='Main Image' THEN 0 ELSE 1 END,pml.sort_order LIMIT 1").get(id)?.file_url||null;
+  const variantPricing=db.prepare("SELECT MIN(reference_price) AS minimum,MAX(reference_price) AS maximum,COUNT(reference_price) AS priced FROM product_variants WHERE product_id=? AND status='Active' AND reference_price IS NOT NULL").get(id);product.reference_price=variantPricing?.minimum??null;product.reference_price_max=variantPricing?.maximum??null;product.reference_price_display=variantPricing?.priced?(variantPricing.minimum===variantPricing.maximum?`USD ${Number(variantPricing.minimum).toFixed(2)}`:`USD ${Number(variantPricing.minimum).toFixed(2)} - ${Number(variantPricing.maximum).toFixed(2)}`):(product.price_range||'Request Quote');
+  product.variant_count = Number(db.prepare('SELECT COUNT(*) AS count FROM product_variants WHERE product_id=?').get(id).count);
   product.main_image_count = db.prepare("SELECT COUNT(*) AS count FROM product_media_links pml JOIN media_assets ma ON ma.id = pml.media_id WHERE pml.product_id = ? AND (pml.is_primary = 1 OR ma.image_type = 'Main Image') AND ma.image_status != 'Rejected'").get(id).count;
   product.ai_tags = db.prepare("SELECT keyword FROM product_keywords WHERE product_id = ? AND keyword_type = 'ai' ORDER BY keyword").all(id).map(row => row.keyword);
   product.product_readiness = productReadiness(product);
@@ -721,9 +847,31 @@ function knowledgeOptions(productId = 0) {
     categories: db.prepare('SELECT id, name FROM product_categories ORDER BY name').all(),
     budgetLevels,
     imageTypes: productImageTypes,
-    imageStatuses: productImageStatuses
+    imageStatuses: productImageStatuses,
+    libraryStatuses: productLibraryStatuses,
+    visibilities: productVisibilities,
+    variantStatuses: masterValues('Product Status Options',variantStatuses),
+    masterData:{materials:masterValues('Materials'),finishes:masterValues('Finishes'),colors:masterValues('Colors'),units:masterValues('Units'),currencies:masterValues('Currencies'),tradeTerms:masterValues('Trade Terms'),visibilities:masterValues('Visibility Options',productVisibilities),productStatuses:masterValues('Product Status Options',productLibraryStatuses)}
   };
 }
+
+function productFoundation(id) {
+  const categoryId=db.prepare('SELECT category_id FROM products WHERE id=?').get(id)?.category_id;
+  const definitions=attributeMasterRows().filter(attribute=>!attribute.category_ids.length||attribute.category_ids.includes(Number(categoryId)));
+  return {
+    variants: db.prepare(`SELECT pv.*,pib.source_file_name AS import_batch_file,iu.name AS imported_by_name,uu.name AS last_updated_by_name
+      FROM product_variants pv LEFT JOIN product_import_batches pib ON pib.id=pv.import_batch_id
+      LEFT JOIN users iu ON iu.id=pv.imported_by LEFT JOIN users uu ON uu.id=pv.last_updated_by
+      WHERE pv.product_id=? ORDER BY pv.sort_order,pv.id`).all(id),
+    attributeDefinitions: definitions.filter(attribute=>Number(attribute.active)===1),
+    attributeValues: db.prepare('SELECT pav.*,pad.name,pad.code,pad.unit,pv.variant_name FROM product_attribute_values pav JOIN product_attribute_definitions pad ON pad.id=pav.attribute_id LEFT JOIN product_variants pv ON pv.id=pav.variant_id WHERE pav.product_id=? ORDER BY pad.sort_order,pad.name,pv.sort_order').all(id),
+    relatedProducts: db.prepare("SELECT p.id,p.sku,p.name FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? AND pfr.relationship_type='related' ORDER BY pfr.sort_order,p.name").all(id),
+    frequentlyBoughtTogether: db.prepare("SELECT p.id,p.sku,p.name FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? AND pfr.relationship_type='frequently_bought_together' ORDER BY pfr.sort_order,p.name").all(id)
+  };
+}
+
+function attributeMasterRows(){return db.prepare('SELECT * FROM product_attribute_definitions ORDER BY sort_order,name').all().map(attribute=>({...attribute,category_ids:db.prepare('SELECT category_id FROM product_attribute_category_links WHERE attribute_id=? ORDER BY category_id').all(attribute.id).map(row=>Number(row.category_id)),options:db.prepare('SELECT * FROM product_attribute_options WHERE attribute_id=? ORDER BY sort_order,option_value').all(attribute.id)}))}
+function syncAttributeMaster(attributeId,body){if(Array.isArray(body.category_ids)){db.prepare('DELETE FROM product_attribute_category_links WHERE attribute_id=?').run(attributeId);const insert=db.prepare('INSERT INTO product_attribute_category_links(attribute_id,category_id) VALUES(?,?)');normalizedIds(body.category_ids).forEach(categoryId=>insert.run(attributeId,categoryId))}if(Array.isArray(body.options)){db.prepare('DELETE FROM product_attribute_options WHERE attribute_id=?').run(attributeId);const insert=db.prepare('INSERT INTO product_attribute_options(attribute_id,option_value,active,sort_order) VALUES(?,?,?,?)');body.options.map(option=>typeof option==='string'?{option_value:option}:option).filter(option=>String(option.option_value||'').trim()).forEach((option,index)=>insert.run(attributeId,String(option.option_value).trim(),option.active===false?0:1,Number(option.sort_order??index)))}}
 
 function knowledgeDashboardData() {
   const products = db.prepare('SELECT id FROM products WHERE status != ? ORDER BY updated_at DESC').all('archived').map(row => productKnowledge(row.id));
@@ -1164,10 +1312,23 @@ function requireImageTaskConfirmation(body) {
 
 function ensureQuoteBuilderColumns() {
   const existing = new Set(db.prepare('PRAGMA table_info(sales_quotes)').all().map(column => column.name));
-  const columns = { quote_date:'TEXT', valid_until:'TEXT', salesperson_id:'INTEGER', discount_percent:'REAL NOT NULL DEFAULT 0', other_charges:'REAL NOT NULL DEFAULT 0', deposit_percent:'REAL NOT NULL DEFAULT 30', balance_percent:'REAL NOT NULL DEFAULT 70', payment_method:"TEXT DEFAULT 'TT Bank Transfer'", payment_note:"TEXT DEFAULT '30% deposit, 70% balance before shipment.'", shipping_method:'TEXT', destination_port:'TEXT', destination_address:'TEXT', freight_cost:'REAL', transit_time:'TEXT', freight_remark:'TEXT', other_remark:'TEXT', current_version:'INTEGER NOT NULL DEFAULT 1' };
+  const columns = { quote_date:'TEXT', valid_until:'TEXT', salesperson_id:'INTEGER', discount_percent:'REAL NOT NULL DEFAULT 0', other_charges:'REAL NOT NULL DEFAULT 0', deposit_percent:'REAL NOT NULL DEFAULT 30', balance_percent:'REAL NOT NULL DEFAULT 70', payment_method:"TEXT DEFAULT 'TT Bank Transfer'", payment_note:"TEXT DEFAULT '30% deposit, 70% balance before shipment.'", shipping_method:'TEXT', origin_port:'TEXT', destination_port:'TEXT', destination_address:'TEXT', freight_cost:'REAL', transit_time:'TEXT', freight_remark:'TEXT', other_remark:'TEXT', contact_person:'TEXT', buyer_phone:'TEXT', buyer_email:'TEXT', billing_address:'TEXT', buyer_reference_no:'TEXT', project_name:'TEXT', total_packages:'INTEGER', total_cbm_override:'REAL', total_gross_weight_override:'REAL', total_net_weight_override:'REAL', production_time:'TEXT', special_terms:'TEXT', bank_account_id:'INTEGER', current_version:'INTEGER NOT NULL DEFAULT 1' };
   for (const [name,type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE sales_quotes ADD COLUMN ${name} ${type}`);
+  db.exec(`CREATE TABLE IF NOT EXISTS organization_bank_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, account_name TEXT NOT NULL, beneficiary_name TEXT, bank_name TEXT,
+    bank_address TEXT, account_number TEXT, swift_bic TEXT, routing_number TEXT, iban TEXT, bank_country TEXT,
+    payment_currency TEXT, active INTEGER NOT NULL DEFAULT 1, is_default INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
   const orderColumns = new Set(db.prepare('PRAGMA table_info(sales_orders)').all().map(column => column.name));
   if (!orderColumns.has('order_snapshot')) db.exec("ALTER TABLE sales_orders ADD COLUMN order_snapshot TEXT NOT NULL DEFAULT '{}'");
+  const itemColumns = { confirmed_material:'TEXT', confirmed_finish:'TEXT', confirmed_color_name:'TEXT', customer_remark:'TEXT', swatch_image_url:'TEXT' };
+  for (const table of ['sales_quote_items','sales_quote_custom_items']) {
+    const present = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
+    for (const [name,type] of Object.entries(itemColumns)) if (!present.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  }
+  const quoteItemColumns = new Set(db.prepare('PRAGMA table_info(sales_quote_items)').all().map(column => column.name));
+  if (!quoteItemColumns.has('variant_id')) db.exec('ALTER TABLE sales_quote_items ADD COLUMN variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL');
+  if (!quoteItemColumns.has('variant_snapshot')) db.exec('ALTER TABLE sales_quote_items ADD COLUMN variant_snapshot TEXT');
 }
 
 function aiCostInput({ moduleName, actionName, entityType, entityId, provider = 'rules', model = null,
@@ -1223,6 +1384,45 @@ function aiCostDebugData() {
   };
 }
 
+function variantFieldValues(body, existing = {}) {
+  const text = name => String(body[name] ?? existing[name] ?? '').trim() || null;
+  const number = name => body[name] === '' ? null : body[name] == null ? existing[name] ?? null : Number(body[name]);
+  return [text('variant_name'),text('variant_sku'),text('dimensions'),text('material'),text('finish'),text('color'),number('reference_price'),number('cost_price'),number('moq'),number('lead_time_days'),number('cbm'),number('gross_weight_kg'),number('net_weight_kg'),text('packing_info'),text('default_supplier'),text('supplier_sku'),number('supplier_cost'),number('supplier_lead_time_days'),number('supplier_moq'),text('supplier_notes')];
+}
+
+function importCapabilities(user){return {canUpload:['Admin','Owner','VA'].includes(user?.role),canEdit:['Admin','Owner','VA'].includes(user?.role),canApprove:['Admin','Owner'].includes(user?.role)}}
+function normalizeImportField(value){return String(value||'').toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g,'')}
+function importDraftRow(row){if(!row)return null;for(const field of ['mapped_product','suggested_variants','suggested_attributes','suggested_tag_ids','source_rows','source_mapping','original_values','missing_fields'])row[field]=parseJsonValue(row[field],field.includes('product')||field.includes('mapping')||field==='original_values'?{}:[]);return row}
+function textSimilarity(a,b){const left=normalizeImportField(a),right=normalizeImportField(b);if(!left||!right)return 0;if(left===right)return 1;const grams=value=>new Set([...Array(Math.max(1,value.length-1))].map((_,i)=>value.slice(i,i+2))),x=grams(left),y=grams(right),hits=[...x].filter(v=>y.has(v)).length;return 2*hits/(x.size+y.size)}
+function findImportDuplicate(draft){const exactSku=db.prepare('SELECT id,name,sku FROM products WHERE sku=? COLLATE NOCASE LIMIT 1').get(draft.product_sku);if(exactSku)return {...exactSku,match_type:'Internal SKU',similarity:100,suggested_action:'Update Existing'};const supplierSku=String(draft.mapped_product?.supplier_sku||'').trim();if(supplierSku){const match=db.prepare('SELECT id,name,sku FROM products WHERE supplier_sku=? COLLATE NOCASE UNION SELECT p.id,p.name,p.sku FROM product_variants pv JOIN products p ON p.id=pv.product_id WHERE pv.supplier_sku=? COLLATE NOCASE LIMIT 1').get(supplierSku,supplierSku);if(match)return {...match,match_type:'Supplier SKU',similarity:100,suggested_action:'Add Variant'}}const candidates=db.prepare('SELECT id,name,sku,size FROM products ORDER BY updated_at DESC LIMIT 1000').all().map(row=>({...row,similarity:Math.round(textSimilarity(draft.product_name,row.name)*100)})).sort((a,b)=>b.similarity-a.similarity);const match=candidates[0];return match?.similarity>=72?{...match,match_type:match.similarity>=92?'Product Name':'Name Similarity',suggested_action:match.similarity>=92?'Update Existing':'Create Product'}:null}
+function redactImportDraft(draft,user){const result=redactSensitiveProductData(draft,user);if(canViewSensitiveProductData(user))return result;result.original_values={};result.source_rows=(result.source_rows||[]).map(row=>({...row,values:Object.fromEntries(Object.entries(row.values||{}).filter(([key])=>!/supplier|供应商|cost|成本|rmb|人民币|采购|进价|单价|价格/i.test(key)))}));return result}
+function importBatchStats(batch,drafts){const count=status=>drafts.filter(d=>d.status===status).length,missingAttributes=drafts.reduce((sum,d)=>sum+(d.missing_fields||[]).filter(value=>value!=='Image Assets Needed').length,0),started=new Date(batch.started_at||batch.created_at).getTime(),ended=new Date(batch.completed_at||batch.updated_at||batch.created_at).getTime();return {products_created:Number(batch.created_products||0),variants_created:Number(batch.created_variants||0),needs_review:count('Needs Review'),approved:count('Approved')+count('Imported'),rejected:count('Rejected'),duplicate_matches:drafts.filter(d=>d.possible_match_product_id).length,images_imported:drafts.filter(d=>d.main_image_url).length,images_missing:drafts.filter(d=>!d.main_image_url).length,missing_attributes:missingAttributes,import_duration_ms:Math.max(0,ended-started)}}
+function importBatchDetail(id,user=null){const batch=db.prepare('SELECT b.*,u.name AS created_by_name FROM product_import_batches b LEFT JOIN users u ON u.id=b.created_by WHERE b.id=?').get(id);if(!batch)return null;batch.detected_columns=parseJsonValue(batch.detected_columns,[]);batch.analysis_summary=parseJsonValue(batch.analysis_summary,{});batch.drafts=db.prepare('SELECT d.*,pc.name AS suggested_category FROM product_import_drafts d LEFT JOIN product_categories pc ON pc.id=d.suggested_category_id WHERE batch_id=? ORDER BY d.id').all(id).map(importDraftRow);batch.statistics=importBatchStats(batch,batch.drafts);return user?redactImportBatch({...batch,drafts:batch.drafts.map(d=>redactImportDraft(d,user))},user):batch}
+function approveProductImportDraft(draftId,user,action='create_new'){
+  const draft=importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(draftId));
+  if(!draft)throw Object.assign(new Error('Draft not found.'),{status:404});
+  if(!['Pending Review','Needs Review','Approved'].includes(draft.status))throw Object.assign(new Error('Draft is not available for approval.'),{status:409});
+  const batch=db.prepare('SELECT * FROM product_import_batches WHERE id=?').get(draft.batch_id),mapped=draft.mapped_product,categoryId=Number(draft.suggested_category_id);
+  const existing=draft.possible_match_product_id?db.prepare('SELECT * FROM products WHERE id=?').get(draft.possible_match_product_id):db.prepare('SELECT * FROM products WHERE sku=? COLLATE NOCASE').get(draft.product_sku);
+  if(existing&&action==='ask')throw Object.assign(new Error('Possible match requires Create Product, Update Existing, Add Variant, or Ignore.'),{status:409});
+  if(action==='ignore'){db.prepare("UPDATE product_import_drafts SET status='Rejected',resolution_action='ignore',approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?").run(user.id,draftId);return null}
+  const sourceRow=Number(draft.source_rows?.[0]?.row_number||0)||null,sourceSupplier=batch?.supplier_name||mapped.default_supplier||null;
+  let productId,createdProduct=0;
+  if(existing&&action==='update_existing'){
+    productId=existing.id;
+    db.prepare(`UPDATE products SET name=?,category_id=?,materials=?,size=?,finish=?,color=?,default_supplier=?,supplier_sku=?,supplier_cost=?,supplier_lead_time_days=?,supplier_moq=?,supplier_notes=?,source_supplier=?,source_file=?,source_sheet=?,source_row=?,import_batch_id=?,imported_at=COALESCE(imported_at,CURRENT_TIMESTAMP),imported_by=COALESCE(imported_by,?),last_updated_by=?,library_status='Approved',status='approved',updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(draft.product_name||existing.name,categoryId||existing.category_id,mapped.material||existing.materials,mapped.dimensions||existing.size,mapped.finish||existing.finish,mapped.color||existing.color,sourceSupplier,mapped.supplier_sku||existing.supplier_sku,mapped.supplier_cost??existing.supplier_cost,mapped.supplier_lead_time_days??existing.supplier_lead_time_days,mapped.supplier_moq??existing.supplier_moq,mapped.supplier_notes||existing.supplier_notes,sourceSupplier,batch?.source_file_name,draft.source_rows?.[0]?.sheet_name||draft.source_rows?.[0]?.sheet||null,sourceRow,draft.batch_id,user.id,user.id,productId);
+  }else if(existing&&action==='add_variant')productId=existing.id;
+  else{
+    let sku=normalizeSku(draft.product_sku)||`IMP-${draft.batch_id}-${draft.id}`;if(db.prepare('SELECT id FROM products WHERE sku=? COLLATE NOCASE').get(sku))sku=`${sku}-${draft.id}`;
+    productId=Number(db.prepare(`INSERT INTO products(category_id,sku,name,materials,size,finish,color,price_range,moq,lead_time_days,library_status,visibility,status,default_supplier,supplier_sku,supplier_cost,supplier_lead_time_days,supplier_moq,supplier_notes,source_supplier,source_file,source_sheet,source_row,import_batch_id,imported_at,imported_by,last_updated_by,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,'Approved','Website + Quote','approved',?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?,?,?) RETURNING id`).get(categoryId,sku,requiredText(draft.product_name,'Product name'),mapped.material||null,mapped.dimensions||null,mapped.finish||null,mapped.color||null,mapped.reference_price==null?null:String(mapped.reference_price),mapped.moq,mapped.lead_time_days,sourceSupplier,mapped.supplier_sku||null,mapped.supplier_cost,mapped.supplier_lead_time_days,mapped.supplier_moq,mapped.supplier_notes||null,sourceSupplier,batch?.source_file_name,draft.source_rows?.[0]?.sheet_name||draft.source_rows?.[0]?.sheet||null,sourceRow,draft.batch_id,user.id,user.id,user.id).id);createdProduct=1;
+  }
+  const variants=draft.suggested_variants.length?draft.suggested_variants:(action==='add_variant'?[mapped]:[]),insertVariant=db.prepare(`INSERT INTO product_variants(product_id,variant_name,variant_sku,dimensions,material,finish,color,reference_price,cost_price,moq,lead_time_days,cbm,gross_weight_kg,net_weight_kg,packing_info,default_supplier,supplier_sku,supplier_cost,supplier_lead_time_days,supplier_moq,supplier_notes,supplier_currency,exchange_rate,converted_cost,pricing_rule_id,pricing_status,pricing_confidence,status,source_supplier,source_file,source_sheet,source_row,import_batch_id,imported_at,imported_by,last_updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active',?,?,?,?,?,CURRENT_TIMESTAMP,?,?)`);let createdVariants=0;
+  for(const [index,variant] of variants.entries()){const name=variant.variant_name||variant.dimensions||draft.product_name;if(db.prepare('SELECT id FROM product_variants WHERE product_id=? AND variant_name=?').get(productId,name))continue;const row=draft.source_rows?.[index]||draft.source_rows?.[0];insertVariant.run(productId,name,variant.variant_sku||null,variant.dimensions||null,variant.material||mapped.material||null,variant.finish||mapped.finish||null,variant.color||mapped.color||null,variant.reference_price,variant.cost_price,variant.moq,variant.lead_time_days,variant.cbm,variant.gross_weight_kg,variant.net_weight_kg,variant.packing_info||null,sourceSupplier,variant.supplier_sku||mapped.supplier_sku||null,variant.supplier_cost??mapped.supplier_cost,variant.supplier_lead_time_days??mapped.supplier_lead_time_days,variant.supplier_moq??mapped.supplier_moq,mapped.supplier_notes||null,variant.supplier_currency||mapped.supplier_currency||batch?.supplier_currency,variant.exchange_rate||mapped.exchange_rate||batch?.exchange_rate,variant.converted_cost??mapped.converted_cost,variant.pricing_rule_id??mapped.pricing_rule_id,variant.pricing_status||mapped.pricing_status||'Needs Pricing Review',variant.pricing_confidence??mapped.pricing_confidence,sourceSupplier,batch?.source_file_name,row?.sheet_name||row?.sheet||null,Number(row?.row_number||0)||null,draft.batch_id,user.id,user.id);createdVariants++}
+  for(const attribute of draft.suggested_attributes){const definition=db.prepare('SELECT id FROM product_attribute_definitions WHERE id=?').get(Number(attribute.attribute_id));if(definition&&String(attribute.value||'').trim())db.prepare('INSERT OR REPLACE INTO product_attribute_values(product_id,attribute_id,value) VALUES(?,?,?)').run(productId,definition.id,String(attribute.value).trim())}
+  if(draft.main_image_url){const mediaId=Number(db.prepare(`INSERT INTO media_assets(file_name,file_type,file_url,related_module,related_record_id,media_category,is_verified,image_type,image_status,active,created_by) VALUES(?,? ,?,'products',?,'Product Photo',1,'Main Image','Approved',1,?) RETURNING id`).get(`Imported image ${draft.id}`,'image/png',draft.main_image_url,String(productId),user.id).id);db.prepare('INSERT INTO product_media_links(product_id,media_id,is_primary) VALUES(?,?,1)').run(productId,mediaId)}
+  db.prepare("UPDATE product_import_drafts SET status='Imported',resolution_action=?,approved_by=?,approved_at=CURRENT_TIMESTAMP,imported_product_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(action,user.id,productId,draftId);db.prepare("UPDATE product_import_batches SET created_products=created_products+?,created_variants=created_variants+?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(createdProduct,createdVariants,draft.batch_id);return {productId,createdVariants}
+}
+
 function salesCapabilities(user) {
   const enabled = ['Admin', 'Owner', 'Sales'].includes(user?.role);
   return { canView: enabled, canCreate: enabled, canAnalyze: enabled, canQuote: enabled, canConvert: enabled };
@@ -1258,30 +1458,117 @@ function salesDebugData() {
   return { status: 'ready', inquiries: count('sales_inquiries'), analyses: count('sales_inquiry_analyses'), quotes: count('sales_quotes'), quoteVersions: count('sales_quote_versions'), orders: count('sales_orders'), openTasks: Number(db.prepare("SELECT COUNT(*) AS count FROM sales_tasks WHERE status = 'Open'").get().count), workflow: 'Inquiry → Analysis → Recommendation → Quote → Order' };
 }
 
+const defaultPiTerms = Object.freeze([
+  'Prices are valid until the stated validity date.',
+  'Production starts after deposit payment is received.',
+  'Final dimensions, materials, colors, and finishes must be confirmed before production.',
+  'Product images and renderings are for reference only. Final products are subject to approved samples or drawings.',
+  'Custom-made products are non-refundable once production has started.',
+  'Freight cost may change if final CBM, weight, or delivery address changes.',
+  'Any customs duties, import taxes, or local charges are subject to the agreed trade term.',
+  'Minor color variation may occur due to material batches, lighting, and screen display differences.',
+  'Warranty terms apply to normal commercial use only. Damage caused by misuse, improper installation, or transportation handling is not covered unless otherwise agreed.',
+  'This Proforma Invoice becomes valid after buyer confirmation and deposit payment.'
+]);
+
+function organizationPiSettings() {
+  return Object.fromEntries(db.prepare('SELECT key, value FROM organization_settings').all().map(row => [row.key, row.value]));
+}
+
+function usableMediaUrl(url){const value=String(url||'').trim();if(!value)return null;if(value.startsWith('/')&&!existsSync(join(publicDir,value)))return null;return value}
+
+function pimQuoteSnapshot(product, variant = null) {
+  const attributes = db.prepare(`SELECT pad.name,pad.code,pav.value,pad.show_in_quote,pad.show_in_pi
+    FROM product_attribute_values pav JOIN product_attribute_definitions pad ON pad.id=pav.attribute_id
+    WHERE pav.product_id=? AND (pav.variant_id IS NULL OR pav.variant_id=?) ORDER BY pav.variant_id,pad.sort_order,pad.name`).all(product.id,variant?.id||0);
+  return {
+    product_id:product.id,sku:product.sku,name:product.name,description:product.quote_description||product.short_description||product.summary,
+    category_id:product.category_id,materials:variant?.material||product.materials,size:variant?.dimensions||product.size,
+    finish:variant?.finish||product.finish,color:variant?.color||product.color,attributes
+  };
+}
+
 function salesQuoteDetail(id, user) {
   const quote = db.prepare(`SELECT sales_quotes.*, customers.company_name AS customer_name, customers.brand_name AS company,
-    customers.country, users.name AS salesperson, users.email AS salesperson_email
+    customers.country, customers.address AS customer_address, customers.phone AS customer_phone, customers.whatsapp AS customer_whatsapp,
+    customers.email AS customer_email, users.name AS salesperson, users.email AS salesperson_email,
+    (SELECT full_name FROM customer_contacts WHERE customer_id=customers.id ORDER BY is_primary_decision_maker DESC,id LIMIT 1) AS primary_contact_name,
+    (SELECT phone FROM customer_contacts WHERE customer_id=customers.id ORDER BY is_primary_decision_maker DESC,id LIMIT 1) AS primary_contact_phone,
+    (SELECT whatsapp FROM customer_contacts WHERE customer_id=customers.id ORDER BY is_primary_decision_maker DESC,id LIMIT 1) AS primary_contact_whatsapp,
+    (SELECT email FROM customer_contacts WHERE customer_id=customers.id ORDER BY is_primary_decision_maker DESC,id LIMIT 1) AS primary_contact_email
     FROM sales_quotes JOIN customers ON customers.id=sales_quotes.customer_id LEFT JOIN users ON users.id=COALESCE(sales_quotes.salesperson_id,sales_quotes.created_by)
     WHERE sales_quotes.id=? ${user.role==='Sales'?'AND sales_quotes.created_by=?':''}`).get(id, ...(user.role==='Sales'?[user.id]:[]));
   if (!quote) return null;
-  quote.items=db.prepare(`SELECT sqi.*, p.name, p.sku, p.summary AS specification, p.materials, p.size, p.cbm, p.gross_weight_kg, p.net_weight_kg,
+  quote.items=db.prepare(`SELECT sqi.*, p.name, p.sku, p.summary AS specification, p.materials, p.size, p.color, p.finish, p.cbm, p.gross_weight_kg, p.net_weight_kg, p.lead_time_days,
+    pv.variant_name,pv.variant_sku,pv.dimensions AS variant_dimensions,pv.reference_price AS variant_reference_price,
     pc.name AS category,(SELECT ma.file_url FROM product_media_links pml JOIN media_assets ma ON ma.id=pml.media_id WHERE pml.product_id=p.id ORDER BY pml.is_primary DESC LIMIT 1) AS image_url
-    FROM sales_quote_items sqi JOIN products p ON p.id=sqi.product_id LEFT JOIN product_categories pc ON pc.id=p.category_id WHERE sqi.quote_id=? ORDER BY sqi.sort_order,sqi.id`).all(id).map(item=>({...item,item_type:'library',line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}));
-  quote.custom_items=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? ORDER BY sort_order,id').all(id).map(item=>({...item,item_type:'custom',name:item.item_name,image_url:item.reference_image_url,size:item.size_dimensions,materials:item.material,line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}));
+    FROM sales_quote_items sqi JOIN products p ON p.id=sqi.product_id LEFT JOIN product_categories pc ON pc.id=p.category_id LEFT JOIN product_variants pv ON pv.id=sqi.variant_id WHERE sqi.quote_id=? ORDER BY sqi.sort_order,sqi.id`).all(id).map(item=>{const snapshot=parseJsonValue(item.product_snapshot,{}),variantSnapshot=parseJsonValue(item.variant_snapshot,{});const frozen={...item,name:snapshot.name||item.name,sku:snapshot.sku||item.sku,specification:snapshot.description||item.specification,materials:snapshot.materials||item.materials,finish:snapshot.finish||item.finish,color:snapshot.color||item.color,size:snapshot.size||variantSnapshot.dimensions||item.variant_dimensions||item.size};return {...frozen,item_type:'library',product_snapshot:snapshot,variant_snapshot:variantSnapshot,image_url:usableMediaUrl(item.image_url),swatch_image_url:usableMediaUrl(item.swatch_image_url),display_material:item.confirmed_material||frozen.materials,display_finish:item.confirmed_finish||frozen.finish,display_color:item.confirmed_color_name||frozen.color,line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}});
+  quote.items=redactSensitiveProductData(quote.items,user);
+  quote.custom_items=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? ORDER BY sort_order,id').all(id).map(item=>({...item,item_type:'custom',name:item.item_name,image_url:usableMediaUrl(item.reference_image_url),swatch_image_url:usableMediaUrl(item.swatch_image_url),size:item.size_dimensions,materials:item.material,color:item.color_finish,finish:item.color_finish,display_material:item.confirmed_material||item.material,display_finish:item.confirmed_finish||item.color_finish,display_color:item.confirmed_color_name||item.color_finish,line_total:Number(item.quantity)*Number(item.unit_price)*(1-Number(item.discount_percent||0)/100)}));
   quote.all_items=[...quote.items,...quote.custom_items];
   const productSubtotal=quote.all_items.reduce((sum,item)=>sum+Number(item.quantity)*Number(item.unit_price),0);
   const itemDiscount=quote.all_items.reduce((sum,item)=>sum+Number(item.quantity)*Number(item.unit_price)*Number(item.discount_percent||0)/100,0);
   const quoteDiscount=productSubtotal*Number(quote.discount_percent||0)/100;
   const productTotal=productSubtotal-itemDiscount-quoteDiscount; const freight=quote.freight_cost==null?0:Number(quote.freight_cost); const grand=productTotal+freight+Number(quote.other_charges||0);
   const sumOrTbc=field=>quote.all_items.length&&quote.all_items.every(item=>item[field]!=null)?quote.all_items.reduce((sum,item)=>sum+Number(item[field])*Number(item.quantity),0):null;
-  quote.summary={total_quantity:quote.all_items.reduce((s,i)=>s+Number(i.quantity),0),product_subtotal:productSubtotal,discount:itemDiscount+quoteDiscount,product_total:productTotal,total_cbm:sumOrTbc('cbm'),total_gross_weight:sumOrTbc('gross_weight_kg'),total_net_weight:sumOrTbc('net_weight_kg'),freight_cost:quote.freight_cost==null?null:freight,other_charges:Number(quote.other_charges||0),grand_total:grand,deposit_amount:grand*Number(quote.deposit_percent||0)/100,balance_amount:grand*Number(quote.balance_percent||0)/100};
+  const depositAmount=grand*Number(quote.deposit_percent||0)/100;
+  const override=(field,computed)=>quote[field]==null||quote[field]===''?computed:Number(quote[field]);
+  quote.summary={total_quantity:quote.all_items.reduce((s,i)=>s+Number(i.quantity),0),product_subtotal:productSubtotal,discount:itemDiscount+quoteDiscount,product_total:productTotal,total_cbm:override('total_cbm_override',sumOrTbc('cbm')),total_gross_weight:override('total_gross_weight_override',sumOrTbc('gross_weight_kg')),total_net_weight:override('total_net_weight_override',sumOrTbc('net_weight_kg')),freight_cost:quote.freight_cost==null?null:freight,other_charges:Number(quote.other_charges||0),grand_total:grand,deposit_amount:depositAmount,balance_amount:grand-depositAmount};
   quote.versions=db.prepare('SELECT id,version_number,created_at FROM sales_quote_versions WHERE quote_id=? ORDER BY version_number DESC').all(id);
-  quote.library_options=db.prepare("SELECT products.id,products.sku,products.name,product_categories.name AS category FROM products LEFT JOIN product_categories ON product_categories.id=products.category_id WHERE products.status!='archived' ORDER BY products.name LIMIT 500").all();
+  quote.library_options=db.prepare("SELECT products.id,products.sku,products.name,product_categories.name AS category FROM products LEFT JOIN product_categories ON product_categories.id=products.category_id WHERE products.status!='archived' AND COALESCE(products.visibility,'Website + Quote') IN ('Website + Quote','Quote Only') AND products.library_status='Approved' ORDER BY products.name LIMIT 500").all().map(product=>({...product,variants:db.prepare("SELECT id,variant_name,variant_sku,dimensions,reference_price,status FROM product_variants WHERE product_id=? AND status='Active' ORDER BY sort_order,id").all(product.id)}));
+  quote.company_settings=organizationPiSettings();
+  quote.bank_accounts=db.prepare('SELECT * FROM organization_bank_accounts WHERE active=1 ORDER BY is_default DESC,account_name').all();
+  quote.selected_bank_account=quote.bank_accounts.find(account=>Number(account.id)===Number(quote.bank_account_id))||quote.bank_accounts[0]||null;
+  quote.pi_terms=defaultPiTerms;
+  quote.contact_person=quote.contact_person||quote.primary_contact_name||'';
+  quote.buyer_phone=quote.buyer_phone||quote.primary_contact_whatsapp||quote.primary_contact_phone||quote.customer_whatsapp||quote.customer_phone||'';
+  quote.buyer_email=quote.buyer_email||quote.primary_contact_email||quote.customer_email||'';
+  quote.billing_address=quote.billing_address||quote.customer_address||'';
   return quote;
 }
 function saveQuoteVersion(quoteId,user){const quote=salesQuoteDetail(quoteId,user);const version=Number(db.prepare('SELECT COALESCE(MAX(version_number),0)+1 AS v FROM sales_quote_versions WHERE quote_id=?').get(quoteId).v);db.prepare('INSERT INTO sales_quote_versions(quote_id,version_number,snapshot,created_by) VALUES(?,?,?,?)').run(quoteId,version,JSON.stringify(quote),user.id);db.prepare('UPDATE sales_quotes SET current_version=? WHERE id=?').run(version,quoteId);return version;}
-function quoteMessage(quote,type){const name=quote.customer_name||'Customer';const itemSummary=quote.all_items.map(item=>`${item.name} × ${item.quantity}`).join(', ');if(type==='whatsapp')return {message:`Hello ${name},\n\nThank you for your inquiry.\n\nYour quotation ${quote.quote_number} is ready. Items: ${itemSummary}. Please find the attached PI.\n\nIf you have any questions, please let us know.\n\nBest regards,\n${quote.salesperson||'Sales Team'}`};return {subject:`Quotation / PI ${quote.quote_number}`,body:`Dear ${name},\n\nThank you for your inquiry. Please find attached our Proforma Invoice ${quote.quote_number} for ${itemSummary}.\n\nThe quotation is valid until ${quote.valid_until||'the date shown in the PI'}. Please let us know if you need any clarification or adjustment.\n\nBest regards,\n${quote.salesperson||'Sales Team'}\n${quote.salesperson_email||''}`};}
-function simplePdf(text){const safe=String(text).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?');const stream=`BT /F1 11 Tf 45 790 Td ${safe.split('\n').slice(0,45).map((line,i)=>`${i?'0 -16 Td ':''}(${line}) Tj`).join(' ')} ET`;const header='%PDF-1.4\n';const objects=['1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n','2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n','3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n','4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n',`5 0 obj << /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream endobj\n`];let offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(const obj of objects){xref.push(String(offset).padStart(10,'0')+' 00000 n ');offset+=Buffer.byteLength(obj)}const body=header+objects.join('');return Buffer.from(body+`xref\n0 6\n${xref.join('\n')}\ntrailer << /Size 6 /Root 1 0 R >>\nstartxref\n${offset}\n%%EOF`);}
+function syncQuoteStoredTotals(quoteId,user){db.prepare("UPDATE sales_quote_items SET final_selling_price_snapshot=unit_price,pricing_source=CASE WHEN reference_price_snapshot IS NOT NULL AND ABS(unit_price-reference_price_snapshot)>.0001 THEN 'Manual Quote Edit' ELSE 'Reference' END WHERE quote_id=?").run(quoteId);const quote=salesQuoteDetail(quoteId,user);if(quote)db.prepare('UPDATE sales_quotes SET subtotal=?,discount_total=?,total=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(quote.summary.product_subtotal,quote.summary.discount,quote.summary.grand_total,quoteId)}
+function quoteMessage(quote,type){const name=quote.customer_name||'Customer';const itemSummary=quote.all_items.map(item=>`${item.name} × ${item.quantity}`).join(', ');const total=`${quote.currency} ${Number(quote.summary.grand_total).toFixed(2)}`;if(type==='whatsapp')return {message:`Hello ${name},\n\nThank you for your inquiry.\n\nYour Proforma Invoice ${quote.quote_number} is ready. Grand Total: ${total}. Items: ${itemSummary}. Please find the attached PI.\n\nIf you have any questions, please let us know.\n\nBest regards,\n${quote.salesperson||'Sales Team'}`};return {subject:`Proforma Invoice ${quote.quote_number} — ${total}`,body:`Dear ${name},\n\nThank you for your inquiry. Please find attached our Proforma Invoice ${quote.quote_number} for ${itemSummary}.\n\nGrand Total: ${total}\nValid Until: ${quote.valid_until||'the date shown in the PI'}\n\nPlease let us know if you need any clarification or adjustment.\n\nBest regards,\n${quote.salesperson||'Sales Team'}\n${quote.salesperson_email||''}`};}
+function simplePdf(text){const escape=line=>String(line).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?').slice(0,110);const source=String(text).split('\n');const pages=[];for(let index=0;index<source.length;index+=43)pages.push(source.slice(index,index+43));const fontRegular=3,fontBold=4;const pageIds=pages.map((_,index)=>5+index*2);const objects=[];objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;objects[fontRegular]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';objects[fontBold]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';pages.forEach((lines,index)=>{const pageId=pageIds[index],contentId=pageId+1;const commands=lines.map((line,lineIndex)=>{const heading=/^(PROFORMA INVOICE|COMPANY INFORMATION|PI HEADER|BUYER INFORMATION|PRODUCT TABLE|PACKING \/ LOGISTICS SUMMARY|COMMERCIAL SUMMARY|PAYMENT TERMS|BANK INFORMATION|SHIPPING INFORMATION|REMARKS|TERMS & CONDITIONS|SIGNATURES)$/.test(line);return `${lineIndex?'0 -17 Td ':''}${heading?'/F2 11 Tf 0 .28 .20 rg':'/F1 8 Tf 0 0 0 rg'} (${escape(line)}) Tj`;}).join(' ');const stream=`BT 42 805 Td ${commands} ET`;objects[pageId]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontRegular} 0 R /F2 ${fontBold} 0 R >> >> /Contents ${contentId} 0 R >>`;objects[contentId]=`<< /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream`;});const header='%PDF-1.4\n';let body=header,offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(let id=1;id<objects.length;id++){const object=`${id} 0 obj ${objects[id]} endobj\n`;xref[id]=String(offset).padStart(10,'0')+' 00000 n ';body+=object;offset+=Buffer.byteLength(object)}const startxref=offset;body+=`xref\n0 ${objects.length}\n${xref.join('\n')}\ntrailer << /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF`;return Buffer.from(body);}
+
+function globalPiRows(quote){const company=quote.company_settings||{},bank=quote.selected_bank_account,s=quote.summary,tbc=value=>value==null?'TBC':Number(value).toFixed(2),blank=value=>String(value||'____________________________'),amount=value=>`${quote.currency} ${Number(value||0).toFixed(2)}`;const rows=[];const section=title=>rows.push([title]);rows.push(['PROFORMA INVOICE']);section('COMPANY INFORMATION');rows.push(['Company Name',company.company_name||''],['Address',company.address||''],['City / State / ZIP',company.city_state_zip||''],['Country',company.country||''],['Phone',company.phone||''],['Email',company.email||''],['Website',company.website||''],['Tax ID / Registration No.',company.registration_no||'']);section('PI HEADER');rows.push(['PI No.',quote.quote_number,'Issue Date',quote.quote_date||'','Valid Until',quote.valid_until||''],['Sales Representative',quote.salesperson||'','Currency',quote.currency,'Trade Term',quote.trade_term||''],['Payment Terms Summary',`${quote.deposit_percent}% deposit / ${quote.balance_percent}% balance`,'Buyer Reference No.',quote.buyer_reference_no||'','Project Name',quote.project_name||'']);section('BUYER INFORMATION');rows.push(['Customer / Restaurant Name',blank(quote.customer_name),'Company Name',blank(quote.company||quote.customer_name)],['Contact Person',blank(quote.contact_person),'Phone / WhatsApp',blank(quote.buyer_phone)],['Email',blank(quote.buyer_email),'Country',blank(quote.country)],['Billing Address',blank(quote.billing_address),'Delivery Address',blank(quote.destination_address||quote.destination)]);section('PRODUCT TABLE');rows.push(['No.','Product Image','SKU / Item Code','Product Name / Description','Material / Finish','Dimensions','Color / Upholstery','Qty','Unit Price','Amount','Remarks']);quote.all_items.forEach((item,index)=>{rows.push([index+1,item.image_url||'Reference image pending',item.sku||'CUSTOM',`${item.name}${item.specification?` — ${item.specification}`:''}`,[item.materials,item.finish].filter(Boolean).join(' / '),item.size||'',item.color||'',item.quantity,amount(item.unit_price),amount(item.line_total),item.remark||'']);rows.push(['','','','Logistics',`CBM ${tbc(item.cbm)}`,`Gross Weight ${tbc(item.gross_weight_kg)} kg`,`Net Weight ${tbc(item.net_weight_kg)} kg`,'',`Lead Time ${item.lead_time_days?`${item.lead_time_days} days`:'TBC'}`,'Packaging TBC','']);});section('PACKING / LOGISTICS SUMMARY');rows.push(['Total Quantity',s.total_quantity],['Total Packages / Cartons',quote.total_packages??'TBC'],['Total CBM',tbc(s.total_cbm)],['Total Gross Weight',tbc(s.total_gross_weight)],['Total Net Weight',tbc(s.total_net_weight)]);section('COMMERCIAL SUMMARY');rows.push(['Product Subtotal',amount(s.product_subtotal)],['Discount',amount(s.discount)],['Freight Cost',s.freight_cost==null?'Freight cost to be quoted separately.':amount(s.freight_cost)],['Other Charges',amount(s.other_charges)],['Grand Total',amount(s.grand_total)],['Deposit Amount',amount(s.deposit_amount)],['Balance Amount',amount(s.balance_amount)]);section('PAYMENT TERMS');rows.push([quote.payment_note||`${quote.deposit_percent}% deposit before production. ${quote.balance_percent}% balance before shipment.`],['Payment Method',quote.payment_method||'TT Bank Transfer']);section('BANK INFORMATION');if(bank)rows.push(['Beneficiary Name',bank.beneficiary_name||''],['Bank Name',bank.bank_name||''],['Bank Address',bank.bank_address||''],['Account Number',bank.account_number||''],['SWIFT / BIC',bank.swift_bic||''],['Routing Number',bank.routing_number||''],['IBAN',bank.iban||''],['Bank Country',bank.bank_country||''],['Payment Currency',bank.payment_currency||'']);else rows.push(['Bank information to be provided separately.']);section('SHIPPING INFORMATION');rows.push(['Trade Term',blank(quote.trade_term)],['Shipping Method',blank(quote.shipping_method)],['Origin Port',blank(quote.origin_port)],['Destination Port',blank(quote.destination_port)],['Delivery Address',blank(quote.destination_address||quote.destination)],['Estimated Production Time',blank(quote.production_time)],['Estimated Shipping Time',blank(quote.transit_time)],['Freight Remark',blank(quote.freight_remark)]);section('REMARKS');rows.push([blank(quote.other_remark)]);if(quote.special_terms)rows.push(['Special Terms',quote.special_terms]);section('TERMS & CONDITIONS');quote.pi_terms.forEach((term,index)=>rows.push([`${index+1}. ${term}`]));section('SIGNATURES');rows.push(['Prepared By',blank(quote.salesperson)],['Approved By','Company Representative / Signature'],['Buyer Confirmation','Name / Signature / Date'],['Company Stamp','']);return rows;}
+
+function wrapPiExportLine(line,max=92){const words=String(line).split(/\s+/);const lines=[];let current='';for(const word of words){if(`${current} ${word}`.trim().length>max&&current){lines.push(current);current=`  ${word}`}else current=`${current} ${word}`.trim()}if(current)lines.push(current);return lines.length?lines:['']}
+function globalPiPdf(text){const escape=line=>String(line).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?');const source=String(text).split('\n').flatMap(line=>wrapPiExportLine(line));const pages=[];for(let index=0;index<source.length;index+=43)pages.push(source.slice(index,index+43));const objects=[];const pageIds=pages.map((_,index)=>5+index*2);objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;objects[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';objects[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';pages.forEach((lines,index)=>{const pageId=pageIds[index],contentId=pageId+1;const stream=`BT 42 805 Td ${lines.map((line,lineIndex)=>{const heading=/^(PROFORMA INVOICE|COMPANY INFORMATION|PI HEADER|BUYER INFORMATION|PRODUCT TABLE|PACKING \/ LOGISTICS SUMMARY|COMMERCIAL SUMMARY|PAYMENT TERMS|BANK INFORMATION|SHIPPING INFORMATION|REMARKS|TERMS & CONDITIONS|SIGNATURES)$/.test(line);return `${lineIndex?'0 -17 Td ':''}${heading?'/F2 11 Tf 0 .28 .20 rg':'/F1 8 Tf 0 0 0 rg'} (${escape(line)}) Tj`}).join(' ')} ET`;objects[pageId]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`;objects[contentId]=`<< /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream`});const header='%PDF-1.4\n';let body=header,offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(let id=1;id<objects.length;id++){const object=`${id} 0 obj ${objects[id]} endobj\n`;xref[id]=String(offset).padStart(10,'0')+' 00000 n ';body+=object;offset+=Buffer.byteLength(object)}const startxref=offset;body+=`xref\n0 ${objects.length}\n${xref.join('\n')}\ntrailer << /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF`;return Buffer.from(body)}
+
+function piMoney(value,currency='USD'){return `${currency} ${new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value||0))}`}
+function piDescription(item){return [item.name,item.size,item.display_material,item.display_finish,item.display_color].filter((value,index,array)=>value&&array.indexOf(value)===index).join(' / ')}
+function professionalPiRows(quote){
+  const company=quote.company_settings||{},bank=quote.selected_bank_account,s=quote.summary;
+  const blank=value=>String(value||'____________________________');
+  const tbc=value=>value==null?'TBC':new Intl.NumberFormat('en-US',{maximumFractionDigits:3}).format(Number(value));
+  const rows=[['PROFORMA INVOICE'],['COMPANY INFORMATION']];
+  rows.push(['Company Name',company.company_name||''],['Address',company.address||''],['City / State / ZIP',company.city_state_zip||''],['Country',company.country||''],['Phone',company.phone||''],['Email',company.email||''],['Website',company.website||''],['Tax ID / Registration No.',company.registration_no||'']);
+  rows.push(['PI HEADER'],['PI No.',quote.quote_number,'Issue Date',quote.quote_date||'','Valid Until',quote.valid_until||''],['Sales Representative',quote.salesperson||'','Currency',quote.currency,'Trade Term',quote.trade_term||''],['Payment Terms Summary',`${quote.deposit_percent}% deposit / ${quote.balance_percent}% balance`,'Buyer Reference No.',quote.buyer_reference_no||'','Project Name',quote.project_name||'']);
+  rows.push(['BUYER INFORMATION'],['Customer / Restaurant Name',blank(quote.customer_name),'Company Name',blank(quote.company||quote.customer_name)],['Contact Person',blank(quote.contact_person),'Phone / WhatsApp',blank(quote.buyer_phone)],['Email',blank(quote.buyer_email),'Country',blank(quote.country)],['Billing Address',blank(quote.billing_address),'Delivery Address',blank(quote.destination_address||quote.destination)]);
+  rows.push(['PRODUCT TABLE'],['Product Image','SKU','Description','Qty','Unit Price','Amount']);
+  for(const item of quote.all_items) rows.push([item.image_url||'Reference image pending',item.sku||'CUSTOM',[piDescription(item),item.swatch_image_url?`Finish / Color swatch: ${item.swatch_image_url}`:'',item.customer_remark?`Customer remark: ${item.customer_remark}`:''].filter(Boolean).join(' | '),item.quantity,piMoney(item.unit_price,quote.currency),piMoney(item.line_total,quote.currency)]);
+  rows.push(['PACKING SUMMARY'],['Total Quantity',s.total_quantity],['Total Packages',quote.total_packages??'TBC'],['Total CBM',tbc(s.total_cbm)],['Gross Weight',s.total_gross_weight==null?'TBC':`${tbc(s.total_gross_weight)} kg`],['Net Weight',s.total_net_weight==null?'TBC':`${tbc(s.total_net_weight)} kg`]);
+  rows.push(['COMMERCIAL SUMMARY'],['Product Subtotal',piMoney(s.product_subtotal,quote.currency)],['Discount',piMoney(s.discount,quote.currency)],['Freight Cost',s.freight_cost==null?'Freight cost to be quoted separately.':piMoney(s.freight_cost,quote.currency)],['Other Charges',piMoney(s.other_charges,quote.currency)],['Grand Total',piMoney(s.grand_total,quote.currency)],['Deposit Amount',piMoney(s.deposit_amount,quote.currency)],['Balance Amount',piMoney(s.balance_amount,quote.currency)]);
+  rows.push(['PAYMENT TERMS'],[quote.payment_note||`${quote.deposit_percent}% deposit before production. ${quote.balance_percent}% balance before shipment.`],['Payment Method',quote.payment_method||'TT Bank Transfer'],['BANK INFORMATION']);
+  if(bank) rows.push(['Beneficiary Name',bank.beneficiary_name||''],['Bank Name',bank.bank_name||''],['Bank Address',bank.bank_address||''],['Account Number',bank.account_number||''],['SWIFT / BIC',bank.swift_bic||''],['Routing Number',bank.routing_number||''],['IBAN',bank.iban||''],['Bank Country',bank.bank_country||''],['Payment Currency',bank.payment_currency||'']); else rows.push(['Bank information to be provided separately.']);
+  rows.push(['SHIPPING INFORMATION'],['Trade Term',blank(quote.trade_term)],['Shipping Method',blank(quote.shipping_method)],['Origin Port',blank(quote.origin_port)],['Destination Port',blank(quote.destination_port)],['Delivery Address',blank(quote.destination_address||quote.destination)],['Estimated Production Time',blank(quote.production_time)],['Estimated Shipping Time',blank(quote.transit_time)],['Freight Remark',blank(quote.freight_remark)],['REMARKS'],[blank(quote.other_remark)]);
+  if(quote.special_terms) rows.push(['Special Terms',quote.special_terms]);
+  rows.push(['TERMS & CONDITIONS']);quote.pi_terms.forEach((term,index)=>rows.push([`${index+1}. ${term}`]));
+  rows.push(['SIGNATURES'],['Prepared By',blank(quote.salesperson)],['Approved By','Company Representative / Signature'],['Buyer Confirmation','Name / Signature / Date'],['Company Stamp','']);
+  return rows;
+}
+function professionalPiPdf(text){
+  const escape=line=>String(line).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?');
+  const headings=new Set(['PROFORMA INVOICE','COMPANY INFORMATION','PI HEADER','BUYER INFORMATION','PRODUCT TABLE','PACKING SUMMARY','COMMERCIAL SUMMARY','PAYMENT TERMS','BANK INFORMATION','SHIPPING INFORMATION','REMARKS','TERMS & CONDITIONS','SIGNATURES']);
+  const source=String(text).split('\n').flatMap(line=>wrapPiExportLine(line));const pages=[];
+  const firstBreak=Math.max(1,source.indexOf('COMMERCIAL SUMMARY'));pages.push(source.slice(0,firstBreak));for(let index=firstBreak;index<source.length;index+=47)pages.push(source.slice(index,index+47));
+  const objects=[],pageIds=pages.map((_,index)=>5+index*2);objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;objects[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';objects[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';
+  pages.forEach((lines,index)=>{const pageId=pageIds[index],contentId=pageId+1;const commands=lines.map((line,lineIndex)=>{const heading=headings.has(line);return `${lineIndex?'0 -16 Td ':''}${heading?'/F2 12 Tf 0 .28 .20 rg':'/F1 8.5 Tf 0 0 0 rg'} (${escape(line)}) Tj`}).join(' ');const footer=`BT /F2 8 Tf 0 .28 .20 rg 42 34 Td (Restaurant Setup Pro) Tj ET BT /F1 7 Tf 0 0 0 rg 42 22 Td (Commercial Furniture Solutions | www.restaurantsetuppro.com) Tj ET BT /F1 7 Tf 0 0 0 rg 500 22 Td (Page ${index+1} of ${pages.length}) Tj ET`;const stream=`BT 42 800 Td ${commands} ET ${footer}`;objects[pageId]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`;objects[contentId]=`<< /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream`});
+  const header='%PDF-1.4\n';let body=header,offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(let id=1;id<objects.length;id++){const object=`${id} 0 obj ${objects[id]} endobj\n`;xref[id]=String(offset).padStart(10,'0')+' 00000 n ';body+=object;offset+=Buffer.byteLength(object)}const startxref=offset;body+=`xref\n0 ${objects.length}\n${xref.join('\n')}\ntrailer << /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF`;return Buffer.from(body);
+}
+globalPiRows=professionalPiRows;
+simplePdf=professionalPiPdf;
 
 const opportunityStatuses = Object.freeze(['Imported', 'Cleaned', 'Enriched', 'Scored', 'Recommended', 'Ready for Sales', 'Contacted', 'In Progress', 'Replied', 'Qualified', 'Proposal Needed', 'Won', 'Lost', 'Nurture']);
 const outreachChannels = Object.freeze(['Email', 'WhatsApp', 'LinkedIn', 'Facebook']);
@@ -1569,10 +1856,14 @@ const handlers = {
     db.prepare(`INSERT INTO sales_inquiry_analyses (inquiry_id, customer_intent, opportunity_size, restaurant_type, estimated_budget, furniture_categories, missing_information, suggested_next_question, recommended_package, notes, provider, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rules', ?)`).run(id, analysis.customer_intent, analysis.opportunity_size, analysis.restaurant_type, analysis.estimated_budget, JSON.stringify(analysis.furniture_categories), JSON.stringify(analysis.missing_information), analysis.suggested_next_question, analysis.recommended_package, analysis.notes, user.id);
     db.prepare('DELETE FROM sales_inquiry_products WHERE inquiry_id = ?').run(id);
-    const add = db.prepare('INSERT INTO sales_inquiry_products (inquiry_id, product_id, match_reason, proposed_unit_price, selected) VALUES (?, ?, ?, ?, ?)');
+    const add = db.prepare('INSERT INTO sales_inquiry_products (inquiry_id, product_id, match_reason, proposed_unit_price, selected, quantity) VALUES (?, ?, ?, ?, ?, ?)');
     const categories = analysis.furniture_categories; if (categories.length) {
-      const rows = db.prepare(`SELECT products.id, products.price_range, product_categories.name AS category FROM products JOIN product_categories ON product_categories.id = products.category_id WHERE product_categories.name IN (${categories.map(()=>'?').join(',')}) AND products.status != 'archived' ORDER BY products.proposal_ready_status DESC, products.ai_recommendation_weight DESC LIMIT 12`).all(...categories);
-      for (const [index, product] of rows.entries()) add.run(id, product.id, `Matched to ${product.category} requirement`, Number(String(product.price_range || '').match(/[\d,.]+/)?.[0].replace(',','') || 0), index < 3 ? 1 : 0);
+      const rows = db.prepare(`SELECT products.id, products.price_range, product_categories.name AS category FROM products JOIN product_categories ON product_categories.id = products.category_id WHERE product_categories.name IN (${categories.map(()=>'?').join(',')}) AND products.status != 'archived' AND products.library_status='Approved' ORDER BY products.proposal_ready_status DESC, products.ai_recommendation_weight DESC LIMIT 12`).all(...categories);
+      const selectedCategories = new Set();
+      for (const product of rows) {
+        const selected = selectedCategories.has(product.category) ? 0 : 1; selectedCategories.add(product.category);
+        add.run(id, product.id, `Matched to ${product.category} requirement`, Number(String(product.price_range || '').match(/[\d,.]+/)?.[0].replace(',','') || 0), selected, analysis.category_quantities[product.category] || 1);
+      }
     }
     db.prepare("UPDATE sales_inquiries SET status = 'Preparing Quote', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     timeline(inquiry.customer_id, id, 'AI Analysis', `Intent: ${analysis.customer_intent}.`, user, { opportunitySize: analysis.opportunity_size });
@@ -1591,11 +1882,12 @@ const handlers = {
     const user = currentUser(req); if (!salesCapabilities(user).canQuote) return json(res, user ? 403 : 401, { error: 'Quote generation is not allowed.' });
     const body = await readJson(req); const inquiry = salesInquiryDetail(id, user); if (!inquiry) return json(res, 404, { error: 'Inquiry not found.' });
     const items = inquiry.products.filter(item => item.selected); if (!items.length && inquiry.inquiry_type !== 'Freight Quote') return json(res, 400, { error: 'Select at least one product.' });
+    const extracted = analyzeInquiry(inquiry); const destination = body.destination || extracted.destination || null; const tradeTerm = body.trade_term || extracted.trade_term || null; const shippingMethod = body.shipping_method || extracted.shipping_method || null;
     const quoteNumber = `PI-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`; let quoteId;
     db.exec('BEGIN IMMEDIATE'); try {
-      quoteId = Number(db.prepare(`INSERT INTO sales_quotes (quote_number, inquiry_id, customer_id, quote_type, currency, destination, trade_term, quote_date, valid_until, salesperson_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, ?, ?, ?) RETURNING id`).get(quoteNumber, id, inquiry.customer_id, body.quote_type || 'Quote', body.currency || 'USD', body.destination || null, body.trade_term || null, body.valid_until||new Date(Date.now()+30*86400000).toISOString().slice(0,10), user.id, user.id).id);
-      const insert = db.prepare('INSERT INTO sales_quote_items (quote_id, product_id, quantity, unit_price, discount_percent, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      items.forEach((item, index) => insert.run(quoteId, item.product_id, item.quantity, item.proposed_unit_price || 0, 0, body.remark || null, index));
+      quoteId = Number(db.prepare(`INSERT INTO sales_quotes (quote_number, inquiry_id, customer_id, quote_type, currency, destination, trade_term, shipping_method, quote_date, valid_until, salesperson_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, ?, ?, ?) RETURNING id`).get(quoteNumber, id, inquiry.customer_id, body.quote_type || 'Quote', body.currency || 'USD', destination, tradeTerm, shippingMethod, body.valid_until||new Date(Date.now()+30*86400000).toISOString().slice(0,10), user.id, user.id).id);
+      const insert = db.prepare('INSERT INTO sales_quote_items (quote_id, product_id, product_snapshot, quantity, unit_price, discount_percent, remark, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      items.forEach((item, index) => { const product=db.prepare('SELECT * FROM products WHERE id=?').get(item.product_id);insert.run(quoteId,item.product_id,JSON.stringify(pimQuoteSnapshot(product)),item.quantity,item.proposed_unit_price||0,0,body.remark||null,index); });
       const totals = db.prepare('SELECT COALESCE(SUM(quantity * unit_price * (1-discount_percent/100)),0) AS total, COALESCE(SUM(quantity * unit_price),0) AS subtotal FROM sales_quote_items WHERE quote_id = ?').get(quoteId);
       db.prepare("UPDATE sales_quotes SET subtotal = ?, total = ?, status = 'Generated' WHERE id = ?").run(totals.subtotal, totals.total, quoteId);
       db.prepare("UPDATE sales_inquiries SET status = 'Quoted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); db.exec('COMMIT');
@@ -1606,17 +1898,17 @@ const handlers = {
   },
 
   salesQuoteDetail(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canView)return json(res,user?403:401,{error:'Access denied.'});const quote=salesQuoteDetail(id,user);return quote?json(res,200,{quote}):json(res,404,{error:'Quote not found.'});},
-  async updateSalesQuote(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Quote editing is not allowed.'});const existing=salesQuoteDetail(id,user);if(!existing)return json(res,404,{error:'Quote not found.'});const b=await readJson(req);for(const item of b.items||[])db.prepare('UPDATE sales_quote_items SET quantity=?,unit_price=?,discount_percent=?,remark=? WHERE quote_id=? AND id=?').run(Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),String(item.remark||'').trim()||null,id,Number(item.id));
-    for(const item of b.custom_items||[])db.prepare(`UPDATE sales_quote_custom_items SET reference_image_url=?,item_name=?,category=?,specification=?,material=?,color_finish=?,size_dimensions=?,quantity=?,unit_price=?,discount_percent=?,cbm=?,gross_weight_kg=?,net_weight_kg=?,remark=?,updated_at=CURRENT_TIMESTAMP WHERE quote_id=? AND id=?`).run(String(item.reference_image_url||'').trim()||null,requiredText(item.item_name,'Custom item name'),String(item.category||'').trim()||null,String(item.specification||'').trim()||null,String(item.material||'').trim()||null,String(item.color_finish||'').trim()||null,String(item.size_dimensions||'').trim()||null,Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),item.cbm===''||item.cbm==null?null:Number(item.cbm),item.gross_weight_kg===''||item.gross_weight_kg==null?null:Number(item.gross_weight_kg),item.net_weight_kg===''||item.net_weight_kg==null?null:Number(item.net_weight_kg),String(item.remark||'').trim()||null,id,Number(item.id));
+  async updateSalesQuote(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Quote editing is not allowed.'});const existing=salesQuoteDetail(id,user);if(!existing)return json(res,404,{error:'Quote not found.'});const b=await readJson(req);for(const item of b.items||[])db.prepare('UPDATE sales_quote_items SET quantity=?,unit_price=?,discount_percent=?,remark=?,confirmed_material=?,confirmed_finish=?,confirmed_color_name=?,customer_remark=?,swatch_image_url=? WHERE quote_id=? AND id=?').run(Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),String(item.remark||'').trim()||null,String(item.confirmed_material||'').trim()||null,String(item.confirmed_finish||'').trim()||null,String(item.confirmed_color_name||'').trim()||null,String(item.customer_remark||'').trim()||null,String(item.swatch_image_url||'').trim()||null,id,Number(item.id));
+    for(const item of b.custom_items||[])db.prepare(`UPDATE sales_quote_custom_items SET reference_image_url=?,item_name=?,category=?,specification=?,material=?,color_finish=?,size_dimensions=?,quantity=?,unit_price=?,discount_percent=?,cbm=?,gross_weight_kg=?,net_weight_kg=?,remark=?,confirmed_material=?,confirmed_finish=?,confirmed_color_name=?,customer_remark=?,swatch_image_url=?,updated_at=CURRENT_TIMESTAMP WHERE quote_id=? AND id=?`).run(String(item.reference_image_url||'').trim()||null,requiredText(item.item_name,'Custom item name'),String(item.category||'').trim()||null,String(item.specification||'').trim()||null,String(item.material||'').trim()||null,String(item.color_finish||'').trim()||null,String(item.size_dimensions||'').trim()||null,Math.max(1,Number(item.quantity||1)),Math.max(0,Number(item.unit_price||0)),Math.min(100,Math.max(0,Number(item.discount_percent||0))),item.cbm===''||item.cbm==null?null:Number(item.cbm),item.gross_weight_kg===''||item.gross_weight_kg==null?null:Number(item.gross_weight_kg),item.net_weight_kg===''||item.net_weight_kg==null?null:Number(item.net_weight_kg),String(item.remark||'').trim()||null,String(item.confirmed_material||'').trim()||null,String(item.confirmed_finish||'').trim()||null,String(item.confirmed_color_name||'').trim()||null,String(item.customer_remark||'').trim()||null,String(item.swatch_image_url||'').trim()||null,id,Number(item.id));
     const deposit=Math.min(100,Math.max(0,Number(b.deposit_percent??existing.deposit_percent??30)));const balance=100-deposit;
-    db.prepare(`UPDATE sales_quotes SET currency=?,valid_until=?,discount_percent=?,other_charges=?,deposit_percent=?,balance_percent=?,payment_method=?,payment_note=?,trade_term=?,shipping_method=?,destination=?,destination_port=?,destination_address=?,freight_cost=?,transit_time=?,freight_remark=?,other_remark=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(b.currency||existing.currency,b.valid_until||existing.valid_until,Number(b.discount_percent||0),Number(b.other_charges||0),deposit,balance,b.payment_method||existing.payment_method,b.payment_note||`${deposit}% deposit before production. ${balance}% balance before shipment.`,b.trade_term||null,b.shipping_method||null,b.destination||null,b.destination_port||null,b.destination_address||null,b.freight_cost===''||b.freight_cost==null?null:Number(b.freight_cost),b.transit_time||null,b.freight_remark||null,b.other_remark||null,id);
-    const version=saveQuoteVersion(id,user);audit(user.id,'update','sales_quote',String(id),{version});return json(res,200,{quote:salesQuoteDetail(id,user)});},
-  async addQuoteLibraryItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const p=db.prepare('SELECT * FROM products WHERE id=?').get(Number(b.product_id));if(!p)return json(res,404,{error:'Product not found.'});const price=Number(String(p.price_range||'').match(/[\d,.]+/)?.[0].replace(',','')||0);const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,quantity,unit_price,discount_percent,sort_order) VALUES(?,?,1,?,0,?)').run(id,p.id,price,sort);saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
+    db.prepare(`UPDATE sales_quotes SET currency=?,valid_until=?,discount_percent=?,other_charges=?,deposit_percent=?,balance_percent=?,payment_method=?,payment_note=?,trade_term=?,shipping_method=?,destination=?,origin_port=?,destination_port=?,destination_address=?,freight_cost=?,transit_time=?,freight_remark=?,other_remark=?,contact_person=?,buyer_phone=?,buyer_email=?,billing_address=?,buyer_reference_no=?,project_name=?,total_packages=?,total_cbm_override=?,total_gross_weight_override=?,total_net_weight_override=?,production_time=?,special_terms=?,bank_account_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(b.currency||existing.currency,b.valid_until||existing.valid_until,Number(b.discount_percent||0),Number(b.other_charges||0),deposit,balance,b.payment_method||existing.payment_method,b.payment_note||`${deposit}% deposit before production. ${balance}% balance before shipment.`,b.trade_term||null,b.shipping_method||null,b.destination||null,b.origin_port||null,b.destination_port||null,b.destination_address||null,b.freight_cost===''||b.freight_cost==null?null:Number(b.freight_cost),b.transit_time||null,b.freight_remark||null,b.other_remark||null,b.contact_person||null,b.buyer_phone||null,b.buyer_email||null,b.billing_address||null,b.buyer_reference_no||null,b.project_name||null,b.total_packages===''||b.total_packages==null?null:Math.max(0,Number(b.total_packages)),b.total_cbm_override===''||b.total_cbm_override==null?null:Math.max(0,Number(b.total_cbm_override)),b.total_gross_weight_override===''||b.total_gross_weight_override==null?null:Math.max(0,Number(b.total_gross_weight_override)),b.total_net_weight_override===''||b.total_net_weight_override==null?null:Math.max(0,Number(b.total_net_weight_override)),b.production_time||null,b.special_terms||null,b.bank_account_id?Number(b.bank_account_id):null,id);
+    syncQuoteStoredTotals(id,user);const version=saveQuoteVersion(id,user);audit(user.id,'update','sales_quote',String(id),{version});return json(res,200,{quote:salesQuoteDetail(id,user)});},
+  async addQuoteLibraryItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const p=db.prepare("SELECT * FROM products WHERE id=? AND COALESCE(visibility,'Website + Quote') IN ('Website + Quote','Quote Only') AND COALESCE(library_status,'Active') NOT IN ('Hidden','Discontinued')").get(Number(b.product_id));if(!p)return json(res,404,{error:'Product is not available for quotation.'});const variant=b.variant_id?db.prepare("SELECT * FROM product_variants WHERE id=? AND product_id=? AND status='Active'").get(Number(b.variant_id),p.id):null;if(b.variant_id&&!variant)return json(res,400,{error:'Selected variant is not available.'});const price=variant?.reference_price??Number(String(p.price_range||'').match(/[\\d,.]+/)?.[0].replace(',','')||0);const snapshot=variant?JSON.stringify({id:variant.id,name:variant.variant_name,sku:variant.variant_sku,dimensions:variant.dimensions,material:variant.material,finish:variant.finish,color:variant.color,reference_price:variant.reference_price,moq:variant.moq,lead_time_days:variant.lead_time_days,cbm:variant.cbm,gross_weight_kg:variant.gross_weight_kg,net_weight_kg:variant.net_weight_kg,packing_info:variant.packing_info}):null;const productSnapshot=JSON.stringify(pimQuoteSnapshot(p,variant));const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,variant_id,variant_snapshot,product_snapshot,quantity,unit_price,discount_percent,sort_order) VALUES(?,?,?,?,?,1,?,0,?)').run(id,p.id,variant?.id||null,snapshot,productSnapshot,price,sort);saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
   async addQuoteCustomItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_custom_items WHERE quote_id=?').get(id).count);const row=db.prepare(`INSERT INTO sales_quote_custom_items(quote_id,reference_image_url,item_name,category,specification,material,color_finish,size_dimensions,quantity,unit_price,discount_percent,cbm,gross_weight_kg,net_weight_kg,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).get(id,String(b.reference_image_url||'').trim()||null,requiredText(b.item_name,'Custom item name'),String(b.category||'').trim()||null,String(b.specification||'').trim()||null,String(b.material||'').trim()||null,String(b.color_finish||'').trim()||null,String(b.size_dimensions||'').trim()||null,Math.max(1,Number(b.quantity||1)),Math.max(0,Number(b.unit_price||0)),Math.min(100,Math.max(0,Number(b.discount_percent||0))),b.cbm===''||b.cbm==null?null:Number(b.cbm),b.gross_weight_kg===''||b.gross_weight_kg==null?null:Number(b.gross_weight_kg),b.net_weight_kg===''||b.net_weight_kg==null?null:Number(b.net_weight_kg),String(b.remark||'').trim()||null,sort);saveQuoteVersion(id,user);return json(res,201,{custom_item_id:Number(row.id),quote:salesQuoteDetail(id,user)});},
-  async duplicateQuoteItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const itemId=Number(b.item_id);if(b.item_type==='custom'){const source=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Custom item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_custom_items WHERE quote_id=?').get(id).count);db.prepare(`INSERT INTO sales_quote_custom_items(quote_id,reference_image_url,item_name,category,specification,material,color_finish,size_dimensions,quantity,unit_price,discount_percent,cbm,gross_weight_kg,net_weight_kg,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,source.reference_image_url,source.item_name,source.category,source.specification,source.material,source.color_finish,source.size_dimensions,source.quantity,source.unit_price,source.discount_percent,source.cbm,source.gross_weight_kg,source.net_weight_kg,source.remark,sort);}else{const source=db.prepare('SELECT * FROM sales_quote_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Library item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,quantity,unit_price,discount_percent,remark,sort_order) VALUES(?,?,?,?,?,?,?)').run(id,source.product_id,source.quantity,source.unit_price,source.discount_percent,source.remark,sort);}saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
+  async duplicateQuoteItem(req,res,id){const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});const b=await readJson(req);const itemId=Number(b.item_id);if(b.item_type==='custom'){const source=db.prepare('SELECT * FROM sales_quote_custom_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Custom item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_custom_items WHERE quote_id=?').get(id).count);db.prepare(`INSERT INTO sales_quote_custom_items(quote_id,reference_image_url,item_name,category,specification,material,color_finish,size_dimensions,quantity,unit_price,discount_percent,cbm,gross_weight_kg,net_weight_kg,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,source.reference_image_url,source.item_name,source.category,source.specification,source.material,source.color_finish,source.size_dimensions,source.quantity,source.unit_price,source.discount_percent,source.cbm,source.gross_weight_kg,source.net_weight_kg,source.remark,sort);}else{const source=db.prepare('SELECT * FROM sales_quote_items WHERE quote_id=? AND id=?').get(id,itemId);if(!source)return json(res,404,{error:'Library item not found.'});const sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);db.prepare('INSERT INTO sales_quote_items(quote_id,product_id,variant_id,variant_snapshot,product_snapshot,quantity,unit_price,discount_percent,remark,sort_order) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,source.product_id,source.variant_id,source.variant_snapshot,source.product_snapshot,source.quantity,source.unit_price,source.discount_percent,source.remark,sort);}saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});},
   salesQuoteVersion(req,res,id,version){const user=currentUser(req);if(!salesCapabilities(user).canView)return json(res,user?403:401,{error:'Access denied.'});const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});const row=db.prepare('SELECT * FROM sales_quote_versions WHERE quote_id=? AND version_number=?').get(id,version);if(!row)return json(res,404,{error:'Version not found.'});return json(res,200,{version:{...row,snapshot:parseJsonValue(row.snapshot)}});},
   salesQuoteMessage(req,res,id,type){const user=currentUser(req);const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});return json(res,200,quoteMessage(quote,type));},
-  salesQuoteExport(req,res,id,type){const user=currentUser(req);const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});const tbc=value=>value==null?'TBC':Number(value).toFixed(2);const lines=[`PROFORMA INVOICE ${quote.quote_number}`,`Customer: ${quote.customer_name}`,`Country: ${quote.country||''}`,`Date: ${quote.quote_date||''}`,`Valid Until: ${quote.valid_until||''}`,'',...quote.all_items.map(i=>`${i.sku||'CUSTOM'} | ${i.name} | ${i.specification||''} | ${i.materials||''} | ${i.size||''} | Qty ${i.quantity} x ${i.unit_price} = ${i.line_total.toFixed(2)} | CBM ${tbc(i.cbm)} | GW ${tbc(i.gross_weight_kg)} | NW ${tbc(i.net_weight_kg)}`),'',`Product Total: ${quote.summary.product_total.toFixed(2)}`,`Freight: ${quote.summary.freight_cost==null?'Freight To Be Quoted':quote.summary.freight_cost.toFixed(2)}`,`Grand Total: ${quote.currency} ${quote.summary.grand_total.toFixed(2)}`,`Deposit ${Number(quote.deposit_percent||0)}%: ${quote.summary.deposit_amount.toFixed(2)}`,`Balance ${Number(quote.balance_percent||0)}%: ${quote.summary.balance_amount.toFixed(2)}`,quote.payment_note||'',quote.other_remark||''];if(type==='pdf'){const body=simplePdf(lines.join('\n'));res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${quote.quote_number}.pdf"`});return res.end(body);}const xml=`<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="PI" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Table>${lines.map(line=>`<Row><Cell><Data ss:Type="String">${String(line).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</Data></Cell></Row>`).join('')}</Table></Worksheet></Workbook>`;res.writeHead(200,{'Content-Type':'application/vnd.ms-excel','Content-Disposition':`attachment; filename="${quote.quote_number}.xls"`});return res.end(xml);},
+  salesQuoteExport(req,res,id,type){const user=currentUser(req);const quote=salesQuoteDetail(id,user);if(!quote)return json(res,404,{error:'Quote not found.'});const rows=globalPiRows(quote);if(type==='pdf'){const body=simplePdf(rows.map(row=>row.join(' | ')).join('\n'));res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':`attachment; filename="${quote.quote_number}.pdf"`});return res.end(body);}const escapeXml=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');const xml=`<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="Header"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#155E4B" ss:Pattern="Solid"/></Style><Style ss:ID="Section"><Font ss:Bold="1" ss:Color="#155E4B"/></Style><Style ss:ID="Money"><NumberFormat ss:Format="0.00"/></Style></Styles><Worksheet ss:Name="Global PI"><Table>${rows.map((row,index)=>`<Row>${row.map((cell,column)=>`<Cell${row.length===1?' ss:StyleID="Section"':index===0||row[0]==='No.'?' ss:StyleID="Header"':''}><Data ss:Type="${typeof cell==='number'?'Number':'String'}">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('')}</Table></Worksheet></Workbook>`;res.writeHead(200,{'Content-Type':'application/vnd.ms-excel','Content-Disposition':`attachment; filename="${quote.quote_number}.xls"`});return res.end(xml);},
 
   async convertSalesOrder(req, res, id) {
     const user = currentUser(req); if (!salesCapabilities(user).canConvert) return json(res, user ? 403 : 401, { error: 'Order conversion is not allowed.' });
@@ -1761,24 +2053,25 @@ const handlers = {
       SELECT products.*, product_categories.name AS category
       FROM products LEFT JOIN product_categories ON product_categories.id = products.category_id
       ORDER BY products.updated_at DESC
-    `).all().map(row => productWithTags(row.id));
+    `).all().map(row => redactSensitiveProductData({ ...productWithTags(row.id), foundation: productFoundation(row.id) },user));
     const categories = db.prepare(`
       SELECT product_categories.id, product_categories.name, product_categories.slug, COUNT(products.id) AS product_count
       FROM product_categories LEFT JOIN products ON products.category_id = product_categories.id
-      GROUP BY product_categories.id ORDER BY product_categories.name
+      GROUP BY product_categories.id ORDER BY product_categories.sort_order, product_categories.name
     `).all();
-    const tags = db.prepare(`SELECT id, tag_name, tag_type FROM system_tags WHERE active = 1 AND tag_type IN (${productTagTypes.map(() => '?').join(',')}) ORDER BY tag_type, tag_name`).all(...productTagTypes);
+    const tags = db.prepare(`SELECT id, tag_name, tag_type FROM system_tags WHERE active = 1 AND tag_type IN (${productTagTypes.map(() => '?').join(',')}) ORDER BY tag_type, sort_order, tag_name`).all(...productTagTypes);
     const knowledgeTerms = db.prepare('SELECT id, term_type, name FROM product_knowledge_terms WHERE active = 1 ORDER BY term_type, sort_order, name').all();
     return json(res, 200, {
-      products: rows, categories, tags, knowledgeTerms,
-      intelligenceOptions: { budgetLevels, imageTypes: productImageTypes, imageStatuses: productImageStatuses },
+      products: rows, categories, tags, knowledgeTerms, attributeDefinitions: attributeMasterRows().filter(attribute => Number(attribute.active) === 1),
+      intelligenceOptions: { budgetLevels, imageTypes: productImageTypes, imageStatuses: productImageStatuses, libraryStatuses: masterValues('Product Status Options',productLibraryStatuses), visibilities: masterValues('Visibility Options',productVisibilities), variantStatuses: masterValues('Product Status Options',variantStatuses), materials:masterValues('Materials'), finishes:masterValues('Finishes'), colors:masterValues('Colors'), units:masterValues('Units'), currencies:masterValues('Currencies'), tradeTerms:masterValues('Trade Terms') },
+      capabilities:{canViewSensitive:canViewSensitiveProductData(user),canManage:canManageProductLibrary(user)},
       skuRules: { categoryCodes: skuCategoryCodes, styleCodes: skuStyleCodes }
     });
   },
 
   async mutateProduct(req, res, id = null) {
     const user = currentUser(req);
-    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    if (!canManageProductLibrary(user)) return json(res, user ? 403 : 401, { error: 'Product creation and editing require Owner or Sales Admin access.' });
     const existing = id ? db.prepare('SELECT * FROM products WHERE id = ?').get(id) : null;
     if (id && !existing) return json(res, 404, { error: 'Product not found.' });
     const body = await readJson(req);
@@ -1792,16 +2085,25 @@ const handlers = {
     const tagIds = validateProductTags(body.tag_ids ?? (existing ? productWithTags(id).tag_ids : []));
     const budgetLevel = String(body.budget_level ?? existing?.budget_level ?? '').trim();
     if (budgetLevel && !budgetLevels.includes(budgetLevel)) return json(res, 400, { error: 'Budget level is not supported.' });
+    const requestedLibraryStatus=String(body.library_status??existing?.library_status??'Draft'),legacyStatusMap={Active:'Approved',New:'Approved','Best Seller':'Approved','Coming Soon':'Pending Review',Hidden:'Inactive',Discontinued:'Inactive'};
+    const libraryStatus=legacyStatusMap[requestedLibraryStatus]||requestedLibraryStatus;
+    const visibility=String(body.visibility??existing?.visibility??'Website + Quote');
+    if(!masterValues('Product Status Options',productLibraryStatuses).includes(libraryStatus))return json(res,400,{error:'Product status is not supported.'});
+    if(!masterValues('Visibility Options',productVisibilities).includes(visibility))return json(res,400,{error:'Product visibility is not supported.'});
     const values = [categoryId, sku, name, String(body.summary ?? existing?.summary ?? '').trim() || null,
       String(body.materials ?? existing?.materials ?? '').trim() || null, String(body.size ?? existing?.size ?? '').trim() || null,
       String(body.price_range ?? existing?.price_range ?? '').trim() || null, Number(body.lead_time_days ?? existing?.lead_time_days ?? 0) || null,
       Number(body.moq ?? existing?.moq ?? 0) || null, String(body.status ?? existing?.status ?? 'draft')];
     try {
       db.exec('BEGIN IMMEDIATE');
-      if (existing) db.prepare('UPDATE products SET category_id = ?, sku = ?, name = ?, summary = ?, materials = ?, size = ?, price_range = ?, lead_time_days = ?, moq = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(...values, id);
-      else id = Number(db.prepare('INSERT INTO products (category_id, sku, name, summary, materials, size, price_range, lead_time_days, moq, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id').get(...values, user.id).id);
-      const intelligenceValues = intelligenceFieldValues({ ...body, budget_level: budgetLevel }, existing || {});
+      if (existing) db.prepare('UPDATE products SET category_id = ?, sku = ?, name = ?, summary = ?, materials = ?, size = ?, price_range = ?, lead_time_days = ?, moq = ?, status = ?, last_updated_by=?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(...values,user.id,id);
+      else id = Number(db.prepare('INSERT INTO products (category_id, sku, name, summary, materials, size, price_range, lead_time_days, moq, status, created_by,last_updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) RETURNING id').get(...values, user.id,user.id).id);
+      const intelligenceValues = intelligenceFieldValues({ ...body, budget_level: budgetLevel, library_status:libraryStatus, visibility, website_price_display:body.website_price_display??existing?.website_price_display??'Request Quote' }, existing || {});
       db.prepare(`UPDATE products SET ${productIntelligenceFields.map(field => `${field} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...intelligenceValues, id);
+      db.prepare(`UPDATE products SET default_supplier=?,supplier_sku=?,supplier_cost=?,supplier_lead_time_days=?,supplier_moq=?,supplier_notes=? WHERE id=?`).run(
+        String(body.default_supplier??existing?.default_supplier??'').trim()||null,String(body.supplier_sku??existing?.supplier_sku??'').trim()||null,
+        body.supplier_cost===''||body.supplier_cost==null?existing?.supplier_cost??null:Number(body.supplier_cost),body.supplier_lead_time_days===''||body.supplier_lead_time_days==null?existing?.supplier_lead_time_days??null:Number(body.supplier_lead_time_days),
+        body.supplier_moq===''||body.supplier_moq==null?existing?.supplier_moq??null:Number(body.supplier_moq),String(body.supplier_notes??existing?.supplier_notes??'').trim()||null,id);
       db.prepare('DELETE FROM product_tag_links WHERE product_id = ?').run(id);
       const link = db.prepare('INSERT INTO product_tag_links (product_id, tag_id) VALUES (?, ?)');
       for (const tagId of tagIds) link.run(id, tagId);
@@ -1813,14 +2115,14 @@ const handlers = {
     }
     syncProductReadiness(id);
     audit(user.id, existing ? 'update' : 'create', 'products', String(id), { sku, tagIds });
-    return json(res, existing ? 200 : 201, { product: productWithTags(id) });
+    return json(res, existing ? 200 : 201, { product: redactSensitiveProductData(productWithTags(id),user) });
   },
 
   productDetail(req, res, id) {
     const user = currentUser(req);
     if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     const product = productKnowledge(id);
-    return product ? json(res, 200, { product, options: knowledgeOptions(id), aiContentFactory: aiFactorySummary(id, user) }) : json(res, 404, { error: 'Product not found.' });
+    return product ? json(res, 200, { product:redactSensitiveProductData(product,user), options: knowledgeOptions(id), foundation:redactSensitiveProductData(productFoundation(id),user), capabilities:{canViewSensitive:canViewSensitiveProductData(user)}, aiContentFactory: aiFactorySummary(id, user) }) : json(res, 404, { error: 'Product not found.' });
   },
 
   async generateAiContent(req, res, id) {
@@ -2149,11 +2451,11 @@ const handlers = {
     try {
       db.exec('BEGIN IMMEDIATE');
       mediaId = Number(db.prepare(`INSERT INTO media_assets
-        (file_name, file_type, file_url, related_module, related_record_id, media_category, is_verified, is_ai_generated, image_type, image_status, generated_source, active, created_by)
-        VALUES (?, ?, ?, 'products', ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`).get(
+        (file_name, file_type, file_url, related_module, related_record_id, media_category, is_verified, is_ai_generated, image_type, image_status, generated_source, variant_id, document_type, active, created_by)
+        VALUES (?, ?, ?, 'products', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?) RETURNING id`).get(
         fileName, String(body.file_type || 'image/jpeg'), String(body.file_url || '').trim() || null, String(id),
         isAiGenerated ? 'AI Generated Image' : 'Product Photo', imageStatus === 'Approved' ? 1 : 0, isAiGenerated ? 1 : 0,
-        imageType, imageStatus, isAiGenerated ? 'Reserved AI generation entry' : null, user.id
+        imageType, imageStatus, isAiGenerated ? 'Reserved AI generation entry' : null, body.variant_id?Number(body.variant_id):null, String(body.document_type||'').trim()||null, user.id
       ).id);
       const makeMain = imageType === 'Main Image' || body.mark_main === true;
       if (makeMain) db.prepare('UPDATE product_media_links SET is_primary = 0 WHERE product_id = ?').run(id);
@@ -2186,8 +2488,8 @@ const handlers = {
         db.prepare('UPDATE product_media_links SET is_primary = 0 WHERE product_id = ?').run(id);
         db.prepare("UPDATE media_assets SET image_type = 'Detail Image' WHERE id IN (SELECT media_id FROM product_media_links WHERE product_id = ?) AND id != ? AND image_type = 'Main Image'").run(id, mediaId);
       }
-      db.prepare('UPDATE media_assets SET file_name = ?, file_url = ?, image_type = ?, image_status = ?, is_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(String(body.file_name ?? existing.file_name).trim(), String(body.file_url ?? existing.file_url ?? '').trim() || null, makeMain ? 'Main Image' : imageType, imageStatus, imageStatus === 'Approved' ? 1 : 0, mediaId);
+      db.prepare('UPDATE media_assets SET file_name = ?, file_url = ?, image_type = ?, image_status = ?, is_verified = ?, variant_id=?, document_type=?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(String(body.file_name ?? existing.file_name).trim(), String(body.file_url ?? existing.file_url ?? '').trim() || null, makeMain ? 'Main Image' : imageType, imageStatus, imageStatus === 'Approved' ? 1 : 0,body.variant_id?Number(body.variant_id):null,String(body.document_type??existing.document_type??'').trim()||null,mediaId);
       db.prepare('UPDATE product_media_links SET is_primary = ? WHERE product_id = ? AND media_id = ?').run(makeMain ? 1 : 0, id, mediaId);
       db.exec('COMMIT');
     } catch (error) {
@@ -2245,7 +2547,7 @@ const handlers = {
       params.push(tag);
     }
     const ids = db.prepare(`SELECT products.id FROM products WHERE ${where.join(' AND ')} ORDER BY products.updated_at DESC LIMIT 500`).all(...params).map(row => row.id);
-    return json(res, 200, { products: ids.map(productWithTags), query: Object.fromEntries(url.searchParams) });
+    return json(res, 200, { products: redactSensitiveProductData(ids.map(productWithTags),user), query: Object.fromEntries(url.searchParams) });
   },
 
   async mutateKnowledge(req, res, id) {
@@ -2303,6 +2605,31 @@ const handlers = {
     audit(user.id, 'update', 'product_knowledge', String(id), { termIds, recommendedIds, caseIds, mediaIds, relatedCategoryIds });
     return json(res, 200, { product: productKnowledge(id) });
   },
+
+  productCategories(req,res){const user=currentUser(req);if(!requires(user,'products'))return json(res,user?403:401,{error:'Access denied.'});return json(res,200,{categories:db.prepare('SELECT pc.*,COUNT(p.id) AS product_count FROM product_categories pc LEFT JOIN products p ON p.category_id=pc.id GROUP BY pc.id ORDER BY pc.sort_order,pc.name').all()});},
+  async createProductCategory(req,res){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const b=await readJson(req);const name=requiredText(b.name,'Category name'),slug=String(b.slug||makeCode(name).toLowerCase()).trim();try{const row=db.prepare('INSERT INTO product_categories(name,slug,description,active,sort_order) VALUES(?,?,?,?,?) RETURNING *').get(name,slug,String(b.description||'').trim()||null,b.active===false?0:1,Number(b.sort_order||0));return json(res,201,{category:row})}catch(error){return json(res,409,{error:'Category name or slug already exists.'})}},
+  async updateProductCategory(req,res,id){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const existing=db.prepare('SELECT * FROM product_categories WHERE id=?').get(id);if(!existing)return json(res,404,{error:'Category not found.'});const b=await readJson(req);db.prepare('UPDATE product_categories SET name=?,slug=?,description=?,active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(requiredText(b.name??existing.name,'Category name'),String(b.slug??existing.slug).trim(),String(b.description??existing.description??'').trim()||null,b.active===undefined?existing.active:b.active?1:0,Number(b.sort_order??existing.sort_order??0),id);return json(res,200,{category:db.prepare('SELECT * FROM product_categories WHERE id=?').get(id)})},
+  deleteProductCategory(req,res,id){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const count=Number(db.prepare('SELECT COUNT(*) AS count FROM products WHERE category_id=?').get(id).count);if(count)return json(res,409,{error:'Move products to another category before deleting this category.'});const result=db.prepare('DELETE FROM product_categories WHERE id=?').run(id);return result.changes?json(res,200,{deleted:true}):json(res,404,{error:'Category not found.'})},
+
+  productTags(req,res){const user=currentUser(req);if(!requires(user,'products'))return json(res,user?403:401,{error:'Access denied.'});return json(res,200,{groups:productTagTypes,tags:db.prepare(`SELECT st.*,COUNT(ptl.product_id) AS usage_count FROM system_tags st LEFT JOIN product_tag_links ptl ON ptl.tag_id=st.id WHERE st.tag_type IN (${productTagTypes.map(()=>'?').join(',')}) GROUP BY st.id ORDER BY st.tag_type,st.sort_order,st.tag_name`).all(...productTagTypes)})},
+  async createProductTag(req,res){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const b=await readJson(req),group=String(b.tag_type||'');if(!productTagTypes.includes(group))return json(res,400,{error:'Tag group is not supported.'});const name=requiredText(b.tag_name,'Tag name'),code=requiredText(b.code||makeCode(name),'Tag code');const row=db.prepare('INSERT INTO system_tags(tag_name,tag_type,code,description,active,is_system,sort_order,created_by) VALUES(?,?,?,?,?,0,?,?) RETURNING *').get(name,group,code,String(b.description||'').trim()||null,b.active===false?0:1,Number(b.sort_order||0),user.id);return json(res,201,{tag:row})},
+  async updateProductTag(req,res,id){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const existing=db.prepare('SELECT * FROM system_tags WHERE id=?').get(id);if(!existing)return json(res,404,{error:'Tag not found.'});const b=await readJson(req),group=String(b.tag_type??existing.tag_type);if(!productTagTypes.includes(group))return json(res,400,{error:'Tag group is not supported.'});db.prepare('UPDATE system_tags SET tag_name=?,tag_type=?,code=?,description=?,active=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(requiredText(b.tag_name??existing.tag_name,'Tag name'),group,requiredText(b.code??existing.code,'Tag code'),String(b.description??existing.description??'').trim()||null,b.active===undefined?existing.active:b.active?1:0,Number(b.sort_order??existing.sort_order??0),id);return json(res,200,{tag:db.prepare('SELECT * FROM system_tags WHERE id=?').get(id)})},
+  deleteProductTag(req,res,id){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const used=Number(db.prepare('SELECT COUNT(*) AS count FROM product_tag_links WHERE tag_id=?').get(id).count);if(used)return json(res,409,{error:'Disable this tag instead; it is assigned to existing products.'});const result=db.prepare('DELETE FROM system_tags WHERE id=?').run(id);return result.changes?json(res,200,{deleted:true}):json(res,404,{error:'Tag not found.'})},
+
+  productVariants(req,res){const user=currentUser(req);if(!requires(user,'products'))return json(res,user?403:401,{error:'Access denied.'});return json(res,200,{variants:redactSensitiveProductData(db.prepare('SELECT pv.*,p.name AS product_name,p.sku AS product_sku FROM product_variants pv JOIN products p ON p.id=pv.product_id ORDER BY p.name,pv.sort_order,pv.id').all(),user),products:db.prepare("SELECT id,name,sku FROM products WHERE status!='archived' ORDER BY name").all(),capabilities:{canViewSensitive:canViewSensitiveProductData(user)}})},
+
+async createProductVariant(req,res,productId){const user=currentUser(req);if(!['Admin','Owner','Designer'].includes(user?.role))return json(res,user?403:401,{error:'Product editing is not allowed.'});if(!db.prepare('SELECT id FROM products WHERE id=?').get(productId))return json(res,404,{error:'Product not found.'});const b=await readJson(req),status=String(b.status||'Active');if(!masterValues('Product Status Options',variantStatuses).includes(status))return json(res,400,{error:'Variant status is not supported.'});const values=variantFieldValues(b);values[0]=requiredText(values[0],'Variant name');const row=db.prepare('INSERT INTO product_variants(product_id,variant_name,variant_sku,dimensions,material,finish,color,reference_price,cost_price,moq,lead_time_days,cbm,gross_weight_kg,net_weight_kg,packing_info,default_supplier,supplier_sku,supplier_cost,supplier_lead_time_days,supplier_moq,supplier_notes,status,sort_order,last_updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *').get(productId,...values,status,Number(b.sort_order||0),user.id);return json(res,201,{variant:redactSensitiveProductData(row,user)})},
+  async updateProductVariant(req,res,productId,variantId){const user=currentUser(req);if(!['Admin','Owner','Designer'].includes(user?.role))return json(res,user?403:401,{error:'Product editing is not allowed.'});const existing=db.prepare('SELECT * FROM product_variants WHERE id=? AND product_id=?').get(variantId,productId);if(!existing)return json(res,404,{error:'Variant not found.'});const b=await readJson(req),status=String(b.status??existing.status);if(!masterValues('Product Status Options',variantStatuses).includes(status))return json(res,400,{error:'Variant status is not supported.'});const values=variantFieldValues(b,existing);values[0]=requiredText(values[0],'Variant name');db.prepare('UPDATE product_variants SET variant_name=?,variant_sku=?,dimensions=?,material=?,finish=?,color=?,reference_price=?,cost_price=?,moq=?,lead_time_days=?,cbm=?,gross_weight_kg=?,net_weight_kg=?,packing_info=?,default_supplier=?,supplier_sku=?,supplier_cost=?,supplier_lead_time_days=?,supplier_moq=?,supplier_notes=?,status=?,sort_order=?,last_updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND product_id=?').run(...values,status,Number(b.sort_order??existing.sort_order),user.id,variantId,productId);return json(res,200,{variant:redactSensitiveProductData(db.prepare('SELECT * FROM product_variants WHERE id=?').get(variantId),user)})},
+  deleteProductVariant(req,res,productId,variantId){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const result=db.prepare('DELETE FROM product_variants WHERE id=? AND product_id=?').run(variantId,productId);return result.changes?json(res,200,{deleted:true}):json(res,404,{error:'Variant not found.'})},
+
+  productAttributes(req,res){const user=currentUser(req);if(!requires(user,'products'))return json(res,user?403:401,{error:'Access denied.'});return json(res,200,{attributes:attributeMasterRows(),types:['Text','Number','Select','Multi-select','Color','Image','Boolean']})},
+  async createProductAttribute(req,res){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const b=await readJson(req);if(!Array.isArray(b.category_ids)&&b.category_id)b.category_ids=[b.category_id];const row=db.prepare('INSERT INTO product_attribute_definitions(category_id,name,code,data_type,unit,active,sort_order,show_in_library,show_on_website,show_in_quote,show_in_pi,internal_only) VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?) RETURNING *').get(requiredText(b.name,'Attribute name'),requiredText(b.code,'Attribute code'),String(b.data_type||'Text'),String(b.unit||'').trim()||null,b.active===false?0:1,Number(b.sort_order||0),b.show_in_library===false?0:1,b.show_on_website?1:0,b.show_in_quote?1:0,b.show_in_pi?1:0,b.internal_only?1:0);syncAttributeMaster(row.id,b);return json(res,201,{attribute:attributeMasterRows().find(attribute=>attribute.id===row.id)})},
+  async updateProductAttribute(req,res,id){const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const existing=db.prepare('SELECT * FROM product_attribute_definitions WHERE id=?').get(id);if(!existing)return json(res,404,{error:'Attribute not found.'});const b=await readJson(req);db.prepare('UPDATE product_attribute_definitions SET name=?,code=?,data_type=?,unit=?,active=?,sort_order=?,show_in_library=?,show_on_website=?,show_in_quote=?,show_in_pi=?,internal_only=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(requiredText(b.name??existing.name,'Attribute name'),requiredText(b.code??existing.code,'Attribute code'),String(b.data_type??existing.data_type),String(b.unit??existing.unit??'').trim()||null,b.active===undefined?existing.active:b.active?1:0,Number(b.sort_order??existing.sort_order),b.show_in_library===undefined?existing.show_in_library:b.show_in_library?1:0,b.show_on_website===undefined?existing.show_on_website:b.show_on_website?1:0,b.show_in_quote===undefined?existing.show_in_quote:b.show_in_quote?1:0,b.show_in_pi===undefined?existing.show_in_pi:b.show_in_pi?1:0,b.internal_only===undefined?existing.internal_only:b.internal_only?1:0,id);syncAttributeMaster(id,b);return json(res,200,{attribute:attributeMasterRows().find(attribute=>attribute.id===id)})},
+  deleteProductAttribute(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const used=Number(db.prepare('SELECT COUNT(*) AS count FROM product_attribute_values WHERE attribute_id=?').get(id).count);if(used)return json(res,409,{error:'Remove attribute values before deleting this definition.'});const result=db.prepare('DELETE FROM product_attribute_definitions WHERE id=?').run(id);return result.changes?json(res,200,{deleted:true}):json(res,404,{error:'Attribute not found.'})},
+
+  async updateProductFoundation(req,res,id){const user=currentUser(req);if(!['Admin','Owner','Designer'].includes(user?.role))return json(res,user?403:401,{error:'Product editing is not allowed.'});if(!db.prepare('SELECT id FROM products WHERE id=?').get(id))return json(res,404,{error:'Product not found.'});const b=await readJson(req);db.exec('BEGIN IMMEDIATE');try{db.prepare('DELETE FROM product_attribute_values WHERE product_id=?').run(id);const insertValue=db.prepare('INSERT INTO product_attribute_values(product_id,variant_id,attribute_id,value) VALUES(?,?,?,?)');for(const value of b.attribute_values||[]){if(String(value.value||'').trim())insertValue.run(id,value.variant_id?Number(value.variant_id):null,Number(value.attribute_id),String(value.value).trim())}db.prepare('DELETE FROM product_foundation_relationships WHERE source_product_id=?').run(id);const insertRelationship=db.prepare('INSERT INTO product_foundation_relationships(source_product_id,target_product_id,relationship_type,sort_order) VALUES(?,?,?,?)');for(const [type,ids] of [['related',b.related_product_ids||[]],['frequently_bought_together',b.frequently_bought_together_ids||[]]])ids.forEach((target,index)=>{if(Number(target)!==id)insertRelationship.run(id,Number(target),type,index)});db.exec('COMMIT')}catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}return json(res,200,{foundation:productFoundation(id)})},
+
+  deleteProduct(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const product=db.prepare('SELECT * FROM products WHERE id=?').get(id);if(!product)return json(res,404,{error:'Product not found.'});const historical=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE product_id=?').get(id).count)+Number(db.prepare('SELECT COUNT(*) AS count FROM sales_order_items WHERE product_id=?').get(id).count);if(historical){db.prepare("UPDATE products SET library_status='Hidden',visibility='Hidden',status='archived',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);return json(res,200,{deleted:false,archived:true,message:'Product hidden to preserve historical Quote, PI, and Order records.'})}db.prepare('DELETE FROM products WHERE id=?').run(id);return json(res,200,{deleted:true,archived:false})},
 
   opportunityDashboard(req, res) {
     const user = currentUser(req);
@@ -2606,7 +2933,21 @@ const handlers = {
     return json(res, 200, { opportunities: rows });
   },
 
-  imports(req, res) {
+  priceRules(req,res){const user=currentUser(req);if(user?.role!=='Owner')return json(res,user?403:401,{error:'Owner access required.'});const rules=db.prepare('SELECT pr.*,pc.name AS category_name,u.name AS updated_by_name FROM product_price_rules pr LEFT JOIN product_categories pc ON pc.id=pr.category_id LEFT JOIN users u ON u.id=pr.updated_by ORDER BY pr.active DESC,pr.effective_date DESC,pr.id DESC').all();return json(res,200,{rules,categories:db.prepare('SELECT id,name FROM product_categories WHERE active=1 ORDER BY name').all(),roundingRules:pricingRoundingRules,currencies:masterValues('Currencies',['USD','CNY'])})},
+  async createPriceRule(req,res,id=null){
+    const user=currentUser(req);if(user?.role!=='Owner')return json(res,user?403:401,{error:'Owner access required.'});
+    const b=await readJson(req),existing=id?db.prepare('SELECT * FROM product_price_rules WHERE id=?').get(id):null;if(id&&!existing)return json(res,404,{error:'Price rule not found.'});
+    const ruleName=requiredText(b.rule_name??existing?.rule_name,'Rule name'),multiplier=Number(b.multiplier??existing?.multiplier);if(!(multiplier>0))return json(res,400,{error:'Multiplier must be greater than zero.'});
+    const rounding=String(b.rounding_rule??existing?.rounding_rule??'No rounding');if(!pricingRoundingRules.includes(rounding))return json(res,400,{error:'Rounding rule is not supported.'});
+    const values=[ruleName,String(b.supplier_name??existing?.supplier_name??'').trim()||null,Number(b.category_id??existing?.category_id)||null,multiplier,Number((b.fixed_addon??existing?.fixed_addon)||0),b.minimum_margin===''||b.minimum_margin==null?(existing?.minimum_margin??null):Number(b.minimum_margin),rounding,String(b.currency??existing?.currency??'USD'),activeValue(b.active,existing?.active??1),String(b.effective_date??existing?.effective_date??new Date().toISOString().slice(0,10)),String(b.notes??existing?.notes??'').trim()||null];
+    if(existing)db.prepare('UPDATE product_price_rules SET rule_name=?,supplier_name=?,category_id=?,multiplier=?,fixed_addon=?,minimum_margin=?,rounding_rule=?,currency=?,active=?,effective_date=?,notes=?,updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(...values,user.id,id);else id=Number(db.prepare('INSERT INTO product_price_rules(rule_name,supplier_name,category_id,multiplier,fixed_addon,minimum_margin,rounding_rule,currency,active,effective_date,notes,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id').get(...values,user.id,user.id).id);
+    audit(user.id,existing?'update_price_rule':'create_price_rule','product_price_rules',String(id));return json(res,existing?200:201,{rule:db.prepare('SELECT * FROM product_price_rules WHERE id=?').get(id)});
+  },
+  pricingPreview(req,res,url){const user=currentUser(req);if(user?.role!=='Owner')return json(res,user?403:401,{error:'Owner access required.'});const supplier=url.searchParams.get('supplier'),categoryId=Number(url.searchParams.get('category_id'))||null,batchId=Number(url.searchParams.get('batch_id'))||null,ids=String(url.searchParams.get('product_ids')||'').split(',').map(Number).filter(Boolean),where=['1=1'],params=[];if(supplier){where.push('LOWER(COALESCE(pv.default_supplier,p.source_supplier))=LOWER(?)');params.push(supplier)}if(categoryId){where.push('p.category_id=?');params.push(categoryId)}if(batchId){where.push('pv.import_batch_id=?');params.push(batchId)}if(ids.length){where.push(`p.id IN (${ids.map(()=>'?').join(',')})`);params.push(...ids)}const rows=db.prepare(`SELECT pv.*,p.name AS product_name,p.category_id FROM product_variants pv JOIN products p ON p.id=pv.product_id WHERE ${where.join(' AND ')} ORDER BY p.name,pv.variant_name`).all(...params).map(variant=>{const calculated=calculateReferencePrice({supplierCost:variant.supplier_cost??variant.cost_price,supplierCurrency:variant.supplier_currency||'USD',exchangeRate:variant.exchange_rate||1,supplier:variant.default_supplier,categoryId:variant.category_id,currency:'USD'});return {variant_id:variant.id,product_id:variant.product_id,product_name:variant.product_name,variant_name:variant.variant_name,old_reference_price:variant.reference_price,new_reference_price:calculated.reference_price,difference:calculated.reference_price==null?null:calculated.reference_price-Number(variant.reference_price||0),rule_applied:calculated.rule?.rule_name||null,pricing_status:calculated.pricing_status,manual_override:Boolean(variant.price_manual_override)}});return json(res,200,{preview:rows})},
+  async applyPricingRecalculation(req,res){const user=currentUser(req);if(user?.role!=='Owner')return json(res,user?403:401,{error:'Owner access required.'});const b=await readJson(req);if(b.confirm!==true)return json(res,400,{error:'Recalculation confirmation is required.'});let updated=0;for(const id of normalizedIds(b.variant_ids)){const variant=db.prepare('SELECT pv.*,p.category_id FROM product_variants pv JOIN products p ON p.id=pv.product_id WHERE pv.id=?').get(id);if(!variant)continue;if(variant.price_manual_override&&!b.include_manual_overrides)continue;const result=calculateReferencePrice({supplierCost:variant.supplier_cost??variant.cost_price,supplierCurrency:variant.supplier_currency||'USD',exchangeRate:variant.exchange_rate||1,supplier:variant.default_supplier,categoryId:variant.category_id,currency:'USD'});db.prepare('UPDATE product_variants SET reference_price=?,converted_cost=?,pricing_rule_id=?,pricing_status=?,pricing_confidence=?,price_manual_override=0,price_override_by=NULL,price_override_at=NULL,last_updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(result.reference_price,result.converted_cost,result.rule?.id||null,result.pricing_status,result.pricing_confidence,user.id,id);updated++}audit(user.id,'recalculate_prices','product_variants',null,{updated});return json(res,200,{updated})},
+  async overrideVariantPrice(req,res,productId,variantId){const user=currentUser(req);if(user?.role!=='Owner')return json(res,user?403:401,{error:'Owner access required.'});const b=await readJson(req),price=Number(b.reference_price);if(!Number.isFinite(price)||price<0)return json(res,400,{error:'Reference price must be zero or greater.'});const result=db.prepare("UPDATE product_variants SET reference_price=?,pricing_status='Manual Override',price_manual_override=1,price_override_by=?,price_override_at=CURRENT_TIMESTAMP,last_updated_by=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND product_id=?").run(price,user.id,user.id,variantId,productId);return result.changes?json(res,200,{variant:db.prepare('SELECT * FROM product_variants WHERE id=?').get(variantId)}):json(res,404,{error:'Variant not found.'})},
+
+  imports(req, res, url) {
     const user = currentUser(req);
     if (!requires(user, 'imports')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     const rows = db.prepare(`
@@ -2614,7 +2955,68 @@ const handlers = {
       FROM import_jobs LEFT JOIN users ON users.id = import_jobs.created_by
       ORDER BY import_jobs.created_at DESC
     `).all();
-    return json(res, 200, { imports: rows });
+    const batches=db.prepare('SELECT b.*,u.name AS created_by_name FROM product_import_batches b LEFT JOIN users u ON u.id=b.created_by ORDER BY b.created_at DESC').all().map(batch=>redactImportBatch(batch,user));
+    const batchId=Number(url?.searchParams.get('batch_id')||batches[0]?.id||0);return json(res, 200, { imports: rows,batches,batch:batchId?importBatchDetail(batchId,user):null,categories:db.prepare('SELECT id,name FROM product_categories WHERE active=1 ORDER BY sort_order,name').all(),capabilities:{...importCapabilities(user),canViewSensitive:canViewSensitiveProductData(user)},modes:['Smart Import','Standard Template Import'],currencies:masterValues('Currencies',['USD','CNY']) });
+  },
+
+  async analyzeProductImportBusiness(req,res){
+    const user=currentUser(req),capabilities=importCapabilities(user);if(!capabilities.canUpload)return json(res,user?403:401,{error:'Import upload is not allowed.'});
+    const b=await readJson(req),filename=requiredText(b.filename,'Source file name'),mode=['Smart Import','Standard Template Import'].includes(b.import_mode)?b.import_mode:'Smart Import';
+    const id=Number(db.prepare(`INSERT INTO product_import_batches(source_file_name,import_mode,supplier_name,supplier_code,supplier_contact,supplier_country,supplier_currency,exchange_rate,import_remark,default_category_id,status,started_at,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,'Analyzing',CURRENT_TIMESTAMP,?) RETURNING id`).get(filename,mode,String(b.supplier_name||'').trim()||null,String(b.supplier_code||'').trim()||null,String(b.supplier_contact||'').trim()||null,String(b.supplier_country||'').trim()||null,String(b.supplier_currency||'').trim()||null,b.exchange_rate?Number(b.exchange_rate):null,String(b.import_remark||'').trim()||null,b.default_category_id?Number(b.default_category_id):null,user.id).id);
+    try{
+      const parsed=parseSpreadsheet({filename,buffer:Buffer.from(requiredText(b.file_base64,'Spreadsheet content'),'base64')}),defaultCategory=b.default_category_id?db.prepare('SELECT * FROM product_categories WHERE id=?').get(Number(b.default_category_id)):null;
+      const drafts=analyzeSpreadsheet(parsed,{filename,defaultCategoryName:defaultCategory?.name,currency:b.supplier_currency,exchangeRate:Number(b.exchange_rate||0),supplierName:b.supplier_name});
+      const assetDir=join(publicDir,'imports',String(id));mkdirSync(assetDir,{recursive:true});
+      const assetUrls=parsed.images.map((image,index)=>{const safe=`${index+1}-${String(image.name).replace(/[^a-zA-Z0-9._-]/g,'_')}`;writeFileSync(join(assetDir,safe),image.data);return `/imports/${id}/${safe}`});
+      const insert=db.prepare(`INSERT INTO product_import_drafts(batch_id,status,product_name,product_sku,suggested_category_id,mapped_product,suggested_variants,suggested_attributes,source_rows,source_mapping,original_values,product_group_confidence,variant_confidence,attribute_mapping_confidence,image_matching_confidence,missing_fields,image_status,main_image_url,possible_match_product_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      drafts.forEach((draft,index)=>{
+        draft.mapped_product={...draft.mapped_product,default_supplier:b.supplier_name||draft.mapped_product.default_supplier||null,source_supplier_code:b.supplier_code||null,supplier_currency:b.supplier_currency||draft.mapped_product.currency||null,exchange_rate:b.exchange_rate?Number(b.exchange_rate):null,import_notes:b.import_remark||null};
+        const category=db.prepare('SELECT id FROM product_categories WHERE name=?').get(draft.category),categoryId=category?.id||null;
+        const attributes=categoryId?db.prepare(`SELECT pad.id,pad.name,pad.code FROM product_attribute_definitions pad JOIN product_attribute_category_links pacl ON pacl.attribute_id=pad.id WHERE pacl.category_id=? AND pad.active=1`).all(categoryId).map(attribute=>{const key=Object.keys(draft.mapped_product).find(field=>normalizeImportField(field)===normalizeImportField(attribute.name));return key&&draft.mapped_product[key]?{attribute_id:attribute.id,name:attribute.name,value:draft.mapped_product[key]}:null}).filter(Boolean):[];
+        const pricing=calculateReferencePrice({supplierCost:draft.mapped_product.supplier_cost??draft.mapped_product.cost_price,supplierCurrency:draft.mapped_product.supplier_currency||'USD',exchangeRate:draft.mapped_product.exchange_rate||1,supplier:draft.mapped_product.default_supplier,categoryId,currency:'USD'});draft.mapped_product={...draft.mapped_product,reference_price:pricing.reference_price??draft.mapped_product.reference_price??null,converted_cost:pricing.converted_cost,pricing_rule_id:pricing.rule?.id||null,pricing_rule_applied:pricing.rule?.rule_name||null,pricing_status:pricing.pricing_status,pricing_confidence:pricing.pricing_confidence};draft.variants=draft.variants.map(variant=>{const result=calculateReferencePrice({supplierCost:variant.cost_price??draft.mapped_product.supplier_cost,supplierCurrency:draft.mapped_product.supplier_currency||'USD',exchangeRate:draft.mapped_product.exchange_rate||1,supplier:draft.mapped_product.default_supplier,categoryId,currency:'USD'});return {...variant,reference_price:result.reference_price??variant.reference_price??null,converted_cost:result.converted_cost,pricing_rule_id:result.rule?.id||null,pricing_rule_applied:result.rule?.rule_name||null,pricing_status:result.pricing_status,pricing_confidence:result.pricing_confidence,supplier_currency:draft.mapped_product.supplier_currency,exchange_rate:draft.mapped_product.exchange_rate}});
+        const image=assetUrls[index]||null,missing=[...draft.missing_fields,...(!image?['Image Assets Needed']:[]),...(pricing.rule?[]:['Needs Pricing Review'])],duplicate=findImportDuplicate(draft);
+        insert.run(id,missing.some(value=>value!=='Image Assets Needed')?'Needs Review':draft.status,draft.product_name,draft.product_sku,categoryId,JSON.stringify({...draft.mapped_product,duplicate_match:duplicate}),JSON.stringify(draft.variants),JSON.stringify(attributes),JSON.stringify(draft.source_rows),JSON.stringify(draft.source_mapping),JSON.stringify(draft.original_values),draft.product_group_confidence,draft.variant_confidence,draft.attribute_mapping_confidence,image?75:0,JSON.stringify(missing),image?'Embedded Image Extracted':'Image Assets Needed',image,duplicate?.id||null);
+        if(missing.some(value=>value!=='Image Assets Needed'))for(const row of draft.source_rows)db.prepare('INSERT INTO product_import_errors(batch_id,source_row,product_name,reason,suggested_fix) VALUES(?,?,?,?,?)').run(id,row.row_number||null,draft.product_name,`Missing: ${missing.filter(value=>value!=='Image Assets Needed').join(', ')}`,'Complete the highlighted draft fields before approval.');
+      });
+      const columns=[...new Set(drafts.flatMap(draft=>Object.values(draft.source_mapping).map(item=>item.source)))];
+      db.prepare("UPDATE product_import_batches SET status='Draft Review',detected_columns=?,analysis_summary=?,total_rows=?,draft_count=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(JSON.stringify(columns),JSON.stringify({detected_products:drafts.length,detected_variants:drafts.reduce((sum,draft)=>sum+draft.variants.length,0),images:assetUrls.length}),drafts.reduce((sum,draft)=>sum+draft.source_rows.length,0),drafts.length,id);
+      return json(res,201,{batch:importBatchDetail(id,user)});
+    }catch(error){db.prepare('INSERT INTO product_import_errors(batch_id,reason,suggested_fix) VALUES(?,?,?)').run(id,String(error.message).slice(0,2000),'Check the spreadsheet format and retry.');db.prepare("UPDATE product_import_batches SET status='Failed',error_count=1,error_message=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error.message).slice(0,2000),id);return json(res,400,{error:error.message,batch:importBatchDetail(id,user)})}
+  },
+
+  async analyzeProductImport(req,res){const user=currentUser(req),capabilities=importCapabilities(user);if(!capabilities.canUpload)return json(res,user?403:401,{error:'Import upload is not allowed.'});const b=await readJson(req),filename=requiredText(b.filename,'Source file name'),mode=['Smart Import','Standard Template Import'].includes(b.import_mode)?b.import_mode:'Smart Import';const id=Number(db.prepare(`INSERT INTO product_import_batches(source_file_name,import_mode,supplier_name,supplier_contact,supplier_country,supplier_currency,exchange_rate,import_remark,default_category_id,status,created_by) VALUES(?,?,?,?,?,?,?,?,?,'Analyzing',?) RETURNING id`).get(filename,mode,String(b.supplier_name||'').trim()||null,String(b.supplier_contact||'').trim()||null,String(b.supplier_country||'').trim()||null,String(b.supplier_currency||'').trim()||null,b.exchange_rate?Number(b.exchange_rate):null,String(b.import_remark||'').trim()||null,b.default_category_id?Number(b.default_category_id):null,user.id).id);try{const parsed=parseSpreadsheet({filename,buffer:Buffer.from(requiredText(b.file_base64,'Spreadsheet content'),'base64')}),defaultCategory=b.default_category_id?db.prepare('SELECT * FROM product_categories WHERE id=?').get(Number(b.default_category_id)):null,drafts=analyzeSpreadsheet(parsed,{filename,defaultCategoryName:defaultCategory?.name,currency:b.supplier_currency,exchangeRate:Number(b.exchange_rate||0),supplierName:b.supplier_name}),assetDir=join(publicDir,'imports',String(id));mkdirSync(assetDir,{recursive:true});const assetUrls=parsed.images.map((image,index)=>{const safe=`${index+1}-${String(image.name).replace(/[^a-zA-Z0-9._-]/g,'_')}`;writeFileSync(join(assetDir,safe),image.data);return `/imports/${id}/${safe}`});const insert=db.prepare(`INSERT INTO product_import_drafts(batch_id,status,product_name,product_sku,suggested_category_id,mapped_product,suggested_variants,suggested_attributes,source_rows,source_mapping,original_values,product_group_confidence,variant_confidence,attribute_mapping_confidence,image_matching_confidence,missing_fields,image_status,main_image_url,possible_match_product_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);drafts.forEach((draft,index)=>{const category=db.prepare('SELECT id FROM product_categories WHERE name=?').get(draft.category),categoryId=category?.id||null,attributes=categoryId?db.prepare(`SELECT pad.id,pad.name,pad.code FROM product_attribute_definitions pad JOIN product_attribute_category_links pacl ON pacl.attribute_id=pad.id WHERE pacl.category_id=? AND pad.active=1`).all(categoryId).map(attribute=>{const key=Object.keys(draft.mapped_product).find(field=>normalizeImportField(field)===normalizeImportField(attribute.name));return key&&draft.mapped_product[key]?{attribute_id:attribute.id,name:attribute.name,value:draft.mapped_product[key]}:null}).filter(Boolean):[],image=assetUrls[index]||null,missing=[...draft.missing_fields,...(!image?['Image Assets Needed']:[])];insert.run(id,missing.some(value=>value!=='Image Assets Needed')?'Needs Review':draft.status,draft.product_name,draft.product_sku,categoryId,JSON.stringify(draft.mapped_product),JSON.stringify(draft.variants),JSON.stringify(attributes),JSON.stringify(draft.source_rows),JSON.stringify(draft.source_mapping),JSON.stringify(draft.original_values),draft.product_group_confidence,draft.variant_confidence,draft.attribute_mapping_confidence,image?75:0,JSON.stringify(missing),image?'Embedded Image Extracted':'Image Assets Needed',image,db.prepare('SELECT id FROM products WHERE sku=? COLLATE NOCASE').get(draft.product_sku)?.id||null)});const columns=[...new Set(drafts.flatMap(draft=>Object.values(draft.source_mapping).map(item=>item.source)))];db.prepare("UPDATE product_import_batches SET status='Draft Review',detected_columns=?,analysis_summary=?,total_rows=?,draft_count=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(JSON.stringify(columns),JSON.stringify({detected_products:drafts.length,detected_variants:drafts.reduce((sum,draft)=>sum+draft.variants.length,0),images:assetUrls.length}),drafts.reduce((sum,draft)=>sum+draft.source_rows.length,0),drafts.length,id);return json(res,201,{batch:importBatchDetail(id)})}catch(error){db.prepare("UPDATE product_import_batches SET status='Failed',error_count=1,error_message=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(error.message).slice(0,2000),id);return json(res,400,{error:error.message,batch:importBatchDetail(id)})}},
+
+  async updateProductImportDraft(req,res,id){const user=currentUser(req);if(!importCapabilities(user).canEdit)return json(res,user?403:401,{error:'Draft editing is not allowed.'});const existing=importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id));if(!existing)return json(res,404,{error:'Draft not found.'});const b=await readJson(req);db.prepare(`UPDATE product_import_drafts SET product_name=?,product_sku=?,suggested_category_id=?,mapped_product=?,suggested_variants=?,suggested_attributes=?,suggested_tag_ids=?,status=?,resolution_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(String(b.product_name??existing.product_name??'').trim()||null,String(b.product_sku??existing.product_sku??'').trim()||null,b.suggested_category_id?Number(b.suggested_category_id):existing.suggested_category_id,JSON.stringify(b.mapped_product??existing.mapped_product),JSON.stringify(b.suggested_variants??existing.suggested_variants),JSON.stringify(b.suggested_attributes??existing.suggested_attributes),JSON.stringify(b.suggested_tag_ids??existing.suggested_tag_ids),String(b.status??existing.status),String(b.resolution_action??existing.resolution_action??'').trim()||null,id);return json(res,200,{draft:redactImportDraft(importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id)),user)})},
+  async reviewProductImportDraft(req,res,id,action){const user=currentUser(req);if(!importCapabilities(user).canApprove)return json(res,user?403:401,{error:'Only Owner or Sales Admin can approve imports.'});const b=await readJson(req);if(action==='reject'){db.prepare("UPDATE product_import_drafts SET status='Rejected',approved_by=?,approved_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(user.id,id);return json(res,200,{draft:redactImportDraft(importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id)),user)})}const result=approveProductImportDraft(id,user,b.resolution_action||'create_new');return json(res,200,{result,draft:redactImportDraft(importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id)),user)})},
+  async approveSelectedProductImports(req,res){const user=currentUser(req);if(!importCapabilities(user).canApprove)return json(res,user?403:401,{error:'Only Owner or Sales Admin can approve imports.'});const b=await readJson(req),results=[];for(const id of normalizedIds(b.draft_ids))results.push(approveProductImportDraft(id,user,b.resolution_action||'create_new'));return json(res,200,{results,batch:b.batch_id?importBatchDetail(Number(b.batch_id),user):null})},
+  async splitProductImportDraft(req,res,id){const user=currentUser(req);if(!importCapabilities(user).canEdit)return json(res,user?403:401,{error:'Draft editing is not allowed.'});const draft=importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id));if(!draft)return json(res,404,{error:'Draft not found.'});if(draft.suggested_variants.length<2)return json(res,409,{error:'This draft does not contain multiple variants.'});const insert=db.prepare(`INSERT INTO product_import_drafts(batch_id,status,product_name,product_sku,suggested_category_id,mapped_product,suggested_variants,suggested_attributes,source_rows,source_mapping,original_values,product_group_confidence,variant_confidence,attribute_mapping_confidence,image_matching_confidence,missing_fields,image_status,main_image_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);draft.suggested_variants.forEach((variant,index)=>insert.run(draft.batch_id,'Pending Review',`${draft.product_name} ${variant.variant_name}`,variant.variant_sku||`${draft.product_sku}-${index+1}`,draft.suggested_category_id,JSON.stringify({...draft.mapped_product,...variant}),JSON.stringify([]),JSON.stringify(draft.suggested_attributes),JSON.stringify(draft.source_rows[index]?[draft.source_rows[index]]:[]),JSON.stringify(draft.source_mapping),JSON.stringify(draft.source_rows[index]?.values||draft.original_values),75,0,draft.attribute_mapping_confidence,index===0?draft.image_matching_confidence:0,JSON.stringify(index===0?draft.missing_fields:[...new Set([...draft.missing_fields,'Image Assets Needed'])]),index===0?draft.image_status:'Image Assets Needed',index===0?draft.main_image_url:null));db.prepare("UPDATE product_import_drafts SET status='Rejected',resolution_action='split',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);db.prepare('UPDATE product_import_batches SET draft_count=(SELECT COUNT(*) FROM product_import_drafts WHERE batch_id=?),updated_at=CURRENT_TIMESTAMP WHERE id=?').run(draft.batch_id,draft.batch_id);return json(res,200,{batch:importBatchDetail(draft.batch_id)})},
+  async mergeProductImportDrafts(req,res){const user=currentUser(req);if(!importCapabilities(user).canEdit)return json(res,user?403:401,{error:'Draft editing is not allowed.'});const b=await readJson(req),ids=normalizedIds(b.draft_ids);if(ids.length<2)return json(res,400,{error:'Select at least two drafts to merge.'});const drafts=ids.map(id=>importDraftRow(db.prepare('SELECT * FROM product_import_drafts WHERE id=?').get(id))).filter(Boolean);if(drafts.length!==ids.length||new Set(drafts.map(draft=>draft.batch_id)).size!==1)return json(res,400,{error:'Drafts must belong to the same batch.'});const target=drafts[0],variants=drafts.map(draft=>({variant_name:draft.mapped_product.dimensions||draft.product_name,variant_sku:draft.product_sku,...draft.mapped_product})),rows=drafts.flatMap(draft=>draft.source_rows);db.prepare("UPDATE product_import_drafts SET product_name=?,suggested_variants=?,source_rows=?,product_group_confidence=85,variant_confidence=82,status='Pending Review',resolution_action='merged',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(String(b.product_name||target.product_name),JSON.stringify(variants),JSON.stringify(rows),target.id);for(const draft of drafts.slice(1))db.prepare("UPDATE product_import_drafts SET status='Rejected',resolution_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(`merged_into:${target.id}`,draft.id);return json(res,200,{batch:importBatchDetail(target.batch_id),draft_id:target.id})},
+
+  exportProductImportErrors(req,res,batchId){
+    const user=currentUser(req);if(!importCapabilities(user).canUpload)return json(res,user?403:401,{error:'Import error report access is not allowed.'});
+    if(!db.prepare('SELECT id FROM product_import_batches WHERE id=?').get(batchId))return json(res,404,{error:'Import batch not found.'});
+    const rows=db.prepare('SELECT source_row,product_name,reason,suggested_fix FROM product_import_errors WHERE batch_id=? ORDER BY source_row,id').all(batchId),escapeXml=value=>String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const data=[['Row Number','Product','Reason','Suggested Fix'],...rows.map(row=>[row.source_row??'',row.product_name||'',row.reason,row.suggested_fix||''])];
+    const xml=`<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="Import Errors"><Table>${data.map((row,index)=>`<Row>${row.map(cell=>`<Cell${index===0?' ss:StyleID="Header"':''}><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`).join('')}</Row>`).join('')}</Table></Worksheet><Styles><Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#DCEFE7" ss:Pattern="Solid"/></Style></Styles></Workbook>`;
+    res.writeHead(200,{'Content-Type':'application/vnd.ms-excel','Content-Disposition':`attachment; filename="import-${batchId}-errors.xls"`});return res.end(xml);
+  },
+
+  async clearProductDemoData(req,res){
+    const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const body=await readJson(req);if(body.confirm!=='CLEAR DEMO DATA')return json(res,400,{error:'Type CLEAR DEMO DATA to confirm.'});
+    const demoSkus=['CHR-1042','TBL-2086','BTH-3018','OUT-4044','ST-CA-001'],ids=db.prepare(`SELECT id FROM products WHERE sku IN (${demoSkus.map(()=>'?').join(',')})`).all(...demoSkus).map(row=>Number(row.id));
+    const counts={products:ids.length,variants:0,drafts:0,batches:0,relatedProducts:0};
+    db.exec('BEGIN IMMEDIATE');try{
+      if(ids.length){const placeholders=ids.map(()=>'?').join(',');counts.variants=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_variants WHERE product_id IN (${placeholders})`).get(...ids).count);counts.relatedProducts=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_foundation_relationships WHERE source_product_id IN (${placeholders}) OR target_product_id IN (${placeholders})`).get(...ids,...ids).count);db.prepare(`DELETE FROM sales_inquiry_products WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM sales_quote_items WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM sales_order_items WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM products WHERE id IN (${placeholders})`).run(...ids)}
+      const batchIds=db.prepare("SELECT id FROM product_import_batches WHERE LOWER(COALESCE(import_remark,''))='demo' OR LOWER(source_file_name) LIKE 'demo-%'").all().map(row=>Number(row.id));if(batchIds.length){const placeholders=batchIds.map(()=>'?').join(',');counts.drafts=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_import_drafts WHERE batch_id IN (${placeholders})`).get(...batchIds).count);counts.batches=batchIds.length;db.prepare(`DELETE FROM product_import_batches WHERE id IN (${placeholders})`).run(...batchIds)}db.prepare("DELETE FROM import_jobs WHERE filename IN ('Outdoor-furniture-collection.xlsx','Booth-seating-price-list.xlsx')").run();db.exec('COMMIT');
+    }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}audit(user.id,'clear_demo_data','products','demo',counts);return json(res,200,{cleared:true,counts,message:'Demo Product Library data cleared. Master data and settings were preserved.'});
+  },
+
+  async addApprovedQuoteLibraryItem(req,res,id){
+    const user=currentUser(req);if(!salesCapabilities(user).canQuote)return json(res,user?403:401,{error:'Access denied.'});if(!salesQuoteDetail(id,user))return json(res,404,{error:'Quote not found.'});
+    const b=await readJson(req),p=db.prepare("SELECT * FROM products WHERE id=? AND COALESCE(visibility,'Website + Quote') IN ('Website + Quote','Quote Only') AND library_status='Approved'").get(Number(b.product_id));if(!p)return json(res,404,{error:'Only Approved products are available for quotation.'});
+    const variant=b.variant_id?db.prepare("SELECT * FROM product_variants WHERE id=? AND product_id=? AND status='Active'").get(Number(b.variant_id),p.id):null;if(b.variant_id&&!variant)return json(res,400,{error:'Selected variant is not available.'});
+    const price=variant?.reference_price??Number(String(p.price_range||'').match(/[\d,.]+/)?.[0].replace(',','')||0),snapshot=variant?JSON.stringify({id:variant.id,name:variant.variant_name,sku:variant.variant_sku,dimensions:variant.dimensions,material:variant.material,finish:variant.finish,color:variant.color,reference_price:variant.reference_price,moq:variant.moq,lead_time_days:variant.lead_time_days,cbm:variant.cbm,gross_weight_kg:variant.gross_weight_kg,net_weight_kg:variant.net_weight_kg,packing_info:variant.packing_info}):null,productSnapshot=JSON.stringify(pimQuoteSnapshot(p,variant)),sort=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE quote_id=?').get(id).count);
+    db.prepare("INSERT INTO sales_quote_items(quote_id,product_id,variant_id,variant_snapshot,product_snapshot,quantity,unit_price,discount_percent,sort_order,pricing_source,reference_price_snapshot,cost_snapshot,cost_currency_snapshot,final_selling_price_snapshot) VALUES(?,?,?,?,?,1,?,0,?,'Reference',?,?,?,?)").run(id,p.id,variant?.id||null,snapshot,productSnapshot,price,sort,price,variant?.converted_cost??variant?.supplier_cost??p.supplier_cost,variant?.supplier_currency||'USD',price);saveQuoteVersion(id,user);return json(res,201,{quote:salesQuoteDetail(id,user)});
   },
 
   proposals(req, res) {
@@ -2805,7 +3207,7 @@ const server = createServer(async (req, res) => {
     const quoteMessageMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/(whatsapp|email)$/);
     if(quoteMessageMatch&&req.method==='GET')return handlers.salesQuoteMessage(req,res,Number(quoteMessageMatch[1]),quoteMessageMatch[2]);
     const quoteAddLibraryMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/library$/);
-    if(quoteAddLibraryMatch&&req.method==='POST')return await handlers.addQuoteLibraryItem(req,res,Number(quoteAddLibraryMatch[1]));
+    if(quoteAddLibraryMatch&&req.method==='POST')return await handlers.addApprovedQuoteLibraryItem(req,res,Number(quoteAddLibraryMatch[1]));
     const quoteAddCustomMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/custom$/);
     if(quoteAddCustomMatch&&req.method==='POST')return await handlers.addQuoteCustomItem(req,res,Number(quoteAddCustomMatch[1]));
     const quoteDuplicateMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)\/items\/duplicate$/);
@@ -2852,6 +3254,29 @@ const server = createServer(async (req, res) => {
     const customerMatch = url.pathname.match(/^\/api\/customers\/(\d+)$/);
     if (customerMatch && req.method === 'GET') return handlers.customerDetail(req, res, Number(customerMatch[1]));
     if (customerMatch && req.method === 'PUT') return await handlers.updateCustomer(req, res, Number(customerMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/product-categories')return handlers.productCategories(req,res);
+    if(req.method==='POST'&&url.pathname==='/api/product-categories')return await handlers.createProductCategory(req,res);
+    const productCategoryMatch=url.pathname.match(/^\/api\/product-categories\/(\d+)$/);
+    if(productCategoryMatch&&req.method==='PUT')return await handlers.updateProductCategory(req,res,Number(productCategoryMatch[1]));
+    if(productCategoryMatch&&req.method==='DELETE')return handlers.deleteProductCategory(req,res,Number(productCategoryMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/product-tags')return handlers.productTags(req,res);
+    if(req.method==='POST'&&url.pathname==='/api/product-tags')return await handlers.createProductTag(req,res);
+    const productTagMatch=url.pathname.match(/^\/api\/product-tags\/(\d+)$/);
+    if(productTagMatch&&req.method==='PUT')return await handlers.updateProductTag(req,res,Number(productTagMatch[1]));
+    if(productTagMatch&&req.method==='DELETE')return handlers.deleteProductTag(req,res,Number(productTagMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/product-attributes')return handlers.productAttributes(req,res);
+    if(req.method==='POST'&&url.pathname==='/api/product-attributes')return await handlers.createProductAttribute(req,res);
+    const productAttributeMatch=url.pathname.match(/^\/api\/product-attributes\/(\d+)$/);
+    if(productAttributeMatch&&req.method==='PUT')return await handlers.updateProductAttribute(req,res,Number(productAttributeMatch[1]));
+    if(productAttributeMatch&&req.method==='DELETE')return handlers.deleteProductAttribute(req,res,Number(productAttributeMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/product-variants')return handlers.productVariants(req,res);
+    const productVariantMatch=url.pathname.match(/^\/api\/products\/(\d+)\/variants\/(\d+)$/);
+    if(productVariantMatch&&req.method==='PUT')return await handlers.updateProductVariant(req,res,Number(productVariantMatch[1]),Number(productVariantMatch[2]));
+    if(productVariantMatch&&req.method==='DELETE')return handlers.deleteProductVariant(req,res,Number(productVariantMatch[1]),Number(productVariantMatch[2]));
+    const productVariantsMatch=url.pathname.match(/^\/api\/products\/(\d+)\/variants$/);
+    if(productVariantsMatch&&req.method==='POST')return await handlers.createProductVariant(req,res,Number(productVariantsMatch[1]));
+    const productFoundationMatch=url.pathname.match(/^\/api\/products\/(\d+)\/foundation$/);
+    if(productFoundationMatch&&req.method==='PUT')return await handlers.updateProductFoundation(req,res,Number(productFoundationMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/products') return handlers.products(req, res);
     if (req.method === 'POST' && url.pathname === '/api/products') return await handlers.mutateProduct(req, res);
     if (req.method === 'GET' && url.pathname === '/api/knowledge/dashboard') return handlers.knowledgeDashboard(req, res);
@@ -2900,8 +3325,27 @@ const server = createServer(async (req, res) => {
     const productMatch = url.pathname.match(/^\/api\/products\/(\d+)$/);
     if (productMatch && req.method === 'GET') return handlers.productDetail(req, res, Number(productMatch[1]));
     if (productMatch && req.method === 'PUT') return await handlers.mutateProduct(req, res, Number(productMatch[1]));
+    if (productMatch && req.method === 'DELETE') return handlers.deleteProduct(req, res, Number(productMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/opportunities') return handlers.opportunities(req, res);
-    if (req.method === 'GET' && url.pathname === '/api/imports') return handlers.imports(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/imports') return handlers.imports(req, res, url);
+    if(req.method==='GET'&&url.pathname==='/api/price-rules')return handlers.priceRules(req,res);
+    if(req.method==='POST'&&url.pathname==='/api/price-rules')return await handlers.createPriceRule(req,res);
+    const priceRuleMatch=url.pathname.match(/^\/api\/price-rules\/(\d+)$/);if(priceRuleMatch&&req.method==='PUT')return await handlers.createPriceRule(req,res,Number(priceRuleMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/pricing/recalculate/preview')return handlers.pricingPreview(req,res,url);
+    if(req.method==='POST'&&url.pathname==='/api/pricing/recalculate/apply')return await handlers.applyPricingRecalculation(req,res);
+    const priceOverrideMatch=url.pathname.match(/^\/api\/products\/(\d+)\/variants\/(\d+)\/price-override$/);if(priceOverrideMatch&&req.method==='POST')return await handlers.overrideVariantPrice(req,res,Number(priceOverrideMatch[1]),Number(priceOverrideMatch[2]));
+    if (req.method === 'POST' && url.pathname === '/api/imports/analyze') return await handlers.analyzeProductImportBusiness(req,res);
+    const importErrorsMatch=url.pathname.match(/^\/api\/imports\/(\d+)\/errors\.xlsx$/);
+    if(importErrorsMatch&&req.method==='GET')return handlers.exportProductImportErrors(req,res,Number(importErrorsMatch[1]));
+    if(req.method==='POST'&&url.pathname==='/api/products/clear-demo-data')return await handlers.clearProductDemoData(req,res);
+    if (req.method === 'POST' && url.pathname === '/api/imports/approve-selected') return await handlers.approveSelectedProductImports(req,res);
+    if (req.method === 'POST' && url.pathname === '/api/imports/merge') return await handlers.mergeProductImportDrafts(req,res);
+    const productImportSplit=url.pathname.match(/^\/api\/imports\/drafts\/(\d+)\/split$/);
+    if(productImportSplit&&req.method==='POST')return await handlers.splitProductImportDraft(req,res,Number(productImportSplit[1]));
+    const productImportDraftAction=url.pathname.match(/^\/api\/imports\/drafts\/(\d+)\/(approve|reject)$/);
+    if(productImportDraftAction&&req.method==='POST')return await handlers.reviewProductImportDraft(req,res,Number(productImportDraftAction[1]),productImportDraftAction[2]);
+    const productImportDraft=url.pathname.match(/^\/api\/imports\/drafts\/(\d+)$/);
+    if(productImportDraft&&req.method==='PUT')return await handlers.updateProductImportDraft(req,res,Number(productImportDraft[1]));
     if (req.method === 'GET' && url.pathname === '/api/proposals') return handlers.proposals(req, res);
     if (req.method === 'GET' && url.pathname === '/api/team') return handlers.team(req, res);
     if (req.method === 'GET' && url.pathname === '/api/foundation') return handlers.foundation(req, res);

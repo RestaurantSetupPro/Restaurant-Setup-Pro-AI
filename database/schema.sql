@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS product_categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   slug TEXT NOT NULL UNIQUE,
-  description TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  description TEXT, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -81,6 +81,26 @@ CREATE TABLE IF NOT EXISTS products (
   maintenance_guide TEXT,
   common_problems TEXT,
   suggested_prompt TEXT,
+  library_status TEXT NOT NULL DEFAULT 'Active',
+  visibility TEXT NOT NULL DEFAULT 'Website + Quote',
+  short_description TEXT,
+  website_description TEXT,
+  quote_description TEXT,
+  website_price_display TEXT NOT NULL DEFAULT 'Request Quote',
+  default_supplier TEXT,
+  supplier_sku TEXT,
+  supplier_cost REAL,
+  supplier_lead_time_days INTEGER,
+  supplier_moq REAL,
+  supplier_notes TEXT,
+  source_supplier TEXT, source_file TEXT, source_sheet TEXT, source_row INTEGER,
+  import_batch_id INTEGER REFERENCES product_import_batches(id) ON DELETE SET NULL,
+  imported_at TEXT, imported_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  last_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  supplier_currency TEXT, exchange_rate REAL, converted_cost REAL,
+  pricing_rule_id INTEGER REFERENCES product_price_rules(id) ON DELETE SET NULL,
+  pricing_status TEXT NOT NULL DEFAULT 'Needs Pricing Review', pricing_confidence INTEGER,
+  price_manual_override INTEGER NOT NULL DEFAULT 0, price_override_by INTEGER REFERENCES users(id), price_override_at TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'archived')),
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -223,6 +243,7 @@ CREATE TABLE IF NOT EXISTS system_tags (
   tag_type TEXT NOT NULL,
   code TEXT NOT NULL UNIQUE COLLATE NOCASE,
   description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   is_system INTEGER NOT NULL DEFAULT 0 CHECK (is_system IN (0, 1)),
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -252,6 +273,8 @@ CREATE TABLE IF NOT EXISTS media_assets (
   image_status TEXT NOT NULL DEFAULT 'Uploaded',
   generated_source TEXT,
   usage_note TEXT,
+  variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL,
+  document_type TEXT,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -410,6 +433,107 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS product_import_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, source_file_name TEXT NOT NULL, import_mode TEXT NOT NULL,
+  supplier_name TEXT, supplier_code TEXT, supplier_contact TEXT, supplier_country TEXT, supplier_currency TEXT, exchange_rate REAL,
+  import_remark TEXT, default_category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Analyzing', detected_columns TEXT, analysis_summary TEXT, total_rows INTEGER NOT NULL DEFAULT 0,
+  draft_count INTEGER NOT NULL DEFAULT 0, created_products INTEGER NOT NULL DEFAULT 0, created_variants INTEGER NOT NULL DEFAULT 0,
+  skipped_rows INTEGER NOT NULL DEFAULT 0, error_count INTEGER NOT NULL DEFAULT 0, error_message TEXT,
+  started_at TEXT, completed_at TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS product_import_drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL REFERENCES product_import_batches(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'Pending Review', product_name TEXT, product_sku TEXT,
+  suggested_category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL, mapped_product TEXT NOT NULL DEFAULT '{}',
+  suggested_variants TEXT NOT NULL DEFAULT '[]', suggested_attributes TEXT NOT NULL DEFAULT '[]', suggested_tag_ids TEXT NOT NULL DEFAULT '[]',
+  source_rows TEXT NOT NULL DEFAULT '[]', source_mapping TEXT NOT NULL DEFAULT '{}', original_values TEXT NOT NULL DEFAULT '{}',
+  product_group_confidence INTEGER NOT NULL DEFAULT 0, variant_confidence INTEGER NOT NULL DEFAULT 0,
+  attribute_mapping_confidence INTEGER NOT NULL DEFAULT 0, image_matching_confidence INTEGER NOT NULL DEFAULT 0,
+  missing_fields TEXT NOT NULL DEFAULT '[]', image_status TEXT NOT NULL DEFAULT 'Image Assets Needed', main_image_url TEXT,
+  possible_match_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL, resolution_action TEXT,
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL, approved_at TEXT, imported_product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS product_import_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL REFERENCES product_import_batches(id) ON DELETE CASCADE,
+  draft_id INTEGER REFERENCES product_import_drafts(id) ON DELETE CASCADE, source_sheet_name TEXT, source_row_number INTEGER,
+  file_name TEXT NOT NULL, file_url TEXT NOT NULL, media_type TEXT NOT NULL DEFAULT 'image', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS product_import_errors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL REFERENCES product_import_batches(id) ON DELETE CASCADE,
+  source_sheet TEXT, source_row INTEGER, product_name TEXT, reason TEXT NOT NULL, suggested_fix TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_price_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, rule_name TEXT NOT NULL, supplier_name TEXT, category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL,
+  multiplier REAL NOT NULL, fixed_addon REAL NOT NULL DEFAULT 0, minimum_margin REAL, rounding_rule TEXT NOT NULL DEFAULT 'No rounding',
+  currency TEXT NOT NULL DEFAULT 'USD', active INTEGER NOT NULL DEFAULT 1, effective_date TEXT NOT NULL DEFAULT CURRENT_DATE, notes TEXT,
+  created_by INTEGER REFERENCES users(id), updated_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_variants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  variant_name TEXT NOT NULL, variant_sku TEXT UNIQUE, dimensions TEXT, reference_price REAL, cost_price REAL,
+  material TEXT, finish TEXT, color TEXT, moq REAL, lead_time_days INTEGER, cbm REAL,
+  gross_weight_kg REAL, net_weight_kg REAL, packing_info TEXT,
+  default_supplier TEXT, supplier_sku TEXT, supplier_cost REAL, supplier_lead_time_days INTEGER,
+  supplier_moq REAL, supplier_notes TEXT,
+  source_supplier TEXT, source_file TEXT, source_sheet TEXT, source_row INTEGER,
+  import_batch_id INTEGER REFERENCES product_import_batches(id) ON DELETE SET NULL,
+  imported_at TEXT, imported_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  last_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Active', sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(product_id, variant_name)
+);
+
+CREATE TABLE IF NOT EXISTS product_attribute_definitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL,
+  name TEXT NOT NULL, code TEXT NOT NULL UNIQUE, data_type TEXT NOT NULL DEFAULT 'Text', unit TEXT,
+  active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+  show_in_library INTEGER NOT NULL DEFAULT 1, show_on_website INTEGER NOT NULL DEFAULT 0,
+  show_in_quote INTEGER NOT NULL DEFAULT 0, show_in_pi INTEGER NOT NULL DEFAULT 0, internal_only INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_attribute_values (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  variant_id INTEGER REFERENCES product_variants(id) ON DELETE CASCADE,
+  attribute_id INTEGER NOT NULL REFERENCES product_attribute_definitions(id) ON DELETE CASCADE, value TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(product_id, variant_id, attribute_id)
+);
+
+CREATE TABLE IF NOT EXISTS product_attribute_category_links (
+  attribute_id INTEGER NOT NULL REFERENCES product_attribute_definitions(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES product_categories(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(attribute_id,category_id)
+);
+
+CREATE TABLE IF NOT EXISTS product_attribute_options (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, attribute_id INTEGER NOT NULL REFERENCES product_attribute_definitions(id) ON DELETE CASCADE,
+  option_value TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(attribute_id,option_value)
+);
+
+CREATE TABLE IF NOT EXISTS product_foundation_relationships (
+  source_product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  target_product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(source_product_id,target_product_id,relationship_type), CHECK(source_product_id<>target_product_id)
+);
+
+CREATE TABLE IF NOT EXISTS organization_bank_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, account_name TEXT NOT NULL, beneficiary_name TEXT, bank_name TEXT,
+  bank_address TEXT, account_number TEXT, swift_bic TEXT, routing_number TEXT, iban TEXT, bank_country TEXT,
+  payment_currency TEXT, active INTEGER NOT NULL DEFAULT 1, is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS customers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   company_name TEXT NOT NULL, brand_name TEXT, business_type TEXT, country TEXT, city TEXT, address TEXT,
@@ -564,13 +688,24 @@ CREATE TABLE IF NOT EXISTS sales_inquiry_products (
 CREATE TABLE IF NOT EXISTS sales_quotes (
   id INTEGER PRIMARY KEY AUTOINCREMENT, quote_number TEXT NOT NULL UNIQUE, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id),
   customer_id INTEGER NOT NULL REFERENCES customers(id), quote_type TEXT NOT NULL DEFAULT 'Quote', currency TEXT NOT NULL DEFAULT 'USD', destination TEXT,
-  trade_term TEXT, status TEXT NOT NULL DEFAULT 'Draft', subtotal REAL NOT NULL DEFAULT 0, discount_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
+  trade_term TEXT, quote_date TEXT, valid_until TEXT, salesperson_id INTEGER REFERENCES users(id), discount_percent REAL NOT NULL DEFAULT 0,
+  other_charges REAL NOT NULL DEFAULT 0, deposit_percent REAL NOT NULL DEFAULT 30, balance_percent REAL NOT NULL DEFAULT 70,
+  payment_method TEXT DEFAULT 'TT Bank Transfer', payment_note TEXT, shipping_method TEXT, origin_port TEXT, destination_port TEXT,
+  destination_address TEXT, freight_cost REAL, transit_time TEXT, freight_remark TEXT, other_remark TEXT, contact_person TEXT,
+  buyer_phone TEXT, buyer_email TEXT, billing_address TEXT, buyer_reference_no TEXT, project_name TEXT, total_packages INTEGER,
+  total_cbm_override REAL, total_gross_weight_override REAL, total_net_weight_override REAL,
+  production_time TEXT, special_terms TEXT, bank_account_id INTEGER REFERENCES organization_bank_accounts(id), current_version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'Draft', subtotal REAL NOT NULL DEFAULT 0, discount_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0,
   created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS sales_quote_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER NOT NULL REFERENCES sales_quotes(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL DEFAULT 1, unit_price REAL NOT NULL DEFAULT 0,
-  discount_percent REAL NOT NULL DEFAULT 0, remark TEXT, sort_order INTEGER NOT NULL DEFAULT 0
+  discount_percent REAL NOT NULL DEFAULT 0, remark TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
+  confirmed_material TEXT, confirmed_finish TEXT, confirmed_color_name TEXT, customer_remark TEXT, swatch_image_url TEXT,
+  variant_id INTEGER REFERENCES product_variants(id) ON DELETE SET NULL, variant_snapshot TEXT, product_snapshot TEXT,
+  pricing_source TEXT NOT NULL DEFAULT 'Reference', reference_price_snapshot REAL, cost_snapshot REAL,
+  cost_currency_snapshot TEXT, final_selling_price_snapshot REAL
 );
 CREATE TABLE IF NOT EXISTS sales_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT NOT NULL UNIQUE, inquiry_id INTEGER NOT NULL REFERENCES sales_inquiries(id), quote_id INTEGER REFERENCES sales_quotes(id),
@@ -600,6 +735,7 @@ CREATE TABLE IF NOT EXISTS sales_quote_custom_items (
  reference_image_url TEXT, item_name TEXT NOT NULL, category TEXT, specification TEXT, material TEXT, color_finish TEXT,
  size_dimensions TEXT, quantity INTEGER NOT NULL DEFAULT 1, unit_price REAL NOT NULL DEFAULT 0,
  discount_percent REAL NOT NULL DEFAULT 0, cbm REAL, gross_weight_kg REAL, net_weight_kg REAL, remark TEXT,
+ confirmed_material TEXT, confirmed_finish TEXT, confirmed_color_name TEXT, customer_remark TEXT, swatch_image_url TEXT,
  sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS sales_order_custom_items (

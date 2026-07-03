@@ -1,5 +1,15 @@
 # Bug Log
 
+## Module08D
+
+- No blocking issue after 31-test regression.
+- Minimum margin is reserved in the rule schema for future reporting; it does not replace the specified multiplier/add-on formula.
+
+## Module08C
+
+- No open blocking issue after the Business Readiness regression run.
+- Production object storage for embedded spreadsheet images remains a deployment improvement; local imports use the existing public import directory.
+
 ## Open / Limitations
 
 - Local generated files are not durable on ephemeral cloud instances; use Supabase Storage or R2 in production.

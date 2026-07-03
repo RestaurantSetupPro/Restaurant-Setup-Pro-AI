@@ -6,12 +6,12 @@ export default {
     view: 'View', browseAll: 'Browse all', filter: 'Filter', retry: 'Try again', moreActions: 'More actions',
     all: 'All', none: 'None', notYet: 'Not yet', dueToday: 'Due today', dueTomorrow: 'Due tomorrow',
     friday: 'Friday', yesterday: 'Yesterday', language: 'Language', signedInAs: 'Signed in as', noMatches: 'No matching pages.', actionNoted: 'Action noted.',
-    edit: 'Edit', close: 'Close', cancel: 'Cancel', save: 'Save'
+    edit: 'Edit', close: 'Close', cancel: 'Cancel', save: 'Save', productLibrary: 'Product Library'
   },
-  roles: { Admin: 'Admin', Owner: 'Owner', Sales: 'Sales', Designer: 'Designer', VA: 'VA' },
+  roles: { Admin: 'Admin', Owner: 'Owner', 'Sales Admin': 'Sales Admin', Sales: 'Sales', Designer: 'Designer', VA: 'VA' },
   nav: {
     newInquiry: '+ New Inquiry', salesCustomers: 'Customers', salesQuotes: 'Quotes', salesOrders: 'Orders', salesTasks: 'Tasks',
-    dashboard: 'Dashboard', products: 'Product Knowledge Center', knowledgeDashboard: 'Knowledge Dashboard', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
+    dashboard: 'Dashboard', products: 'Product Knowledge Center', libraryProducts: 'Products', libraryCategories: 'Categories', libraryTags: 'Tags', libraryAttributes: 'Attributes', libraryVariants: 'Variants', knowledgeDashboard: 'Knowledge Dashboard', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
     proposals: 'Proposal Builder', cases: 'Project Case Library', crm: 'Opportunity CRM', salesAi: 'AI Sales Center',
     contentAi: 'AI Content Center', coreFoundation: 'Core Foundation Center', debugCenter: 'System Debug Center', settings: 'Settings'
   },

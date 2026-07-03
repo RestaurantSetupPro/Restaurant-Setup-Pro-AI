@@ -1,14 +1,16 @@
 export default {
   meta: { name: '中文', htmlLang: 'zh-CN' },
   common: {
+    productLibrary: 'Product Library',
     workspace: '工作台', growth: '业务增长', system: '系统', searchWorkspace: '搜索工作台', searchPlaceholder: '搜索页面、产品或商机…',
     pages: '页面', navigate: '上下选择', open: '打开', view: '查看', browseAll: '查看全部', filter: '筛选', retry: '重试', moreActions: '更多操作',
     all: '全部', none: '无', notYet: '尚未登录', dueToday: '今天到期', dueTomorrow: '明天到期', friday: '星期五', yesterday: '昨天',
     language: '语言', signedInAs: '当前登录', noMatches: '没有匹配的页面。', actionNoted: '操作已记录。',
     edit: '编辑', close: '关闭', cancel: '取消', save: '保存'
   },
-  roles: { Admin: '管理员', Owner: '老板', Sales: '外贸销售', Designer: '设计师', VA: 'VA 助理' },
+  roles: { Admin: '管理员', Owner: '老板', 'Sales Admin': '销售管理员', Sales: '外贸销售', Designer: '设计师', VA: 'VA 助理' },
   nav: {
+    libraryProducts: 'Products', libraryCategories: 'Categories', libraryTags: 'Tags', libraryAttributes: 'Attributes', libraryVariants: 'Variants',
     newInquiry: '+ 新建询盘', salesCustomers: '客户', salesQuotes: '报价', salesOrders: '订单', salesTasks: '任务',
     dashboard: '数据看板', products: '产品知识中心', knowledgeDashboard: '知识完整度看板', opportunityIntelligence: '商机智能引擎', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
     cases: '项目案例库', crm: '商机客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置中心', debugCenter: '系统调试中心', settings: '系统设置'

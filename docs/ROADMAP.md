@@ -1,6 +1,12 @@
 # Restaurant Setup Pro AI Platform — Roadmap
 
-Last updated: June 30, 2026
+Last updated: July 3, 2026
+
+Module08D Product Price Engine is complete. Module09 and Supplier Orders have not started.
+
+## Current milestone
+
+Module08C Product Library Business Readiness is complete and ready for Business Beta supplier spreadsheet imports. Module09, Supplier Orders, Warehouse, AI Image Generation, PDF Import, and Website Publishing have not started.
 
 ## Current Milestone
 
@@ -36,3 +42,9 @@ Module 07 Part 1 Business Workflow & Frontend is complete. Later Module 07 parts
 # Current Delivery
 
 Module 07 Part 2 Quote Builder & PI Builder is complete. Automatic message sending and live freight integrations remain future work.
+# Current Milestone
+
+Module08A Product Foundation is complete. The next module is Module08B and requires a separate approved specification.
+# Module08B Part 1
+
+Excel/CSV Smart Import and Draft Review completed. PDF/Word catalog import, website import, supplier orders, warehouse, and publishing are not started.

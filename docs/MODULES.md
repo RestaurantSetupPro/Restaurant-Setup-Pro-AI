@@ -1,5 +1,13 @@
 # Modules
 
+## Module08D — Product Price Engine
+
+Completed: Owner price rules, priority matching, currency conversion, rounding, import pricing, Variant reference prices, manual overrides, confirmed bulk recalculation, Quote defaults/snapshots, and server-side cost redaction.
+
+## Module08C — Product Library Business Readiness
+
+Completed: server-side purchasing-data protection, batch supplier defaults, permanent source traceability, import statistics and error export, duplicate matching, audit history, demo-data cleanup, and Approved-only Quote/PI availability.
+
 | Module | Status | Scope |
 | --- | --- | --- |
 | 01–04 | Accepted | Platform, foundation, product library, knowledge engine |
@@ -30,3 +38,12 @@ Adds the simplified Sales workspace, inquiry analysis, Product Intelligence reco
 Adds the four-section Quote Builder, deterministic totals, payment/freight terms, PI preview, version history, PDF/Excel export, customer messages, and lossless order conversion. See `QUOTE_PI_BUILDER.md`.
 
 Acceptance adjustment 009 adds independent Custom Quote Items without forcing Product Library creation.
+# Module 08A - Product Foundation
+
+Completed: categories, independent products, variants, configurable attributes, expanded media types, Related Products, Frequently Bought Together, status, visibility, variant pricing, and protected Quote/PI snapshots. Module08B has not started.
+
+PIM Foundation Upgrade adds universal category templates, rich Variant production/logistics fields, optional product/variant assets, supplier-reserved fields, master-data-driven options, and immutable Quote/PI product snapshots.
+
+# Module 08B Part 1 - AI Product Intelligence Center
+
+Completed: Excel/CSV Smart Import, bilingual field mapping, product/variant grouping, confidence scoring, source traceability, Draft Review, split/merge, match resolution, human approval, and Product Library creation. PDF, website, supplier order, warehouse, publishing, and AI image generation remain excluded.
