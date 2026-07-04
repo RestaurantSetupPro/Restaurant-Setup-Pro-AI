@@ -1,5 +1,9 @@
 # Bug Log
 
+## Alpha Test Issue 010 — Resolved
+
+Clear Demo Data now clears the complete Product Library/import trial dataset, refreshes cached UI state, reports deletion counts, preserves master/configuration data and Price Rules, and prevents Demo Product reseeding after restart.
+
 ## Module08D
 
 - No blocking issue after 31-test regression.

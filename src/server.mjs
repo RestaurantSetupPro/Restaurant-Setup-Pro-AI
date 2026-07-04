@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
@@ -449,7 +449,8 @@ function seedDatabase() {
   }
 
   const productCount = db.prepare('SELECT COUNT(*) AS count FROM products').get().count;
-  if (!productCount) {
+  const demoDataCleared = db.prepare("SELECT value FROM organization_settings WHERE key='product_demo_data_cleared'").get()?.value === 'true';
+  if (!productCount && !demoDataCleared) {
     const categoryIds = Object.fromEntries(db.prepare('SELECT slug, id FROM product_categories').all().map(row => [row.slug, row.id]));
     const products = [
       [categoryIds['dining-chair'], 'CHR-1042', 'Harbor Ash Dining Chair', 'Solid ash frame with commercial-grade joinery.', 'Ash wood / performance upholstery', 35, 'approved'],
@@ -3003,12 +3004,17 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
 
   async clearProductDemoData(req,res){
     const user=currentUser(req);if(!canManageProductLibrary(user))return json(res,user?403:401,{error:'Administrator access required.'});const body=await readJson(req);if(body.confirm!=='CLEAR DEMO DATA')return json(res,400,{error:'Type CLEAR DEMO DATA to confirm.'});
-    const demoSkus=['CHR-1042','TBL-2086','BTH-3018','OUT-4044','ST-CA-001'],ids=db.prepare(`SELECT id FROM products WHERE sku IN (${demoSkus.map(()=>'?').join(',')})`).all(...demoSkus).map(row=>Number(row.id));
-    const counts={products:ids.length,variants:0,drafts:0,batches:0,relatedProducts:0};
+    const count=table=>Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count),counts={products:count('products'),variants:count('product_variants'),mediaAssets:Number(db.prepare("SELECT COUNT(DISTINCT ma.id) AS count FROM media_assets ma LEFT JOIN product_media_links pml ON pml.media_id=ma.id WHERE pml.product_id IS NOT NULL OR ma.related_module='products'").get().count),attributeValues:count('product_attribute_values'),tagLinks:count('product_tag_links'),relatedProducts:count('product_foundation_relationships'),batches:count('product_import_batches'),drafts:count('product_import_drafts'),importAssets:count('product_import_assets'),importErrors:count('product_import_errors')};
+    const mediaIds=db.prepare("SELECT DISTINCT ma.id FROM media_assets ma LEFT JOIN product_media_links pml ON pml.media_id=ma.id WHERE pml.product_id IS NOT NULL OR ma.related_module='products'").all().map(row=>Number(row.id));
     db.exec('BEGIN IMMEDIATE');try{
-      if(ids.length){const placeholders=ids.map(()=>'?').join(',');counts.variants=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_variants WHERE product_id IN (${placeholders})`).get(...ids).count);counts.relatedProducts=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_foundation_relationships WHERE source_product_id IN (${placeholders}) OR target_product_id IN (${placeholders})`).get(...ids,...ids).count);db.prepare(`DELETE FROM sales_inquiry_products WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM sales_quote_items WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM sales_order_items WHERE product_id IN (${placeholders})`).run(...ids);db.prepare(`DELETE FROM products WHERE id IN (${placeholders})`).run(...ids)}
-      const batchIds=db.prepare("SELECT id FROM product_import_batches WHERE LOWER(COALESCE(import_remark,''))='demo' OR LOWER(source_file_name) LIKE 'demo-%'").all().map(row=>Number(row.id));if(batchIds.length){const placeholders=batchIds.map(()=>'?').join(',');counts.drafts=Number(db.prepare(`SELECT COUNT(*) AS count FROM product_import_drafts WHERE batch_id IN (${placeholders})`).get(...batchIds).count);counts.batches=batchIds.length;db.prepare(`DELETE FROM product_import_batches WHERE id IN (${placeholders})`).run(...batchIds)}db.prepare("DELETE FROM import_jobs WHERE filename IN ('Outdoor-furniture-collection.xlsx','Booth-seating-price-list.xlsx')").run();db.exec('COMMIT');
-    }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}audit(user.id,'clear_demo_data','products','demo',counts);return json(res,200,{cleared:true,counts,message:'Demo Product Library data cleared. Master data and settings were preserved.'});
+      db.prepare('DELETE FROM sales_inquiry_products').run();db.prepare('DELETE FROM sales_quote_items').run();db.prepare('DELETE FROM sales_order_items').run();
+      db.prepare('DELETE FROM customer_product_recommendations WHERE product_id IS NOT NULL').run();db.prepare('UPDATE proposal_items SET product_id=NULL').run();
+      db.prepare('DELETE FROM products').run();if(mediaIds.length)db.prepare(`DELETE FROM media_assets WHERE id IN (${mediaIds.map(()=>'?').join(',')})`).run(...mediaIds);
+      db.prepare('DELETE FROM product_import_batches').run();db.prepare('DELETE FROM import_jobs').run();db.prepare("INSERT INTO organization_settings(key,value,updated_by) VALUES('product_demo_data_cleared','true',?) ON CONFLICT(key) DO UPDATE SET value='true',updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP").run(user.id);db.exec('COMMIT');
+    }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}
+    const importsDir=join(publicDir,'imports');if(existsSync(importsDir))rmSync(importsDir,{recursive:true,force:true});mkdirSync(importsDir,{recursive:true});
+    audit(user.id,'clear_demo_data','products','all-trial-data',counts);const message=`Products deleted: ${counts.products}. Variants deleted: ${counts.variants}. Import batches deleted: ${counts.batches}. Drafts deleted: ${counts.drafts}.`;
+    return json(res,200,{cleared:true,counts,message});
   },
 
   async addApprovedQuoteLibraryItem(req,res,id){

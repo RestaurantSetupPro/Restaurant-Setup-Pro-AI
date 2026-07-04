@@ -1858,9 +1858,9 @@ async function handleAction(action, node) {
   } else if(action==='apply-price-recalculation'){
     if(!window.confirm('Apply the previewed reference prices? Manual overrides will remain unchanged.'))return;await api('/api/pricing/recalculate/apply',{method:'POST',body:JSON.stringify({confirm:true,variant_ids:node.dataset.ids.split(',').map(Number)})});toast('Reference prices recalculated.');await renderImports(state.imports?.batch?.id||null);
   } else if(action==='clear-product-demo-data'){
-    if(!window.confirm('Clear demo products and demo import batches? Master data, users, settings, Quote and PI templates will be kept.'))return;
+    if(!window.confirm('Clear all current Product Library and import trial data? Categories, attribute templates, master data, price rules, users, settings, Quote and PI templates will be kept.'))return;
     const confirmation=window.prompt('Type CLEAR DEMO DATA to confirm');if(confirmation!=='CLEAR DEMO DATA')return;
-    const result=await api('/api/products/clear-demo-data',{method:'POST',body:JSON.stringify({confirm:confirmation})});toast(result.message);state.products=null;await renderImports();
+    const result=await api('/api/products/clear-demo-data',{method:'POST',body:JSON.stringify({confirm:confirmation})});toast(result.message);state.products=null;state.imports=null;await renderImports();
   } else {
     const messages = {
       'browse-file': t('imports.integrationReady'),
