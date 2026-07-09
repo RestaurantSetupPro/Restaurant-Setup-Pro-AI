@@ -953,6 +953,10 @@ test('Module 07 Part 2 builds, versions, previews, exports, and converts a compl
   const pdfBytes = Buffer.from(await pdf.arrayBuffer());
   assert.equal(pdfBytes.subarray(0, 4).toString(), '%PDF');
   assert.match(pdfBytes.toString(), /Custom Channel-Back Booth/);
+  assert.match(pdfBytes.toString(), /SKU \/ Model/);
+  assert.match(pdfBytes.toString(), /Variant Size/);
+  assert.match(pdfBytes.toString(), /VARIANT BREAKDOWN/);
+  assert.match(pdfBytes.toString(), /FINISH \/ COLOR SECTION/);
   assert.match(pdfBytes.toString(), /TERMS & CONDITIONS/);
   assert.match(pdfBytes.toString(), /Bank information to be provided separately/);
   const excel = await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quote.id}/export/excel`, { headers: { Cookie: sales.cookie } });
@@ -960,6 +964,10 @@ test('Module 07 Part 2 builds, versions, previews, exports, and converts a compl
   const excelBody = await excel.text();
   assert.match(excelBody, /Workbook/);
   assert.match(excelBody, /Custom Channel-Back Booth/);
+  assert.match(excelBody, /SKU \/ Model/);
+  assert.match(excelBody, /Variant Size/);
+  assert.match(excelBody, /VARIANT BREAKDOWN/);
+  assert.match(excelBody, /FINISH \/ COLOR SECTION/);
   assert.match(excelBody, /PACKING SUMMARY/);
   assert.match(excelBody, /USD 7,?\d{3}\.\d{2}|USD [\d,]+\.\d{2}/);
   assert.match(excelBody, /Mocha Brown/);
@@ -1131,6 +1139,10 @@ test('Module 08D calculates reference prices, preserves overrides, and protects 
   const salesRuleAccess=await fetch(`http://127.0.0.1:${port}/api/price-rules`,{headers:{Cookie:sales.cookie}});assert.equal(salesRuleAccess.status,403);
   const workspace=await fetch(`http://127.0.0.1:${port}/api/sales-workspace`,{headers:{Cookie:sales.cookie}}).then(r=>r.json());let quoteId=workspace.quotes[0]?.id;if(!quoteId){const inquiry=await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({customer_id:workspace.customers[0].id,inquiry_type:'Product Inquiry',customer_message:'Need table bases.'})}).then(r=>r.json());await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/analyze`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'});quoteId=(await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/quote`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'}).then(r=>r.json())).quote.id}const variant=detail.foundation.variants[0];const quoteAddResponse=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/items/library`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({product_id:approved.result.productId,variant_id:variant.id})});const quoteAdd=await quoteAddResponse.json();assert.equal(quoteAddResponse.status,201,quoteAdd.error);const item=quoteAdd.quote.items.find(row=>row.product_id===approved.result.productId);assert.equal(item.unit_price,43);assert.equal(item.reference_price_snapshot,43);assert.equal(item.pricing_source,'Reference');assert.equal('cost_snapshot' in item,false);
   const overrideResponse=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}/variants/${variant.id}/price-override`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({reference_price:50})});assert.equal(overrideResponse.status,200);const preview=await fetch(`http://127.0.0.1:${port}/api/pricing/recalculate/preview?product_ids=${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(preview.preview[0].old_reference_price,50);assert.equal(preview.preview[0].new_reference_price,43);assert.equal(preview.preview[0].manual_override,true);await fetch(`http://127.0.0.1:${port}/api/pricing/recalculate/apply`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({confirm:true,variant_ids:[variant.id]})});const after=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(after.foundation.variants[0].reference_price,50);assert.equal(after.foundation.variants[0].pricing_status,'Manual Override');
+});
+
+test('Alpha Test Issue 012 keeps a failed Import Batch with a clear spreadsheet error report',async()=>{
+  const owner=await login('owner@rspro.ai');const response=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'broken-DUBA.xlsx',file_base64:Buffer.from('not a valid xlsx').toString('base64'),import_mode:'Smart Import'})});const body=await response.json();assert.equal(response.status,400);assert.match(body.error,/valid XLSX|save it again/i);assert.equal(body.batch.status,'Failed');assert.ok(body.batch.error_count>=1);const imports=await fetch(`http://127.0.0.1:${port}/api/imports?batch_id=${body.batch.id}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(imports.batch.id,body.batch.id);assert.equal(imports.batch.status,'Failed');const report=await fetch(`http://127.0.0.1:${port}/api/imports/${body.batch.id}/errors.xlsx`,{headers:{Cookie:owner.cookie}});assert.equal(report.status,200);
 });
 
 test('Alpha Test Issue 010 clears all Product Library and import trial data while preserving master data',async()=>{
