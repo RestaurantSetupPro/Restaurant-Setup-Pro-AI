@@ -59,6 +59,31 @@ test('product grouping uses first non-empty Model candidate and carries it to va
   assert.deepEqual(drafts.groupingSummary,[{product_code:'DB-A002',variant_count:3}]);
 });
 
+test('normal supplier XLSX exposes raw debug and recognizes Model Main Image Product Name Variant Size Finish Cost headers',()=>{
+  const workbook=`<?xml version="1.0"?><workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rels=`<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const sheet=`<?xml version="1.0"?><worksheet><dimension ref="A1:M3"/><sheetData>
+    <row r="1"><c r="A1"><v>Model</v></c><c r="B1"><v>Main Image</v></c><c r="C1"><v>Product Name</v></c><c r="D1"><v>Variant Size</v></c><c r="E1"><v>Finish</v></c><c r="F1"><v>Material</v></c><c r="G1"><v>Cost</v></c></row>
+    <row r="2"><c r="A2"><v>DB-A002</v></c><c r="C2"><v>DUBA Table Base</v></c><c r="D2"><v>380x380</v></c><c r="E2"><v>Black</v></c><c r="F2"><v>Steel</v></c><c r="G2"><v>156</v></c></row>
+    <row r="3"><c r="D3"><v>400x400</v></c><c r="E3"><v>Black</v></c><c r="F3"><v>Steel</v></c><c r="G3"><v>160</v></c></row>
+  </sheetData><mergeCells><mergeCell ref="A2:A3"/></mergeCells></worksheet>`;
+  const parsed=parseSpreadsheet({filename:'DUBA TABLE BASE 2025V2.xlsx',buffer:storedZip({'xl/workbook.xml':workbook,'xl/_rels/workbook.xml.rels':rels,'xl/worksheets/sheet1.xml':sheet,'xl/media/image1.png':Buffer.from([137,80,78,71])})});
+  assert.deepEqual(parsed.workbook.sheet_names,['Sheet1']);
+  assert.equal(parsed.workbook.active_sheet_name,'Sheet1');
+  assert.equal(parsed.workbook.image_objects_count,1);
+  assert.equal(parsed.sheets[0].debug.row_count,3);
+  assert.equal(parsed.sheets[0].debug.column_count,13);
+  assert.deepEqual(parsed.sheets[0].debug.merged_ranges,['A2:A3']);
+  assert.equal(parsed.sheets[0].debug.first_10_rows[0].values[0],'Model');
+  const drafts=analyzeSpreadsheet(parsed,{filename:'DUBA TABLE BASE 2025V2.xlsx',defaultCategoryName:'Table Base',currency:'CNY',exchangeRate:6.8,supplierName:'DUBA HARDWARE'});
+  assert.equal(drafts.length,1);
+  assert.equal(drafts[0].product_sku,'DB-A002');
+  assert.equal(drafts[0].variants.length,2);
+  assert.equal(drafts[0].mapped_product.supplier_cost,156);
+  const detected=drafts.workbookDebug.sheets[0].detected_headers.map(item=>`${item.source}->${item.target}`);
+  for(const expected of ['Model->sku','Main Image->image','Product Name->name','Variant Size->dimensions','Finish->finish','Cost->supplier_cost'])assert.ok(detected.includes(expected),expected);
+});
+
 test('unreadable spreadsheets return a clear analysis error',()=>{
   assert.throws(()=>parseSpreadsheet({filename:'broken.xlsx',buffer:Buffer.from('not-an-xlsx')}),/empty or is not a valid XLSX|not a valid XLSX/);
   assert.throws(()=>analyzeSpreadsheet({sheets:[{name:'Blank',rows:[]}],images:[]},{filename:'blank.xlsx'}),/No product rows could be analyzed/);
