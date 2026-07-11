@@ -460,14 +460,22 @@ async function renderProducts() {
 
 async function renderLibraryProductDetail(id,tab='general'){
   const data=await api(`/api/products/${id}`);state.productDetail=data;const p=data.product,f=data.foundation;
-  const tabs=[['general','General'],['variants','Variants'],['attributes','Attributes'],['images','Images'],['related','Related Products'],['fbt','Frequently Bought Together']];
+  let pricingDetail=null,pricingRules={rules:[]};
+  if(tab==='pricing'){
+    pricingDetail=await api(`/api/product-intelligence/products/${id}`);
+    if(pricingDetail.capabilities?.canViewSensitive)try{pricingRules=await api('/api/price-rules')}catch(error){pricingRules={rules:[]}}
+  }
+  const tabs=[['general','Overview'],['images','Images'],['variants','Variants'],['attributes','Attributes'],['pricing','Pricing'],['related','Related Products'],['fbt','Frequently Bought Together']];
   const tabbar=`<div class="knowledge-tabs library-detail-tabs">${tabs.map(([key,label])=>`<button class="${tab===key?'is-active':''}" data-action="library-product-tab" data-id="${id}" data-tab="${key}">${label}</button>`).join('')}</div>`;
   let content='';
   if(tab==='general') content=`<article class="panel library-general"><div class="library-product-hero"><div>${p.main_image_url?`<img src="${esc(p.main_image_url)}" alt="${esc(p.name)}">`:'<span class="library-image-empty large">No image</span>'}</div><div><h2>${esc(p.name)}</h2><p>${esc(p.sku)} · ${esc(p.category||'—')}</p><div class="product-tags">${badge(p.library_status||'Active')}<span>${esc(p.visibility||'Website + Quote')}</span></div></div><div class="row-actions"><button class="button" data-action="edit-product" data-id="${p.id}">Edit Product</button><button class="button" data-action="delete-library-product" data-id="${p.id}" data-name="${esc(p.name)}">Delete Product</button></div></div><div class="library-field-grid">${[['Category',p.category],['Material',p.materials],['Default Size',p.size],['Default Finish',p.finish],['Default Color',p.color],['Reference Price',p.reference_price==null?'Request Quote':quoteMoney(p.reference_price)],['Website Price',p.website_price_display],['Updated',p.updated_at]].map(([label,value])=>`<p><b>${label}</b>${esc(value||'—')}</p>`).join('')}</div><h3>Descriptions</h3><p><b>Short:</b> ${esc(p.short_description||'—')}</p><p><b>Website:</b> ${esc(p.website_description||'—')}</p><p><b>Quote:</b> ${esc(p.quote_description||'—')}</p></article>`;
   if(tab==='variants') content=`<article class="panel"><h2>Variants</h2><div class="table-scroll"><table class="data-table"><thead><tr><th>Name</th><th>SKU</th><th>Dimensions</th><th>Reference Price</th><th>Cost Price</th><th>Status</th><th></th></tr></thead><tbody>${f.variants.map(v=>`<tr><td>${esc(v.variant_name)}</td><td>${esc(v.variant_sku||'—')}</td><td>${esc(v.dimensions||'—')}</td><td>${v.reference_price==null?'—':quoteMoney(v.reference_price)}</td><td>${v.cost_price==null?'—':quoteMoney(v.cost_price)}</td><td>${badge(v.status)}</td><td><button class="button button--compact" data-action="library-edit-variant" data-product-id="${id}" data-id="${v.id}" data-name="${esc(v.variant_name)}" data-price="${v.reference_price??''}" data-cost="${v.cost_price??''}" data-dimensions="${esc(v.dimensions||'')}" data-sku="${esc(v.variant_sku||'')}" data-status="${esc(v.status)}">Edit</button><button class="button button--compact" data-action="library-delete-variant" data-product-id="${id}" data-id="${v.id}">Delete</button></td></tr>`).join('')}</tbody></table></div><form id="detail-variant-create" class="form-grid inline-create-form"><label class="field"><span>Variant Name</span><input name="variant_name" required></label><label class="field"><span>SKU</span><input name="variant_sku"></label><label class="field"><span>Dimensions</span><input name="dimensions"></label><label class="field"><span>Reference Price</span><input name="reference_price" type="number" step=".01"></label><label class="field"><span>Cost Price</span><input name="cost_price" type="number" step=".01"></label><label class="field"><span>Status</span><select name="status"><option>Active</option><option>Hidden</option><option>Coming Soon</option><option>Discontinued</option></select></label><button class="button button--primary">Add Variant</button></form></article>`;
   if(tab==='attributes') content=`<article class="panel"><h2>Configurable Attributes</h2><form id="detail-attributes-form" class="attribute-value-grid">${f.attributeDefinitions.map(a=>`<label class="field"><span>${esc(a.name)}${a.unit?` (${esc(a.unit)})`:''}</span><input data-attribute-id="${a.id}" value="${esc(f.attributeValues.find(v=>v.attribute_id===a.id&&!v.variant_id)?.value||'')}"></label>`).join('')||'<p>No matching attribute definitions. Create them on the Attributes page.</p>'}<button class="button button--primary">Save Attributes</button></form></article>`;
   if(tab==='images') content=`<article class="panel"><div class="panel-header"><div><h2>Product Images</h2><p>Main, gallery, dimension, CAD, packaging, and installation.</p></div><button class="button button--primary" data-action="add-product-image" data-ai="false">Upload Image</button></div><div class="product-image-grid">${p.media.map(m=>`<article class="product-image-card"><div class="product-image-preview">${m.file_url?`<img src="${esc(m.file_url)}" alt="${esc(m.file_name)}">`:icon('images')}</div><strong>${esc(m.file_name)}</strong><small>${esc(m.image_type)} · ${esc(m.image_status)}</small><div>${m.is_primary?badge('Main Image'):`<button class="button button--compact" data-action="mark-main-image" data-id="${m.id}">Mark Main</button>`}<button class="button button--compact" data-action="edit-product-image" data-id="${m.id}">Edit</button></div></article>`).join('')||'<p>No images uploaded.</p>'}</div></article>`;
-  if(tab==='related'||tab==='fbt'){const related=tab==='related',selected=(related?f.relatedProducts:f.frequentlyBoughtTogether).map(x=>x.id);content=`<article class="panel"><h2>${related?'Related Products':'Frequently Bought Together'}</h2><p>${related?'Recommendations only; combinations are never forced.':'Manual recommendations for website, Sales, and AI.'}</p><form id="detail-relationships-form">${knowledgeChecks('relationship_ids',data.options.products,selected,row=>`${row.name} · ${row.sku}`)}<button class="button button--primary">Save</button></form></article>`}
+  if(tab==='pricing'){
+    const pricing=pricingDetail.product.pricing_summary,canViewSensitive=Boolean(pricingDetail.capabilities?.canViewSensitive),ruleMap=new Map((pricingRules.rules||[]).map(rule=>[Number(rule.id),rule])),ruleRows=[...new Set((pricing.variants||[]).map(variant=>Number(variant.pricing_rule_id)).filter(Boolean))].map(id=>ruleMap.get(id)).filter(Boolean);
+    content=`<section class="pricing-detail"><article class="panel pricing-summary-panel"><div class="panel-header"><div><h2>Pricing Summary</h2><p>Quote and PI use selling price only. Supplier cost remains internal.</p></div>${pricingStatusPill(pricing.pricing_status)}</div><div class="library-field-grid pricing-field-grid">${[['Reference Selling Price',pricing.reference_price_min==null?'Request Quote':pricing.reference_price_min===pricing.reference_price_max?pricingAmount(pricing.reference_price_min,pricing.selling_currency):`${pricingAmount(pricing.reference_price_min,pricing.selling_currency)} - ${pricingAmount(pricing.reference_price_max,pricing.selling_currency)}`],['Selling Currency',pricing.selling_currency||'USD'],['Pricing Status',pricing.pricing_status],['Last Updated',p.updated_at]].map(([label,value])=>`<p><b>${label}</b>${esc(value||'—')}</p>`).join('')}</div></article><article class="panel"><div class="panel-header"><div><h2>Variant Price Grid</h2><p>${canViewSensitive?'Internal cost columns are visible to your role.':'Sales-safe view: supplier cost and margin data are hidden.'}</p></div></div><div class="table-scroll"><table class="data-table pricing-variant-table"><thead><tr><th>Variant SKU</th><th>Variant Name</th>${canViewSensitive?'<th>Supplier Cost</th><th>Supplier Currency</th><th>Converted Cost</th>':''}<th>Recommended Selling Price</th><th>Selling Currency</th><th>Pricing Status</th><th>Last Updated</th></tr></thead><tbody>${(pricing.variants||[]).map(variant=>`<tr><td><code>${esc(variant.variant_sku||'—')}</code></td><td><strong>${esc(variant.variant_name||'Default')}</strong></td>${canViewSensitive?`<td>${pricingAmount(variant.supplier_cost,variant.supplier_currency||'USD')}</td><td>${esc(variant.supplier_currency||'—')}</td><td>${pricingAmount(variant.converted_cost,variant.converted_cost_currency||'USD')}</td>`:''}<td>${pricingAmount(variant.recommended_selling_price,variant.selling_currency||'USD')}</td><td>${esc(variant.selling_currency||'USD')}</td><td>${pricingStatusPill(variant.pricing_status||pricing.pricing_status)}</td><td>${esc(variant.updated_at||p.updated_at||'—')}</td></tr>`).join('')||'<tr><td colspan="9"><div class="empty-state">No variants available for pricing.</div></td></tr>'}</tbody></table></div></article><article class="panel pricing-rule-summary"><div class="panel-header"><div><h2>Pricing Rule Summary</h2><p>${canViewSensitive?'Internal rule details for pricing review.':'Pricing rules are internal and hidden from this role.'}</p></div></div>${canViewSensitive?`<div class="table-scroll"><table class="data-table"><thead><tr><th>Rule Name</th><th>Calculation Method</th><th>Multiplier / Margin</th><th>Rounding</th><th>Status</th></tr></thead><tbody>${ruleRows.map(rule=>`<tr><td><strong>${esc(rule.rule_name)}</strong></td><td>Cost Multiplier</td><td>×${esc(rule.multiplier)}${Number(rule.fixed_addon||0)?` + ${pricingAmount(rule.fixed_addon,rule.currency||'USD')}`:''}</td><td>${esc(rule.rounding_rule||'—')}</td><td>${badge(rule.active?'Active':'Inactive')}</td></tr>`).join('')||'<tr><td colspan="5">No matching pricing rule recorded. Product may need pricing review.</td></tr>'}</tbody></table></div>`:'<div class="empty-state">Internal pricing rule details are hidden for this role.</div>'}</article></section>`;
+  }  if(tab==='related'||tab==='fbt'){const related=tab==='related',selected=(related?f.relatedProducts:f.frequentlyBoughtTogether).map(x=>x.id);content=`<article class="panel"><h2>${related?'Related Products':'Frequently Bought Together'}</h2><p>${related?'Recommendations only; combinations are never forced.':'Manual recommendations for website, Sales, and AI.'}</p><form id="detail-relationships-form">${knowledgeChecks('relationship_ids',data.options.products,selected,row=>`${row.name} · ${row.sku}`)}<button class="button button--primary">Save</button></form></article>`}
   $('#page').innerHTML=`${pageHeader(p.name,`${p.sku} · Product Library`,`<button class="button" data-route="product-library-products">Back to Products</button>`)}${tabbar}${content}`;
   if(tab==='variants'){const form=$('#detail-variant-create');form.querySelector('button').insertAdjacentHTML('beforebegin',variantPimFields());form.querySelector('button').insertAdjacentHTML('beforebegin',f.attributeDefinitions.map(attribute=>productAttributeEditor(attribute,'').replaceAll('data-create-attribute','data-variant-attribute')).join(''));form.addEventListener('submit',async event=>{event.preventDefault();const body=Object.fromEntries(new FormData(form));const saved=await api(`/api/products/${id}/variants`,{method:'POST',body:JSON.stringify(body)});const attribute_values=[...f.attributeValues.map(value=>({attribute_id:value.attribute_id,variant_id:value.variant_id,value:value.value})),...[...form.querySelectorAll('[data-variant-attribute]')].map(input=>({attribute_id:Number(input.dataset.attributeId),variant_id:saved.variant.id,value:input.type==='checkbox'?String(input.checked):input.multiple?[...input.selectedOptions].map(option=>option.value).join(', '):input.value}))];await saveLibraryFoundation(id,f,{attribute_values});await renderLibraryProductDetail(id,'variants')})}
   if(tab==='attributes')$('#detail-attributes-form').addEventListener('submit',async e=>{e.preventDefault();const values=[...e.currentTarget.querySelectorAll('[data-attribute-id]')].map(input=>({attribute_id:Number(input.dataset.attributeId),value:input.value}));await saveLibraryFoundation(id,f,{attribute_values:values});await renderLibraryProductDetail(id,'attributes')});
@@ -910,8 +918,152 @@ function opportunityScore(score, grade) {
   return `<span class="knowledge-score ${Number(score) >= 75 ? 'is-ready' : ''}"><strong>${Number(score || 0)}</strong><small>${esc(grade || 'D')}</small></span>`;
 }
 
+function opportunityScoreDetails(customer) {
+  const score = Number(customer.opportunity_score || customer.sales_priority_score || 0);
+  const positives = [];
+  const missing = [];
+  if (/hospitality|restaurant|coffee|bar|cafe|bubble|furniture|design/i.test(`${customer.business_type || ''} ${customer.customer_type || ''}`)) positives.push('Hospitality related business');
+  if (customer.email || customer.phone || customer.website || customer.whatsapp) positives.push('Contact channel available'); else missing.push('Contact person');
+  if (customer.purchase_timing && customer.purchase_timing !== 'Unknown') positives.push(`Purchase timing: ${customer.purchase_timing}`); else missing.push('Purchase timing');
+  if (/renovation|remodel|upgrade|refresh/i.test(`${customer.opportunity_notes || ''} ${customer.ai_summary || ''}`)) positives.push('Renovation signal'); else missing.push('Renovation signal');
+  if (Number(customer.sales_priority_score || 0) >= 70 || Number(customer.opportunity_score || 0) >= 75) positives.push('High sales priority score');
+  const action = score >= 75 ? 'Prioritize follow-up. Confirm decision maker, timing, and quote requirements.' : score >= 45 ? 'Follow up after completing missing contact and timing information.' : 'Do not prioritize yet. Collect more information.';
+  return `<article class="panel soft-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Opportunity Analysis</h3><p>${esc(customer.company_name)}</p></div>${badge(customer.opportunity_grade || customer.customer_value_grade || 'Review')}</div>
+    <div class="debug-list"><div><span>Score</span><strong>${score}</strong></div><div><span>Customer Source</span><strong>${esc(customer.customer_source || 'Manual Import')}</strong></div><div><span>Recommended Action</span><strong>${esc(action)}</strong></div></div>
+    <section class="detail-grid"><article><h4>Positive Signals</h4><ul class="compact-list">${positives.map(item => `<li>✓ ${esc(item)}</li>`).join('') || '<li>None yet</li>'}</ul></article>
+    <article><h4>Missing Information</h4><ul class="compact-list">${missing.map(item => `<li>✕ ${esc(item)}</li>`).join('') || '<li>No major gaps detected</li>'}</ul></article></section>
+    <p><strong>Recommended Products Reason:</strong> ${esc(customer.recommended_product_reason || 'Run analysis or confirm customer type to prepare product matching.')}</p></article>`;
+}
+
 let productLibraryPage=1;
-async function renderProductLibraryProducts(){const data=await api('/api/products');state.products=data;const pageSize=10,totalPages=Math.max(1,Math.ceil(data.products.length/pageSize));productLibraryPage=Math.min(productLibraryPage,totalPages);const rows=data.products.slice((productLibraryPage-1)*pageSize,productLibraryPage*pageSize);$('#page').innerHTML=`${pageHeader('Products','Create and maintain the master Product Library.',`<button class="button button--primary" data-action="add-product">${icon('plus')} New Product</button>`)}<article class="panel"><div class="filter-bar"><label class="filter-search">${icon('search')}<input id="library-product-search" placeholder="Search product or SKU"></label><select id="library-category-filter" class="select-control"><option value="">All Categories</option>${data.categories.map(c=>`<option>${esc(c.name)}</option>`).join('')}</select><select id="library-status-filter" class="select-control"><option value="">All Statuses</option>${data.intelligenceOptions.libraryStatuses.map(v=>`<option>${v}</option>`).join('')}</select><select id="library-visibility-filter" class="select-control"><option value="">All Visibility</option>${data.intelligenceOptions.visibilities.map(v=>`<option>${v}</option>`).join('')}</select></div><div class="table-scroll"><table class="data-table product-library-table"><thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Status</th><th>Visibility</th><th>Reference Price</th><th>Updated Date</th><th></th></tr></thead><tbody>${rows.map(p=>`<tr data-library-product data-search="${esc(`${p.name} ${p.sku}`.toLowerCase())}" data-category="${esc(p.category||'')}" data-status="${esc(p.library_status||'Active')}" data-visibility="${esc(p.visibility||'Website + Quote')}"><td>${p.main_image_url?`<img src="${esc(p.main_image_url)}" alt="${esc(p.name)}">`:'<span class="library-image-empty">No image</span>'}</td><td><strong>${esc(p.name)}</strong><small>${esc(p.sku)} · ${p.variant_count} variants</small></td><td>${esc(p.category||'—')}</td><td>${badge(p.library_status||'Active')}</td><td>${esc(p.visibility||'Website + Quote')}</td><td>${p.reference_price==null?'Request Quote':quoteMoney(p.reference_price)}</td><td>${formatDate(p.updated_at?.slice(0,10))}</td><td><div class="row-actions"><button class="button button--compact" data-action="open-library-product" data-id="${p.id}">Open</button><button class="button button--compact" data-action="edit-product" data-id="${p.id}">Edit</button><button class="button button--compact" data-action="delete-library-product" data-id="${p.id}" data-name="${esc(p.name)}">Delete</button></div></td></tr>`).join('')}</tbody></table></div><div class="library-pagination"><button class="button" data-action="library-page" data-page="${productLibraryPage-1}" ${productLibraryPage===1?'disabled':''}>Previous</button><span>Page ${productLibraryPage} of ${totalPages}</span><button class="button" data-action="library-page" data-page="${productLibraryPage+1}" ${productLibraryPage===totalPages?'disabled':''}>Next</button></div></article>`;const filter=()=>{const q=$('#library-product-search').value.toLowerCase(),category=$('#library-category-filter').value,status=$('#library-status-filter').value,visibility=$('#library-visibility-filter').value;document.querySelectorAll('[data-library-product]').forEach(row=>row.hidden=!((!q||row.dataset.search.includes(q))&&(!category||row.dataset.category===category)&&(!status||row.dataset.status===status)&&(!visibility||row.dataset.visibility===visibility)))};['library-product-search','library-category-filter','library-status-filter','library-visibility-filter'].forEach(id=>$(`#${id}`).addEventListener(id==='library-product-search'?'input':'change',filter))}
+const productListPageSize=10;
+
+function productIntelligenceScoreBadge(score, label) {
+  const value = Math.max(0, Math.min(100, Number(score || 0)));
+  const status = value >= 80 ? 'ready' : value >= 50 ? 'review' : 'missing';
+  return `<span class="pic-score-badge is-${status}"><strong>${value}</strong><small>${esc(label || (value >= 80 ? 'Ready' : 'Needs Review'))}</small></span>`;
+}
+
+function productPricingStatusBadge(product) {
+  const status = product.pricing_status || (product.reference_price_display && product.reference_price_display !== 'Request Quote' ? 'Ready' : 'Missing Price');
+  const tone = status === 'Ready' || status === 'Calculated' || status === 'Manual Override' ? 'ready' : 'review';
+  return `<span class="pic-status-pill is-${tone}">${esc(status).toUpperCase()}</span><small>${esc(product.reference_price_display || 'Request Quote')}</small>`;
+}
+
+function pricingAmount(value, currency = 'USD') {
+  if (value == null || value === '') return '—';
+  const amount = Number(value);
+  return Number.isFinite(amount) ? `${esc(currency || 'USD')} ${amount.toLocaleString(localeForIntl(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+}
+
+function pricingStatusPill(status) {
+  const value = status || 'Missing Price';
+  const tone = /ready|calculated|manual override/i.test(value) ? 'ready' : 'review';
+  return `<span class="pic-status-pill is-${tone}">${esc(value).toUpperCase()}</span>`;
+}
+
+function productIntelligenceDashboard(products) {
+  const total = products.length;
+  const active = products.filter(product => ['Active','Approved','approved'].includes(product.library_status || product.status)).length;
+  const quoteReady = products.filter(product => ['Proposal Ready','Quote Ready'].includes(product.proposal_ready_status) || Number(product.data_quality || 0) >= 80).length;
+  const aiReady = products.filter(product => Number(product.ai_readiness_score || 0) >= 80).length;
+  const missingInfo = products.filter(product => Number(product.data_quality || 0) < 80).length;
+  const needReview = products.filter(product => /review|draft|incomplete/i.test(`${product.data_quality_status || ''} ${product.library_status || ''} ${product.status || ''}`)).length;
+  const missingImages = products.filter(product => !product.main_image_url).length;
+  const missingAttributes = products.filter(product => (product.missing_fields || []).some(field => ['material','size','color','finish'].includes(field))).length;
+  const missingVariants = products.filter(product => Number(product.variant_count || 0) === 0).length;
+  const missingPricing = products.filter(product => product.pricing_status === 'Missing Price' || product.pricing_status === 'Needs Pricing Review' || product.reference_price_display === 'Request Quote').length;
+  const statuses = products.reduce((acc, product) => {
+    const status = product.library_status || product.status || 'Incomplete';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  const metric = (label, value, sub, iconName, tone='green') => metricCard(label, value, sub, iconName, tone, true);
+  return `<section class="pic-dashboard">
+    <div class="pic-hero panel">
+      <div><span class="eyebrow-label">Product Intelligence Center</span><h2>Product data workspace for AI Sales OS</h2><p>Review product readiness for sales, quotes, PI, and future AI matching. Product Library remains the single source of truth.</p></div>
+      <div class="pic-hero-actions"><button class="button button--primary" data-action="add-product">${icon('plus')} New Product</button></div>
+    </div>
+    <div class="metrics-grid pic-metrics">
+      ${metric('Total Products', total, 'All Product Library records', 'products')}
+      ${metric('Active Products', active, 'Available product records', 'check')}
+      ${metric('Products Ready for Quote', quoteReady, 'Data quality 80+', 'document')}
+      ${metric('Products Ready for AI', aiReady, 'AI readiness 80+', 'sparkles')}
+      ${metric('Products Missing Information', missingInfo, 'Needs product data work', 'help', 'gold')}
+      ${metric('Products Need Review', needReview, 'Draft / review / incomplete', 'filter', 'gold')}
+    </div>
+    <section class="pic-summary-grid">
+      <article class="panel pic-quality-panel"><div class="panel-title"><h2>Data Quality Summary</h2><p>Missing fields that block quote and AI readiness.</p></div>
+        <div class="pic-quality-list">
+          ${[['Missing images',missingImages],['Missing attributes',missingAttributes],['Missing variants',missingVariants],['Missing pricing information',missingPricing]].map(([label,value])=>`<span><small>${label}</small><strong>${value}</strong></span>`).join('')}
+        </div>
+      </article>
+      <article class="panel pic-quality-panel"><div class="panel-title"><h2>Product Status Summary</h2><p>Current Product Library workflow states.</p></div>
+        <div class="pic-status-list">${Object.entries(statuses).map(([label,value])=>`<span>${badge(label)}<strong>${value}</strong></span>`).join('') || '<p>No product statuses yet.</p>'}</div>
+      </article>
+    </section>
+  </section>`;
+}
+
+function productIntelligenceRows(products) {
+  return products.map(product => `<tr data-library-product
+    data-search="${esc(`${product.product_name || product.name || ''} ${product.sku || ''}`.toLowerCase())}"
+    data-category="${esc(product.category || '')}"
+    data-status="${esc(product.library_status || product.status || '')}"
+    data-quality="${Number(product.data_quality || 0)}"
+    data-ai="${Number(product.ai_readiness_score || 0)}"
+    data-pricing="${esc(product.pricing_status || '')}">
+    <td>${product.main_image_url ? `<img src="${esc(product.main_image_url)}" alt="${esc(product.product_name || product.name)}">` : '<span class="library-image-empty">No image</span>'}</td>
+    <td class="pic-product-name"><strong>${esc(product.product_name || product.name)}</strong><small>${esc(product.sku || 'No SKU')} · ${esc(product.category || 'Uncategorized')}</small></td>
+    <td><code>${esc(product.sku || '—')}</code></td>
+    <td>${esc(product.category || '—')}</td>
+    <td><strong>${Number(product.variant_count || 0)}</strong></td>
+    <td>${badge(product.library_status || product.status || 'Incomplete')}</td>
+    <td>${productIntelligenceScoreBadge(product.data_quality, product.data_quality_status)}</td>
+    <td>${productIntelligenceScoreBadge(product.ai_readiness_score, product.ai_readiness_status)}</td>
+    <td>${productPricingStatusBadge(product)}</td>
+    <td><div class="row-actions"><button class="button button--compact" data-action="open-library-product" data-id="${product.id}">View</button><button class="button button--compact" data-action="edit-product" data-id="${product.id}">Edit</button><button class="button button--compact" data-action="open-library-product" data-id="${product.id}">Review</button><button class="button button--compact" data-action="delete-library-product" data-id="${product.id}" data-name="${esc(product.product_name || product.name)}">Delete</button></div></td>
+  </tr>`).join('');
+}
+
+function productIntelligenceApplyFilters() {
+  const q = $('#library-product-search')?.value.toLowerCase() || '';
+  const category = $('#library-category-filter')?.value || '';
+  const status = $('#library-status-filter')?.value || '';
+  const quality = $('#library-quality-filter')?.value || '';
+  const pricing = $('#library-pricing-filter')?.value || '';
+  document.querySelectorAll('[data-library-product]').forEach(row => {
+    const passesQuality = !quality || (quality === 'ready' ? Number(row.dataset.quality) >= 80 : Number(row.dataset.quality) < 80);
+    const passesPricing = !pricing || (pricing === 'ready' ? /ready|calculated|manual override/i.test(row.dataset.pricing) : /missing|review|request quote/i.test(row.dataset.pricing));
+    row.hidden = !((!q || row.dataset.search.includes(q)) && (!category || row.dataset.category === category) && (!status || row.dataset.status === status) && passesQuality && passesPricing);
+  });
+}
+
+async function renderProductLibraryProducts(){
+  const [productIntelligence, libraryData] = await Promise.all([api('/api/product-intelligence/products'), api('/api/products')]);
+  state.products = libraryData;
+  const products = productIntelligence.products || [];
+  const categories = [...new Set(products.map(product => product.category).filter(Boolean))].sort();
+  const statuses = [...new Set(products.map(product => product.library_status || product.status).filter(Boolean))].sort();
+  const totalPages = Math.max(1, Math.ceil(products.length / productListPageSize));
+  productLibraryPage = Math.min(productLibraryPage, totalPages);
+  const rows = products.slice((productLibraryPage - 1) * productListPageSize, productLibraryPage * productListPageSize);
+  $('#page').innerHTML = `${pageHeader('Product Intelligence Center','Professional product dashboard and product list for sales, quote, PI, and AI readiness.',`<button class="button button--primary" data-action="add-product">${icon('plus')} New Product</button>`)}
+    ${productIntelligenceDashboard(products)}
+    <article class="panel pic-product-list">
+      <div class="panel-header"><div class="panel-title"><h2>Products</h2><p>Professional Product Library table powered by Product Intelligence API.</p></div><span class="pic-source-note">${esc(productIntelligence.source || 'Product Library')}</span></div>
+      <div class="filter-bar pic-filter-bar">
+        <label class="filter-search">${icon('search')}<input id="library-product-search" placeholder="Search product name or SKU"></label>
+        <select id="library-category-filter" class="select-control"><option value="">All Categories</option>${categories.map(category=>`<option>${esc(category)}</option>`).join('')}</select>
+        <select id="library-status-filter" class="select-control"><option value="">All Statuses</option>${statuses.map(status=>`<option>${esc(status)}</option>`).join('')}</select>
+        <select id="library-quality-filter" class="select-control"><option value="">All Data Quality</option><option value="ready">Data Quality 80+</option><option value="review">Needs Improvement</option></select>
+        <select id="library-pricing-filter" class="select-control"><option value="">All Pricing</option><option value="ready">Pricing Ready</option><option value="review">Needs Pricing</option></select>
+      </div>
+      <div class="table-scroll"><table class="data-table product-library-table pic-product-table"><thead><tr><th>Product Image</th><th>Product Name</th><th>SKU / Product Code</th><th>Category</th><th>Variant Count</th><th>Product Status</th><th>Data Quality Score</th><th>AI Readiness Status</th><th>Pricing Status</th><th>Actions</th></tr></thead><tbody>${productIntelligenceRows(rows) || '<tr><td colspan="10"><div class="empty-state">No products yet.</div></td></tr>'}</tbody></table></div>
+      <div class="library-pagination"><button class="button" data-action="library-page" data-page="${productLibraryPage-1}" ${productLibraryPage===1?'disabled':''}>Previous</button><span>Page ${productLibraryPage} of ${totalPages}</span><button class="button" data-action="library-page" data-page="${productLibraryPage+1}" ${productLibraryPage===totalPages?'disabled':''}>Next</button></div>
+    </article>`;
+  ['library-product-search','library-category-filter','library-status-filter','library-quality-filter','library-pricing-filter'].forEach(id=>$(`#${id}`)?.addEventListener(id==='library-product-search'?'input':'change',productIntelligenceApplyFilters));
+}
 
 async function renderProductLibraryCategoriesLegacy(){const data=await api('/api/product-categories');$('#page').innerHTML=`${pageHeader('Categories','Unlimited editable Product Library categories.')}<section class="library-management-grid"><article class="panel"><h2>New Category</h2><form id="library-category-create" class="foundation-form"><label class="field"><span>Name</span><input name="name" required></label><label class="field"><span>Slug</span><input name="slug" placeholder="auto-generated"></label><label class="field"><span>Description</span><textarea name="description"></textarea></label><button class="button button--primary">Create Category</button></form></article><article class="panel"><h2>Categories</h2><div class="foundation-manager-list">${data.categories.map(c=>`<article><span><strong>${esc(c.name)}</strong><small>${c.product_count} products · ${esc(c.slug)}</small></span><div><button class="button button--compact" data-action="library-edit-category" data-id="${c.id}" data-name="${esc(c.name)}" data-slug="${esc(c.slug)}">Edit</button><button class="button button--compact" data-action="library-delete-category" data-id="${c.id}">Delete</button></div></article>`).join('')}</div></article></section>`;$('#library-category-create').addEventListener('submit',async e=>{e.preventDefault();await api('/api/product-categories',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.currentTarget)))});state.products=null;await renderProductLibraryCategories()})}
 
@@ -934,8 +1086,8 @@ async function renderProductLibraryAttributes(){const [data,categoryData]=await 
 
 function opportunityTabs(active, counts = {}) {
   const tabs = [
-    ['dashboard', 'Opportunity Dashboard'], ['import', 'Import Customers'], ['customers', `Customer List (${counts.customers || 0})`],
-    ['queue', `AI Opportunity Queue (${counts.queue || 0})`], ['outreach', 'Outreach Drafts'], ['handoff', `Sales Handoff (${counts.handoff || 0})`]
+    ['dashboard', 'Opportunity Dashboard'], ['discovery', 'AI Discovery'], ['search-tasks', `Search Tasks (${counts.searchTasks || 0})`], ['lead-pool', `Lead Pool (${counts.leads || 0})`],
+    ['customers', `Customers (${counts.customers || 0})`], ['priority', `Priority View (${counts.priority || 0})`]
   ];
   return `<nav class="knowledge-tabs opportunity-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" class="${active === key ? 'is-active' : ''}" data-action="opportunity-tab" data-tab="${key}" role="tab">${label}</button>`).join('')}</nav>`;
 }
@@ -952,28 +1104,225 @@ function opportunityMetricsCards(metrics) {
 }
 
 function customerTable(customers, capabilities, queue = false) {
+  const scorePanel = state.customerScoreDetail ? opportunityScoreDetails(state.customerScoreDetail) : '';
   return `<div class="table-scroll"><table class="data-table" id="opportunity-customer-table"><thead><tr>
-    ${capabilities.canRunAi && !queue ? '<th></th>' : ''}<th>Customer</th><th>Country / City</th><th>Business Type</th><th>Score</th><th>Grade</th><th>Recommended Products</th><th>Next Action</th><th>Contact</th><th>Assigned Sales</th><th></th>
-    </tr></thead><tbody>${customers.map(customer => `<tr>
+    ${capabilities.canRunAi && !queue ? '<th></th>' : ''}<th>Customer</th><th>Source</th><th>Country / City</th><th>Business Type</th><th>Customer Value</th><th>Buying Opportunity</th><th>Sales Priority</th><th>Score</th><th>Grade</th><th>Recommended Products</th><th>Next Action</th><th>Contact</th><th>Assigned Sales</th><th></th>
+    </tr></thead><tbody>${customers.map(customer => `<tr data-source="${esc(customer.customer_source || 'Manual Import')}" data-type="${esc(customer.customer_type || customer.business_type || '')}" data-grade="${esc(customer.opportunity_grade || '')}" data-priority="${Number(customer.sales_priority_score || 0)}" data-status="${esc(customer.opportunity_status || '')}" data-search="${esc(`${customer.company_name || ''} ${customer.brand_name || ''} ${customer.customer_source || ''} ${customer.customer_type || ''} ${customer.business_type || ''} ${customer.country || ''} ${customer.city || ''} ${customer.opportunity_status || ''}`.toLowerCase())}">
       ${capabilities.canRunAi && !queue ? `<td><input type="checkbox" data-customer-select value="${customer.id}" aria-label="Select ${esc(customer.company_name)}" /></td>` : ''}
-      <td class="primary-cell"><strong>${esc(customer.brand_name || customer.company_name)}</strong><small>${esc(customer.source)} · ${esc(customer.opportunity_status)}</small></td>
-      <td>${esc([customer.country, customer.city].filter(Boolean).join(' / ') || '—')}</td><td>${esc(customer.business_type || '—')}</td>
-      <td>${Number(customer.opportunity_score || 0)}</td><td>${badge(customer.opportunity_grade)}</td>
-      <td>${esc(customer.recommended_products || customer.recommended_categories || '—')}</td><td>${esc(customer.next_action || 'Run AI to generate')}</td>
+      <td class="primary-cell"><strong>${esc(customer.brand_name || customer.company_name)}</strong><small>${customer.is_test_data ? `${badge('TEST')} ` : ''}${esc(customer.source)} · ${esc(customer.opportunity_status)}</small></td><td>${badge(customer.customer_source || 'Manual Import')}</td>
+      <td>${esc([customer.country, customer.city].filter(Boolean).join(' / ') || '·')}</td><td>${esc(customer.business_type || '·')}</td>
+      <td>${Number(customer.customer_value_score || 0)}</td><td>${Number(customer.buying_opportunity_score || 0)}</td><td>${Number(customer.sales_priority_score || 0)}</td>
+      <td><button class="button button--compact" data-action="show-score-detail" data-id="${customer.id}">${Number(customer.opportunity_score || 0)}</button></td><td>${badge(customer.opportunity_grade)}</td>
+      <td>${esc(customer.recommended_products || customer.recommended_categories || '·')}</td><td>${esc(customer.next_action || 'Run AI to generate')}</td>
       <td>${esc(customer.email || customer.whatsapp || customer.website || customer.decision_maker || 'Missing')}</td><td>${esc(customer.assigned_sales_name || 'Unassigned')}</td>
       <td><button class="button button--compact" data-action="view-customer" data-id="${customer.id}">Open</button></td>
-    </tr>`).join('') || '<tr><td colspan="11"><div class="empty-state">No customers yet.</div></td></tr>'}</tbody></table></div>`;
+    </tr>`).join('') || '<tr><td colspan="15"><div class="empty-state">No customers yet.</div></td></tr>'}</tbody></table></div>${scorePanel}`;
+}
+
+function leadPoolTable(leads) {
+  return `<div class="table-scroll"><table class="data-table" id="opportunity-lead-table"><thead><tr>
+    <th>Lead</th><th>Source</th><th>Location</th><th>Customer Type</th><th>Score</th><th>Potential</th><th>AI Recommendation</th><th>Evidence</th><th>Status</th><th></th>
+  </tr></thead><tbody>${leads.map(lead => `<tr data-search="${esc(`${lead.company_name || ''} ${lead.customer_type || ''} ${lead.country || ''} ${lead.city || ''} ${lead.source_type || ''} ${lead.status || ''}`.toLowerCase())}">
+    <td class="primary-cell"><strong>${esc(lead.company_name)}</strong><small>${esc(lead.task_name || 'Search Result Lead')}</small></td>
+    <td>${badge(lead.source_type || 'Manual')}</td><td>${esc([lead.country, lead.city].filter(Boolean).join(' / ') || '—')}</td><td>${esc(lead.customer_type || '—')}</td>
+    <td>${Number(lead.opportunity_score || 0)}</td><td>${esc(lead.purchase_potential || '—')}</td><td>${esc(lead.recommended_next_action || 'Review lead')}</td>
+    <td>${esc(lead.source_url || lead.website || lead.reference_note || 'Not provided')}</td><td>${badge(lead.status || 'reviewed')}</td>
+    <td><button class="button button--compact" data-action="view-search-result" data-id="${lead.id}">Open</button></td>
+  </tr>`).join('') || '<tr><td colspan="10"><div class="empty-state">No leads yet. Create Search Results from Search Tasks first.</div></td></tr>'}</tbody></table></div>`;
+}
+
+function renderLeadDetail(lead) {
+  if (!lead) return '';
+  const contact = [lead.contact_person, lead.email, lead.phone, lead.linkedin, lead.instagram].filter(Boolean).join(' · ') || 'No contact information yet';
+  const history = [
+    ['Lead Created', lead.created_at],
+    ['AI Qualified', lead.updated_at || lead.created_at],
+    [lead.status === 'reviewed' ? 'Reviewed' : `Status: ${lead.status || 'reviewed'}`, lead.updated_at || lead.created_at]
+  ];
+  if (lead.status === 'converted') history.push(['Converted to Customer', lead.updated_at]);
+  return `<article class="panel lead-detail-panel">
+    <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>Lead Detail · ${esc(lead.task_name || 'Search Result')}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">Back to Lead Pool</button></div></div>
+    <section class="detail-grid">
+      <article><h3>AI Summary</h3><p>${esc(lead.opportunity_summary || 'AI qualification summary is pending.')}</p><div class="debug-list"><div><span>Score</span><strong>${Number(lead.opportunity_score || 0)}</strong></div><div><span>Purchase Potential</span><strong>${esc(lead.purchase_potential || 'Unknown')}</strong></div></div></article>
+      <article><h3>Customer Evidence</h3><div class="debug-list"><div><span>Original Source</span><strong>${esc(lead.source_type || 'Manual')}</strong></div><div><span>Source URL</span><strong>${esc(lead.source_url || 'Not provided')}</strong></div><div><span>Reference Note</span><strong>${esc(lead.reference_note || '—')}</strong></div></div></article>
+      <article><h3>Website & Contact</h3><div class="debug-list"><div><span>Website</span><strong>${esc(lead.website || 'Missing')}</strong></div><div><span>Contact</span><strong>${esc(contact)}</strong></div></div></article>
+      <article><h3>Product Matching</h3><p>${esc(lead.recommended_product_reason || 'Run qualification to prepare product direction.')}</p></article>
+    </section>
+    <section class="detail-grid section-gap">
+      <article><h3>AI Recommendation</h3><p>${esc(lead.recommended_next_action || 'Review the lead and decide whether to convert.')}</p><h3>Qualification Reason</h3><p>${esc(lead.qualification_reason || 'No qualification reason yet.')}</p></article>
+      <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}">Run AI</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
+    </section>
+    <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${esc(date || '')}</p></div></div>`).join('')}</div></article>
+    <div class="row-actions section-gap">${lead.status !== 'converted' ? `<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
+  </article>`;
+}
+
+function applyCustomerListFilters() {
+  const table = $('#opportunity-customer-table');
+  if (!table) return;
+  const q = String($('#customer-search-filter')?.value || '').trim().toLowerCase();
+  const source = $('#customer-source-filter')?.value || '';
+  const type = $('#customer-type-filter')?.value || '';
+  const grade = $('#customer-grade-filter')?.value || '';
+  const priority = $('#customer-priority-filter')?.value || '';
+  const status = $('#customer-status-filter')?.value || '';
+  table.querySelectorAll('tbody tr').forEach(row => {
+    if (!row.dataset.search) return;
+    const priorityValue = Number(row.dataset.priority || 0);
+    const priorityPass = !priority || (priority === 'high' && priorityValue >= 75) || (priority === 'medium' && priorityValue >= 40 && priorityValue < 75) || (priority === 'low' && priorityValue < 40);
+    row.hidden = Boolean(
+      (q && !row.dataset.search.includes(q)) ||
+      (source && row.dataset.source !== source) ||
+      (type && row.dataset.type !== type) ||
+      (grade && row.dataset.grade !== grade) ||
+      (status && row.dataset.status !== status) ||
+      !priorityPass
+    );
+  });
+}
+
+function discoveryPlanResult(result) {
+  if (!result) return `<div class="empty-state">Describe your ideal customer, then click Analyze Requirement to create a structured Customer Discovery Plan.</div>`;
+  const plan = result.plan || {};
+  const guidance = result.guidance || {};
+  const scoring = result.scoring_profile || {};
+  const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
+  const generated = result.generated_search_plan || null;
+  return `<section class="discovery-result-grid">
+    <article class="panel discovery-plan-card"><div class="panel-header"><div class="panel-title"><h2>Customer Discovery Plan</h2><p>AI/rules generated, human-reviewed before search execution.</p></div>${badge(guidance.needs_more_information ? 'Needs More Info' : 'Ready to Search')}</div>
+      <div class="debug-list discovery-fields">
+        <div><span>Target Customer Type</span><strong>${esc(plan.target_customer_type || 'Needs Clarification')}</strong></div>
+        <div><span>Industry</span><strong>${esc(plan.industry || 'Hospitality Furniture')}</strong></div>
+        <div><span>Country</span><strong>${esc(plan.country || 'Needs Clarification')}</strong></div>
+        <div><span>Region / City</span><strong>${esc(plan.region_city || 'Needs Clarification')}</strong></div>
+        <div><span>Company Size</span><strong>${esc(plan.company_size || 'Unknown')}</strong></div>
+        <div><span>Confidence</span><strong>${Number(plan.confidence_score || 0)}%</strong></div>
+      </div>
+      <h3>Recommended Keywords</h3><ul class="compact-list">${list(plan.recommended_keywords)}</ul>
+      <h3>Recommended Search Sources</h3><ul class="compact-list">${list(plan.recommended_search_sources)}</ul>
+      <h3>Exclude</h3><ul class="compact-list">${list(plan.excluded_customers)}</ul></article>
+    <article class="panel discovery-plan-card"><h2>Search Guidance</h2><p>${esc(guidance.message || '')}</p>
+      <h3>Suggested Filters</h3><ul class="compact-list">${list(guidance.suggestions)}</ul>
+      <h3>Recommended Next Step</h3><p>${esc(guidance.recommended_next_step || '')}</p>
+      <h3>Dynamic Scoring Profile</h3><p><strong>${esc(scoring.customer_type || plan.target_customer_type || 'Needs Clarification')}</strong></p>
+      <div class="score-dimension-list">${(scoring.dimensions || []).map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight || 0)}%</strong></div>`).join('') || '<p>No scoring profile selected yet.</p>'}</div></article>
+  </section>${generated ? generatedSearchPlanSection(generated) : ''}`;
+}
+
+function generatedSearchPlanSection(plan) {
+  const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
+  const createAction = state.discoveryPlan?.request?.id ? '<button class="button button--primary" data-action="create-search-task">Create Search Task</button>' : '';
+  return `<article class="panel generated-search-plan"><div class="panel-header"><div class="panel-title"><h2>Generated Search Plan</h2><p>Review this draft before any future customer discovery execution.</p></div><div class="row-actions">${badge(plan.status || 'Draft Search Plan')}${createAction}</div></div>
+    <div class="debug-list discovery-fields">
+      <div><span>Target Customer</span><strong>${esc(plan.target_customer || 'Needs Clarification')}</strong></div>
+      <div><span>Customer Type</span><strong>${esc(plan.customer_type || 'Needs Clarification')}</strong></div>
+      <div><span>Industry</span><strong>${esc(plan.industry || 'Hospitality Furniture')}</strong></div>
+      <div><span>Location</span><strong>${esc(plan.location || 'Needs Clarification')}</strong></div>
+      <div><span>Company Size</span><strong>${esc(plan.company_size || 'Unknown')}<br><small>${esc(plan.company_size_detail || '')}</small></strong></div>
+      <div><span>Recommended Search Volume</span><strong>${esc(plan.recommended_search_volume || '50 companies')}</strong></div>
+      <div><span>Priority</span><strong>${esc(plan.priority || 'Medium')}</strong></div>
+    </div>
+    <h3>Reason</h3><ul class="compact-list">${list(plan.priority_reasons)}</ul>
+    <h3>Search Objective</h3><p>${esc(plan.search_objective || '')}</p>
+    <section class="generated-search-grid">
+      <div><h3>Recommended Filters</h3><ul class="compact-list">${list(plan.recommended_filters)}</ul></div>
+      <div><h3>Search Keywords</h3><ul class="compact-list">${list(plan.search_keywords)}</ul></div>
+      <div><h3>Recommended Data Fields</h3><ul class="compact-list">${list(plan.recommended_data_fields)}</ul></div>
+      <div><h3>Exclude</h3><ul class="compact-list">${list(plan.exclude)}</ul></div>
+    </section></article>`;
+}
+
+function renderCustomerDiscoveryPane(data) {
+  const latest = state.discoveryPlan || data.discoveryRequests?.[0] && { plan: data.discoveryRequests[0].search_plan, guidance: data.discoveryRequests[0].guidance, scoring_profile: data.discoveryRequests[0].scoring_profile };
+  return `<section class="discovery-assistant">
+    <article class="panel"><div class="panel-header"><div class="panel-title"><h2>Describe your ideal customer</h2><p>Example: I want to find small restaurant furniture distributors in California.</p></div>${badge('No external search API')}</div>
+      <label class="field"><span>Target customer description</span><textarea id="customer-discovery-input" rows="5" placeholder="I want to find small restaurant furniture distributors in California.&#10;I want to find restaurant design companies in Texas.&#10;I want to find coffee shop owners planning renovation.">${esc(state.discoveryPrompt || '')}</textarea></label>
+      <div class="button-row"><button class="button button--primary" data-action="analyze-discovery-requirement">Analyze Requirement</button><button class="button" data-action="generate-discovery-plan">Generate Search Plan</button></div>
+      <p class="muted">AI Cost Control is active. The system only analyzes when you click a button; page loading does not call external AI.</p></article>
+    ${discoveryPlanResult(latest)}
+    <article class="panel"><h2>Customer Type System</h2><p>Dynamic customer categories and scoring weights prepared for future expansion.</p>
+      <div class="opportunity-card-grid">${(data.discoveryConfig?.customerTypes || []).map(profile => `<div class="opportunity-card"><strong>${esc(profile.customer_type)}</strong><small>${esc(profile.industry)}</small><div class="score-dimension-list">${profile.dimensions.map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight)}%</strong></div>`).join('')}</div></div>`).join('')}</div></article>
+  </section>`;
+}
+
+function searchTaskRows(tasks) {
+  return tasks.map(task => `<tr><td class="primary-cell"><strong>${esc(task.task_name)}</strong><small>Target: ${esc(task.target_customer || task.customer_type || '—')}</small></td>
+    <td>${esc(task.customer_type || '—')}</td><td>${esc(task.location || '—')}</td><td>${esc(task.company_size || '—')}</td><td>${Number(task.target_quantity || 0)} companies</td>
+    <td>${badge(task.priority || 'Medium')}</td><td>${badge(task.status || 'Draft')}</td><td>${esc(task.created_at || '')}</td>
+    <td><div class="row-actions"><button class="button button--compact" data-action="view-search-task" data-id="${task.id}">View</button>${task.status === 'Draft' ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">Start Search</button>` : ''}<button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">Cancel</button></div></td></tr>`).join('');
+}
+
+function renderSearchTaskDetail(task) {
+  if (state.searchResultDetail && !state.searchResultEdit) return renderLeadDetail(state.searchResultDetail);
+  const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
+  const results = task.search_results || [];
+  const summary = task.search_result_summary || { total: results.length };
+  const editing = state.searchResultEdit || null;
+  const resultRows = results.map(result => `<tr><td class="primary-cell"><strong>${esc(result.company_name)}</strong><small>${esc(result.website || result.email || 'No website/contact yet')}</small></td>
+    <td>${esc(result.customer_type || '-')}</td><td>${esc([result.city, result.country].filter(Boolean).join(', ') || '-')}</td><td>${Number(result.opportunity_score || 0)}</td><td>${esc(result.purchase_potential || '-')}</td><td>${badge(result.status || 'new')}</td>
+    <td><div class="row-actions"><button class="button button--compact button--primary" data-action="view-search-result" data-id="${result.id}">Open</button><button class="button button--compact" data-action="edit-search-result" data-id="${result.id}">Edit</button>${result.status !== 'converted' ? `<button class="button button--compact" data-action="discard-search-result" data-id="${result.id}">Discard</button>` : ''}</div></td></tr>`).join('');
+  const detail = state.searchResultDetail ? `<article class="panel soft-panel"><div class="panel-header"><div class="panel-title"><h3>${esc(state.searchResultDetail.company_name)}</h3><p>${esc(state.searchResultDetail.opportunity_summary || '')}</p></div><div class="row-actions">${badge('AI Analysis Completed')}${badge(state.searchResultDetail.status)}</div></div><div class="debug-list"><div><span>Why this customer matters</span><strong>${esc(state.searchResultDetail.why_customer_matters || '-')}</strong></div><div><span>Recommended products</span><strong>${esc(state.searchResultDetail.recommended_product_reason || '-')}</strong></div><div><span>Recommended next action</span><strong>${esc(state.searchResultDetail.recommended_next_action || '-')}</strong></div><div><span>Qualification reason</span><strong>${esc(state.searchResultDetail.qualification_reason || '-')}</strong></div><div><span>Source URL</span><strong>${esc(state.searchResultDetail.source_url || '-')}</strong></div><div><span>Reference Note</span><strong>${esc(state.searchResultDetail.reference_note || '-')}</strong></div></div></article>` : '';
+  const value = name => esc(editing?.[name] || '');
+  const sourceTypes = ['Google Maps','Website','Instagram','Facebook','LinkedIn','Manual','Other'];
+  return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft' ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Start Search</button>` : ''}</div></div>
+    <section class="detail-grid">
+      <article><h3>Search Criteria</h3><div class="debug-list discovery-fields"><div><span>Customer Type</span><strong>${esc(task.customer_type || '—')}</strong></div><div><span>Location</span><strong>${esc(task.location || '—')}</strong></div><div><span>Company Size</span><strong>${esc(task.company_size || '—')}</strong></div><div><span>Priority</span><strong>${esc(task.priority || 'Medium')}</strong></div><div><span>Target Volume</span><strong>${Number(task.target_quantity || 0)} companies</strong></div></div></article>
+      <article><h3>Keywords</h3><ul class="compact-list">${list(task.keywords)}</ul></article>
+      <article><h3>Required Data Fields</h3><ul class="compact-list">${list(task.required_data_fields)}</ul></article>
+      <article><h3>Filters</h3><ul class="compact-list">${list(task.filters)}</ul></article>
+    </section>
+    <section class="section-gap">${panelHeader('Search Results', 'Store manually discovered leads before they enter the Lead Pool')}
+      <div class="metrics-grid compact-metrics"><div class="metric-card"><span>Total Results</span><strong>${Number(summary.total || 0)}</strong><small>Stored candidates</small></div><div class="metric-card"><span>Converted</span><strong>${Number(summary.converted || 0)}</strong><small>Moved to Customers CRM</small></div><div class="metric-card"><span>Lead Pool</span><strong>${Number((summary.new || 0) + (summary.reviewed || 0))}</strong><small>Open leads</small></div></div>
+      ${detail}
+      <form id="search-result-form" class="foundation-form section-gap" data-edit-id="${editing?.id || ''}">
+        <div class="panel-header"><div class="panel-title"><h3>${editing ? 'Edit Search Result' : 'Add Search Result'}</h3><p>30-second entry. AI Qualification runs after saving; no external search API is connected.</p></div>${editing ? '<button class="button" type="button" data-action="cancel-search-result-edit">Cancel Edit</button>' : ''}</div>
+        <label class="field"><span>Company Name *</span><input name="company_name" required value="${value('company_name')}"></label>
+        <label class="field"><span>Customer Type *</span><input name="customer_type" required value="${value('customer_type') || esc(task.customer_type || '')}"></label>
+        <label class="field"><span>Country *</span><input name="country" required value="${value('country')}"></label>
+        <label class="field"><span>City *</span><input name="city" required value="${value('city')}"></label>
+        <label class="field"><span>Source Type *</span><select name="source_type" required>${sourceTypes.map(type => `<option ${((editing?.source_type || 'Manual') === type) ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></label>
+        <label class="field"><span>Website</span><input name="website" value="${value('website')}"></label>
+        <details class="field field--full optional-section"><summary>Contact Information (Optional)</summary><div class="foundation-form">
+          <label class="field"><span>Contact Person</span><input name="contact_person" value="${value('contact_person')}"></label>
+          <label class="field"><span>Email</span><input name="email" type="email" value="${value('email')}"></label>
+          <label class="field"><span>Phone</span><input name="phone" value="${value('phone')}"></label>
+          <label class="field"><span>LinkedIn</span><input name="linkedin" value="${value('linkedin')}"></label>
+          <label class="field"><span>Instagram</span><input name="instagram" value="${value('instagram')}"></label>
+        </div></details>
+        <fieldset class="field field--full evidence-card"><legend>Customer Evidence</legend>
+          <label class="field"><span>Source URL</span><input name="source_url" value="${value('source_url') || value('source_reference')}" placeholder="Google Maps, Instagram, Website, or LinkedIn URL"></label>
+          <label class="field"><span>Reference Note</span><input name="reference_note" value="${value('reference_note')}" placeholder="Short note for future handoff"></label>
+          <p class="form-hint">Screenshot / Attachment: future. Save the source link or note here for now.</p>
+        </fieldset>
+        <button class="button button--primary" type="submit">Save Search Result</button>
+      </form>
+      <div class="table-scroll section-gap"><table class="data-table"><thead><tr><th>Company</th><th>Customer Type</th><th>Location</th><th>Score</th><th>Potential</th><th>Status</th><th>Actions</th></tr></thead><tbody>${resultRows || '<tr><td colspan="7"><div class="empty-state">Total Results: 0. Click Save Search Result after manually finding a company.</div></td></tr>'}</tbody></table></div>
+    </section></article>`;
+}
+
+function renderSearchTasksPane(data) {
+  if (state.searchTaskDetail) return renderSearchTaskDetail(state.searchTaskDetail);
+  return `<article class="panel">${panelHeader('Search Tasks', 'Convert AI Search Plans into executable discovery tasks. External search execution is not connected in this MVP.')}
+    <div class="table-scroll"><table class="data-table"><thead><tr><th>Task</th><th>Customer Type</th><th>Location</th><th>Company Size</th><th>Volume</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${searchTaskRows(data.searchTasks || []) || '<tr><td colspan="9"><div class="empty-state">No search tasks yet. Generate a Search Plan, then click Create Search Task.</div></td></tr>'}</tbody></table></div></article>`;
 }
 
 function renderOpportunityPane(data) {
   const view = state.opportunityView || 'dashboard';
-  const counts = { customers: data.customers.length, queue: data.queue.length, handoff: data.handoff.length };
+  const counts = { customers: data.customers.length, priority: data.priority.length, queue: data.queue.length, handoff: data.handoff.length, searchTasks: data.searchTasks?.length || 0 };
   const capabilities = data.capabilities;
   const sourceOptions = data.sources.map(source => `<option>${esc(source)}</option>`).join('');
+  const customerFilterOptions = field => [...new Set(data.customers.map(customer => customer[field]).filter(Boolean))].sort().map(value => `<option>${esc(value)}</option>`).join('');
   if (view === 'dashboard') return `${opportunityMetricsCards(data.metrics)}
     <section class="detail-grid section-gap"><article class="panel">${panelHeader('Today’s Priority Queue', 'Highest-value A+/A opportunities ready for human action')}${customerTable(data.queue.slice(0, 5), capabilities, true)}</article>
     <article class="panel"><div class="panel-header"><div class="panel-title"><h2>AI Pipeline Status</h2><p>Rule provider is active; external AI remains optional.</p></div>${badge(data.debug.scoring_engine_status)}</div>
       <div class="debug-list"><div><span>Product Matching</span><strong>${esc(data.debug.product_matching_status)}</strong></div><div><span>Duplicate Check</span><strong>${esc(data.debug.duplicate_check_status)}</strong></div><div><span>Open Data Gaps</span><strong>${data.debug.gaps_open}</strong></div><div><span>Last AI Run</span><strong>${esc(data.debug.last_ai_run_at || 'Not run')}</strong></div></div></article></section>`;
+  if (view === 'discovery') return renderCustomerDiscoveryPane(data);
+  if (view === 'search-tasks') return renderSearchTasksPane(data);
+  if (view === 'lead-pool') return state.searchResultEdit && state.searchTaskDetail
+    ? renderSearchTaskDetail(state.searchTaskDetail)
+    : state.searchResultDetail
+    ? renderLeadDetail(state.searchResultDetail)
+    : `<article class="panel">${panelHeader('Lead Pool', 'Review AI-qualified leads before converting them into CRM customers')}${leadPoolTable(data.leads || [])}</article>`;
   if (view === 'import') return `<section class="opportunity-import-grid">
     <form id="customer-manual-form" class="panel opportunity-form"><h2>Manual Customer</h2><p>Create one sourced customer record.</p>
       <div class="foundation-form"><label class="field"><span>Company Name</span><input name="company_name" required /></label><label class="field"><span>Business Type</span><input name="business_type" placeholder="Coffee Shop" /></label>
@@ -983,8 +1332,17 @@ function renderOpportunityPane(data) {
     <form id="customer-csv-form" class="panel opportunity-form"><h2>CSV Paste Import</h2><p>Header example: company_name,business_type,city,country,email,website</p><label class="field"><span>Source</span><select name="source"><option>CSV</option>${sourceOptions}</select></label><label class="field"><span>CSV Data</span><textarea name="csv" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import CSV</button></form>
     <form id="customer-text-form" class="panel opportunity-form"><h2>Batch Text Import</h2><p>One line: Company | Type | City | Country | Email | Website</p><label class="field"><span>Source</span><select name="source">${sourceOptions}</select></label><label class="field"><span>Customer Lines</span><textarea name="text" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import Text</button></form>
     </section>`;
-  if (view === 'customers') return `<article class="panel">${panelHeader('Customer List', 'Clean, score, and route customer records through one governed workflow')}
-    <div class="filter-bar"><label class="filter-search">${icon('search')}<input data-filter-table="opportunity-customer-table" placeholder="Search customers" /></label>${capabilities.canRunAi ? '<button class="button button--primary" data-action="run-selected-customers">Run AI for Selected</button>' : ''}</div>${customerTable(data.customers, capabilities)}</article>`;
+  if (view === 'customers') return `<article class="panel">${panelHeader('Customers', 'CRM records after lead conversion. Use this page for sales follow-up, quotes, PI, orders, and customer work.')}
+    <div class="filter-bar">
+      <label class="filter-search">${icon('search')}<input id="customer-search-filter" placeholder="Search customers" /></label>
+      <select id="customer-source-filter" class="select-control"><option value="">All Sources</option>${customerFilterOptions('customer_source')}</select>
+      <select id="customer-type-filter" class="select-control"><option value="">All Customer Types</option>${customerFilterOptions('customer_type')}</select>
+      <select id="customer-grade-filter" class="select-control"><option value="">All Grades</option>${customerFilterOptions('opportunity_grade')}</select>
+      <select id="customer-priority-filter" class="select-control"><option value="">All Sales Priority</option><option value="high">High 75+</option><option value="medium">Medium 40-74</option><option value="low">Low Below 40</option></select>
+      <select id="customer-status-filter" class="select-control"><option value="">All Statuses</option>${customerFilterOptions('opportunity_status')}</select>
+      ${capabilities.canRunAi ? '<button class="button button--primary" data-action="run-selected-customers">Analyze Selected Customers</button>' : ''}
+    </div>${customerTable(data.customers, capabilities)}</article>`;
+  if (view === 'priority') return `<article class="panel">${panelHeader('Customer Intelligence Priority View', 'Sorted by Sales Priority Score from Phase 2A dual scoring')}${customerTable(data.priority, capabilities, true)}</article>`;
   if (view === 'queue') return `<article class="panel">${panelHeader('AI Opportunity Queue', 'A+/A opportunities ordered by score, contactability, decision maker, and due date')}${customerTable(data.queue, capabilities, true)}</article>`;
   if (view === 'outreach') return `<article class="panel">${panelHeader('Outreach Drafts', 'Draft-only messages; sending always requires a human and happens outside this platform')}
     <div class="opportunity-card-grid">${data.customers.filter(customer => customer.last_ai_run_at).map(customer => `<button class="opportunity-card" data-action="view-customer" data-id="${customer.id}"><span>${badge(customer.opportunity_grade)}</span><strong>${esc(customer.company_name)}</strong><small>${esc(customer.ai_recommendation || 'Open to review outreach')}</small></button>`).join('') || '<div class="empty-state">Run AI to create reviewable outreach drafts.</div>'}</div></article>`;
@@ -992,21 +1350,32 @@ function renderOpportunityPane(data) {
 }
 
 async function renderOpportunityIntelligence() {
-  const [dashboard, customersData, queueData, handoffData] = await Promise.all([
-    api('/api/opportunity/dashboard'), api('/api/customers'), api('/api/opportunity-queue'), api('/api/customers/sales-handoff')
+  const [dashboard, customersData, priorityData, queueData, handoffData, discoveryConfig, discoveryHistory, searchTasksData] = await Promise.all([
+    api('/api/opportunity/dashboard'), api('/api/customers'), api('/api/customer-intelligence/priority'), api('/api/opportunity-queue'), api('/api/customers/sales-handoff'),
+    api('/api/customer-discovery/config'), api('/api/customer-discovery/requests'), api('/api/search-tasks')
   ]);
+  const searchTaskDetails = await Promise.all((searchTasksData.tasks || []).slice(0, 50).map(task => api(`/api/search-tasks/${task.id}`)));
+  const leads = searchTaskDetails.flatMap(detail => (detail.task.search_results || []).map(result => ({
+    ...result,
+    task_name: detail.task.task_name,
+    search_objective: detail.task.search_objective,
+    search_task_status: detail.task.status
+  }))).filter(lead => !['converted', 'discarded'].includes(lead.status));
   state.opportunityIntelligence = {
     metrics: dashboard.metrics, debug: dashboard.debug, capabilities: dashboard.capabilities,
-    customers: customersData.customers, sources: customersData.sources, statuses: customersData.statuses,
-    queue: queueData.customers, handoff: handoffData.customers
+    customers: customersData.customers, priority: priorityData.customers, sources: customersData.sources, statuses: customersData.statuses,
+    queue: queueData.customers, handoff: handoffData.customers, discoveryConfig, discoveryRequests: discoveryHistory.requests, searchTasks: searchTasksData.tasks, leads
   };
   $('#page').innerHTML = `${pageHeader('Opportunity Intelligence', 'Turn sourced customer data into clean, scored, product-matched, human-approved sales opportunities.',
     dashboard.capabilities.canImport ? '<button class="button button--primary" data-action="opportunity-tab" data-tab="import">Import Customers</button>' : '')}
-    ${opportunityTabs(state.opportunityView, { customers: customersData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length })}
+    ${opportunityTabs(state.opportunityView, { leads: leads.length, customers: customersData.customers.length, priority: priorityData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length, searchTasks: searchTasksData.tasks.length })}
     <div class="opportunity-pane">${renderOpportunityPane(state.opportunityIntelligence)}</div>`;
   $('#customer-manual-form')?.addEventListener('submit', submitManualCustomer);
   $('#customer-csv-form')?.addEventListener('submit', event => submitCustomerImport(event, 'csv'));
   $('#customer-text-form')?.addEventListener('submit', event => submitCustomerImport(event, 'text'));
+  $('#search-result-form')?.addEventListener('submit', submitSearchResult);
+  ['customer-search-filter','customer-source-filter','customer-type-filter','customer-grade-filter','customer-priority-filter','customer-status-filter']
+    .forEach(id => $(`#${id}`)?.addEventListener(id === 'customer-search-filter' ? 'input' : 'change', applyCustomerListFilters));
 }
 
 async function submitManualCustomer(event) {
@@ -1021,6 +1390,119 @@ async function submitCustomerImport(event, type) {
   const body = Object.fromEntries(new FormData(event.currentTarget));
   const result = await api('/api/customers/import', { method: 'POST', body: JSON.stringify({ source: body.source, [type]: body[type] }) });
   toast(`${result.imported} imported; ${result.duplicates} duplicates skipped.`); state.opportunityView = 'customers'; await renderOpportunityIntelligence();
+}
+
+async function runCustomerDiscovery(action) {
+  const prompt = String($('#customer-discovery-input')?.value || '').trim();
+  if (!prompt) return toast('Please describe your ideal customer first.');
+  state.discoveryPrompt = prompt;
+  const endpoint = action === 'generate' ? '/api/customer-discovery/generate-plan' : '/api/customer-discovery/analyze';
+  const result = await api(endpoint, { method: 'POST', body: JSON.stringify({ request_text: prompt }) });
+  state.discoveryPlan = result;
+  toast(action === 'generate' ? 'Search plan generated.' : 'Requirement analyzed.');
+  await renderOpportunityIntelligence();
+}
+
+async function createSearchTaskFromPlan() {
+  const discoveryId = state.discoveryPlan?.request?.id;
+  if (!discoveryId) return toast('Generate a Search Plan first.');
+  const result = await api('/api/search-tasks', {
+    method: 'POST',
+    body: JSON.stringify({ customer_discovery_request_id: discoveryId, generated_search_plan: state.discoveryPlan.generated_search_plan })
+  });
+  state.searchTaskDetail = result.task;
+  state.opportunityView = 'search-tasks';
+  toast('Search Task created.');
+  await renderOpportunityIntelligence();
+}
+
+async function viewSearchTask(id) {
+  const result = await api(`/api/search-tasks/${id}`);
+  state.searchTaskDetail = result.task;
+  await renderOpportunityIntelligence();
+}
+
+async function startSearchTask(id) {
+  const result = await api(`/api/search-tasks/${id}/ready`, { method: 'POST', body: '{}' });
+  state.searchTaskDetail = result.task;
+  toast('Search Task marked Ready.');
+  await renderOpportunityIntelligence();
+}
+
+async function submitSearchResult(event) {
+  event.preventDefault();
+  const taskId = state.searchTaskDetail.id;
+  const editId = event.currentTarget.dataset.editId;
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  const result = editId
+    ? await api(`/api/search-results/${editId}`, { method: 'PUT', body: JSON.stringify(body) })
+    : await api(`/api/search-tasks/${taskId}/results`, { method: 'POST', body: JSON.stringify(body) });
+  const detail = await api(`/api/search-tasks/${taskId}`);
+  state.searchTaskDetail = detail.task;
+  state.searchResultEdit = null;
+  state.searchResultDetail = result.result;
+  toast(editId ? 'Search Result updated. AI Analysis Completed.' : 'Search Result saved. AI Analysis Completed.');
+  await renderOpportunityIntelligence();
+}
+
+async function viewSearchResult(id) {
+  const result = await api(`/api/search-results/${id}`);
+  state.searchResultDetail = result.result;
+  state.searchResultEdit = null;
+  state.opportunityView = 'lead-pool';
+  await renderOpportunityIntelligence();
+}
+
+async function editSearchResult(id) {
+  const result = await api(`/api/search-results/${id}`);
+  if (!state.searchTaskDetail || Number(state.searchTaskDetail.id) !== Number(result.result.search_task_id)) {
+    const task = await api(`/api/search-tasks/${result.result.search_task_id}`);
+    state.searchTaskDetail = task.task;
+  }
+  state.searchResultEdit = result.result;
+  state.searchResultDetail = result.result;
+  await renderOpportunityIntelligence();
+}
+
+async function runLeadAi(id) {
+  const current = await api(`/api/search-results/${id}`);
+  const result = await api(`/api/search-results/${id}`, { method: 'PUT', body: JSON.stringify(current.result) });
+  state.searchResultDetail = result.result;
+  state.searchResultEdit = null;
+  toast('Lead AI qualification updated.');
+  await renderOpportunityIntelligence();
+}
+
+async function convertSearchResult(id) {
+  try {
+    const result = await api(`/api/search-results/${id}/convert`, { method: 'POST', body: '{}' });
+    const taskId = state.searchTaskDetail?.id || result.result.search_task_id;
+    if (taskId) {
+      const detail = await api(`/api/search-tasks/${taskId}`);
+      state.searchTaskDetail = detail.task;
+    }
+    state.searchResultDetail = result.result;
+    state.searchResultEdit = null;
+    state.opportunityView = 'lead-pool';
+    toast('Lead converted to Customer.');
+    await renderOpportunityIntelligence();
+  } catch (error) {
+    toast(error.message || 'Possible existing customer found. Review before converting.');
+  }
+}
+
+async function discardSearchResult(id) {
+  const result = await api(`/api/search-results/${id}/discard`, { method: 'POST', body: '{}' });
+  const taskId = state.searchTaskDetail?.id || result.result.search_task_id;
+  if (taskId) {
+    const detail = await api(`/api/search-tasks/${taskId}`);
+    state.searchTaskDetail = detail.task;
+  }
+  state.searchResultDetail = null;
+  state.searchResultEdit = null;
+  state.opportunityView = 'lead-pool';
+  toast('Lead discarded.');
+  await renderOpportunityIntelligence();
 }
 
 async function renderCustomerDetail(id) {
@@ -1045,11 +1527,128 @@ async function runCustomerAi(id) {
   await api(`/api/customers/${id}/run-ai`, { method: 'POST', body: JSON.stringify({ confirmed: true }) }); toast('Opportunity AI completed.'); await renderCustomerDetail(id);
 }
 
+async function runCustomerIntelligence(id, payload = {}) {
+  await api(`/api/customers/${id}/customer-intelligence/run`, { method: 'POST', body: JSON.stringify(payload) });
+  toast('Customer Intelligence completed.');
+  await renderCustomerDetail(id);
+}
+
+async function submitCustomerIntelligence(event) {
+  event.preventDefault();
+  const customerId = state.customerDetail.id;
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  await runCustomerIntelligence(customerId, body);
+}
+
+async function submitCustomerIntelligenceFeedback(event) {
+  event.preventDefault();
+  const customerId = state.customerDetail.id;
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  await api(`/api/customers/${customerId}/customer-intelligence/feedback`, { method: 'POST', body: JSON.stringify(body) });
+  toast('Customer feedback saved.');
+  await renderCustomerDetail(customerId);
+}
+
+async function submitCustomerIntelligenceUpdate(event) {
+  event.preventDefault();
+  const customerId = state.customerDetail.id;
+  const body = Object.fromEntries(new FormData(event.currentTarget));
+  await api(`/api/customers/${customerId}/customer-intelligence/updates`, { method: 'POST', body: JSON.stringify(body) });
+  toast('Customer Intelligence update saved.');
+  event.currentTarget.reset();
+  await renderCustomerDetail(customerId);
+}
+
+var renderCustomerDetailOriginal = renderCustomerDetail;
+renderCustomerDetail = async function renderCustomerDetailPhase2A(id) {
+  const data = await api(`/api/customers/${id}`);
+  const customer = data.customer;
+  state.customerDetail = customer;
+  const recommendations = customer.recommended_products.map(item => `<article class="knowledge-related-card"><span>${esc(item.category || '')}</span><strong>${esc(item.product_name || item.category)}</strong><small>${esc(item.recommendation_reason)}</small><p>${esc(item.sales_angle || '')}</p></article>`).join('') || '<div class="empty-state">Run AI to match products.</div>';
+  const customerTypes = ['Hospitality Furniture Distributor','Commercial Furniture Dealer','Hospitality Design Firm','Restaurant Group','Independent Restaurant Owner','Multi-location Restaurant Group','Cafe Owner','Bar Owner','Bubble Tea Shop Owner'];
+  const feedbackOptions = ['Interested','Not interested','Wrong customer','Purchased','Future opportunity','No response'];
+  const updateReasons = ['New salesperson handoff','Customer follow-up restart','New customer requirement','New information obtained','Manual update'];
+  const updateHistory = (customer.intelligence_updates || []).map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.update_reason)}</strong><p>${esc(item.ai_summary || '')}</p><small>${esc(item.created_at)}${item.created_by_name ? ` · ${esc(item.created_by_name)}` : ''}</small></div></div>`).join('') || '<div class="empty-state">No manual intelligence updates yet.</div>';
+  const evidenceHistory = `<div class="debug-list"><div><span>Original Source</span><strong>${esc(customer.customer_source || customer.source || 'Manual Import')}</strong></div><div><span>Source URL</span><strong>${esc(customer.source_url || customer.website || 'Not provided')}</strong></div></div><div class="section-gap">${(customer.intelligence_updates || []).map(item => `<div class="list-row"><div><strong>${esc(item.update_reason)}</strong><small>Updated by ${esc(item.created_by_name || 'System')} · ${esc(item.created_at || '')}</small><p>${esc(item.original_input || item.ai_summary || '')}</p></div></div>`).join('') || '<div class="empty-state">No evidence updates recorded yet.</div>'}</div>`;
+  const actions = `${data.capabilities.canRunCustomerIntelligence ? `<button class="button button--soft" data-action="run-customer-intelligence" data-id="${id}">${icon('sparkles')} Run Customer Intelligence</button>` : ''}${data.capabilities.canRunAi ? `<button class="button button--primary" data-action="run-customer-ai" data-id="${id}">${icon('sparkles')} Run AI</button>` : ''}`;
+  $('#page').innerHTML = `${pageHeader(esc(customer.company_name), `${esc(customer.business_type || 'Hospitality')} · ${esc(customer.city || '')} ${esc(customer.country || '')}`, actions, '<button class="button" data-action="back-opportunities">Back</button>')}
+    <section class="knowledge-hero panel"><div>${opportunityScore(customer.opportunity_score, customer.opportunity_grade)}<div><span class="eyebrow-label">Opportunity Status</span><strong>${esc(customer.opportunity_status)}</strong><small>Data quality ${customer.data_quality_score}% · confidence ${customer.confidence_score}%</small></div></div><div class="knowledge-hero-summary"><span>AI Summary</span><p>${esc(customer.ai_summary || 'Run AI to generate an opportunity summary.')}</p></div></section>
+    <section class="detail-grid section-gap"><article class="panel knowledge-section">${panelHeader('Customer Intelligence Card', 'Phase 2A dual-score model')}
+      <div class="metrics-grid compact-metrics">
+        ${metricCard('Customer Value', Number(customer.customer_value_score || 0), esc(customer.customer_value_grade || 'D'), 'users', 'green', true)}
+        ${metricCard('Buying Opportunity', Number(customer.buying_opportunity_score || 0), esc(customer.buying_opportunity_grade || 'D'), 'briefcase', customer.purchase_timing_confidence === 'Low' ? 'gold' : 'green', true)}
+        ${metricCard('Sales Priority', Number(customer.sales_priority_score || 0), 'Action priority', 'sparkles', 'green', true)}
+      </div>
+      <div class="debug-list section-gap"><div><span>Customer Type</span><strong>${esc(customer.customer_type || 'Not classified')}</strong></div><div><span>Industry</span><strong>${esc(customer.industry || 'Hospitality Furniture')}</strong></div><div><span>Purchase Timing</span><strong>${esc(customer.purchase_timing || 'Unknown')}</strong></div><div><span>Confidence</span><strong>${esc(customer.purchase_timing_confidence || 'Low')}</strong></div></div>
+      <h3>AI Recommendation</h3><p>${esc(customer.ai_recommendation || 'Run Customer Intelligence to generate a reviewable recommendation.')}</p><small>${esc(customer.sales_priority_explanation || '')}</small>
+    </article>
+    <article class="panel knowledge-section">${panelHeader('Manual Intelligence Input', 'Sales can add project notes without external data')}
+      <form id="customer-intelligence-form" class="foundation-form">
+        <label class="field"><span>Customer Type</span><select name="customer_type"><option value="">Auto classify</option>${customerTypes.map(type => `<option ${customer.customer_type === type ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></label>
+        <label class="field"><span>Industry</span><input name="industry" value="${esc(customer.industry || 'Hospitality Furniture')}"></label>
+        <label class="field"><span>Project Information</span><textarea name="project_information" rows="2">${esc(customer.project_information || '')}</textarea></label>
+        <label class="field"><span>Customer Comments</span><textarea name="customer_comments" rows="2">${esc(customer.customer_comments || '')}</textarea></label>
+        <label class="field"><span>Expected Purchase Timing</span><input name="expected_purchase_timing" value="${esc(customer.expected_purchase_timing || '')}" placeholder="Unknown / Near term / Future opportunity"></label>
+        <label class="field"><span>Opportunity Notes</span><textarea name="opportunity_notes" rows="2">${esc(customer.opportunity_notes || '')}</textarea></label>
+        ${data.capabilities.canRunCustomerIntelligence ? '<button class="button button--primary" type="submit">Save & Run Customer Intelligence</button>' : ''}
+      </form>
+    </article></section>
+    <article class="panel section-gap">${panelHeader('Update Customer Intelligence', 'Record new customer information without overwriting previous history')}
+      ${data.capabilities.canRunCustomerIntelligence ? `<form id="customer-intelligence-update-form" class="foundation-form">
+        <label class="field"><span>Update Reason</span><select name="update_reason">${updateReasons.map(reason => `<option>${esc(reason)}</option>`).join('')}</select></label>
+        <label class="field"><span>New Information</span><textarea name="original_input" rows="4" placeholder="Example: Customer is planning a second restaurant location and asked about booth seating."></textarea></label>
+        <label class="field"><span>Reference / Future Attachment</span><input name="reference_note" placeholder="Optional link, file name, or note for future attachment"></label>
+        <button class="button button--primary" type="submit">${icon('sparkles')} Update Customer Intelligence</button>
+      </form>` : '<div class="empty-state">You can view updates, but this role cannot run Customer Intelligence updates.</div>'}
+      <div class="section-gap">${updateHistory}</div>
+    </article>
+    <article class="panel section-gap">${panelHeader('Customer Evidence History', 'Original source and manual intelligence update trail')}${evidenceHistory}</article>
+    <section class="detail-grid section-gap"><article class="panel knowledge-section"><h2>Basic Info</h2><div class="debug-list"><div><span>Source</span><strong>${esc(customer.source)}</strong></div><div><span>Website</span><strong>${esc(customer.website || 'Missing')}</strong></div><div><span>Email</span><strong>${esc(customer.email || 'Missing')}</strong></div><div><span>WhatsApp</span><strong>${esc(customer.whatsapp || 'Missing')}</strong></div><div><span>Stores</span><strong>${customer.store_count || 'Unknown'}</strong></div><div><span>Years</span><strong>${customer.years_in_business || 'Unknown'}</strong></div></div></article>
+    <article class="panel knowledge-section"><h2>Next Action</h2><p>${esc(customer.next_action || 'Run AI to calculate next action.')}</p><strong>${esc(customer.next_action_date || '')}</strong><h3>AI Recommendation</h3><p>${esc(customer.ai_recommendation || '—')}</p></article></section>
+    <article class="panel section-gap">${panelHeader('Recommended Products', 'Live references from Product Intelligence Center — no product data is copied')}<div class="knowledge-related-grid">${recommendations}</div></article>
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Contacts', 'Decision makers and contact confidence')}${customer.contacts.map(contact => `<div class="list-row"><div><strong>${esc(contact.full_name)}</strong><small>${esc(contact.role)} · ${esc(contact.email || contact.whatsapp || 'No direct channel')}</small></div>${contact.is_primary_decision_maker ? badge('Decision Maker') : ''}</div>`).join('') || '<div class="empty-state">No contacts.</div>'}</article>
+    <article class="panel">${panelHeader('Missing Data', 'VA workflow for research gaps')}${customer.gaps.map(gap => `<div class="list-row"><div><strong>${esc(gap.gap_type)}</strong><small>${esc(gap.priority)} priority</small></div>${badge(gap.status)}</div>`).join('') || '<div class="empty-state">No open data gaps.</div>'}</article></section>
+    <article class="panel section-gap">${panelHeader('Outreach Drafts', 'Editable drafts only — no automatic sending')}${customer.outreach_drafts.map(draft => `<div class="outreach-editor" data-draft="${draft.id}"><div class="panel-header"><div><strong>${esc(draft.channel)} · ${esc(draft.draft_type)}</strong><small>${esc(draft.status)}</small></div></div><input name="subject" value="${esc(draft.subject || '')}" /><textarea name="body" rows="8">${esc(draft.body)}</textarea><div class="row-actions">${data.capabilities.canEditDraft ? `<button class="button" data-action="save-outreach" data-id="${draft.id}">Save Draft</button>` : ''}${data.capabilities.canApproveDraft && draft.status !== 'Approved' ? `<button class="button button--primary" data-action="approve-outreach" data-id="${draft.id}">Approve</button>` : ''}${data.capabilities.canEditDraft ? `<button class="button button--soft" data-action="sent-outreach" data-id="${draft.id}">Mark Sent Manually</button>` : ''}</div></div>`).join('') || '<div class="empty-state">Run AI to generate a personalized first-touch draft.</div>'}</article>
+    <article class="panel section-gap">${panelHeader('Customer Intelligence Feedback', 'Used for future AI learning preparation; no automatic model training')}
+      ${data.capabilities.canSubmitFeedback ? `<form id="customer-intelligence-feedback" class="foundation-form"><label class="field"><span>Feedback</span><select name="feedback_type">${feedbackOptions.map(type => `<option>${esc(type)}</option>`).join('')}</select></label><label class="field"><span>Note</span><textarea name="feedback_note" rows="3"></textarea></label><button class="button button--primary">Save Feedback</button></form>` : ''}
+      <div class="section-gap">${customer.intelligence_feedback.map(item => `<div class="list-row"><div><strong>${esc(item.feedback_type)}</strong><small>${esc(item.feedback_note || '')} ${esc(item.created_at)}</small></div></div>`).join('') || '<div class="empty-state">No feedback yet.</div>'}</div>
+    </article>
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Activity History', 'Immutable workflow events')}${customer.activity.map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.activity_type)}</strong><p>${esc(item.description)}</p><small>${esc(item.created_at)}</small></div></div>`).join('')}</article>
+    <article class="panel">${panelHeader('Sales Handoff', 'A+/A plus at least one contactability signal')}<p>${esc(customer.ai_recommendation || '')}</p>${data.capabilities.canAcceptLead && ['Ready for Sales', 'Contacted', 'In Progress'].includes(customer.opportunity_status) ? `<button class="button button--primary" data-action="accept-lead" data-id="${id}">Accept Lead</button>` : `<p class="empty-state">${['A+', 'A'].includes(customer.opportunity_grade) ? 'Add a contact method to qualify handoff.' : 'Customer must reach grade A or A+.'}</p>`}</article></section>`;
+  $('#customer-intelligence-form')?.addEventListener('submit', submitCustomerIntelligence);
+  $('#customer-intelligence-update-form')?.addEventListener('submit', submitCustomerIntelligenceUpdate);
+  $('#customer-intelligence-feedback')?.addEventListener('submit', submitCustomerIntelligenceFeedback);
+}
+
 async function runSelectedCustomers() {
   const ids = [...document.querySelectorAll('[data-customer-select]:checked')].map(input => Number(input.value));
   if (!ids.length) return toast('Select at least one customer.');
-  if (!window.confirm(`Estimated cost: $${(ids.length * 0.001).toFixed(3)}. Run AI for ${ids.length} selected customers?`)) return;
-  await api('/api/customers/run-ai-selected', { method: 'POST', body: JSON.stringify({ customer_ids: ids, confirmed: true }) }); toast(`${ids.length} customers processed.`); await renderOpportunityIntelligence();
+  const message = `AI Customer Analysis
+
+Selected customers:
+${ids.length}
+
+AI will generate:
+- Customer Score
+- Buying Opportunity
+- Recommended Products
+- Next Action
+
+Estimated AI Cost:
+$0/customer (Rule-based analysis)
+
+Total Estimated Cost:
+$0
+
+Warning:
+AI analysis will update scoring fields.
+Existing customer information will not be deleted.
+
+Continue?
+
+Cancel / Start Analysis`;
+  if (!window.confirm(message)) return;
+  await api('/api/customers/run-ai-selected', { method: 'POST', body: JSON.stringify({ customer_ids: ids, confirmed: true }) }); toast(`${ids.length} customers analyzed.`); await renderOpportunityIntelligence();
 }
 
 async function saveOutreach(id, action = null) {
@@ -1109,6 +1708,17 @@ renderImports=async function(batchId=null){
   if(data.capabilities.canApprove){const header=$('.page-header__actions')||$('.page-header');if(header&&!document.querySelector('[data-action="clear-product-demo-data"]'))header.insertAdjacentHTML('beforeend','<button class="button" data-action="clear-product-demo-data">Clear Demo Data</button>')}
   if(state.user?.role==='Owner'){const pricing=await api('/api/price-rules');const panel=document.createElement('article');panel.className='panel section-gap';panel.innerHTML=`<div class="panel-header"><div><h2>Reference Price Rules</h2><p>Owner-only cost-to-reference pricing. Quote prices remain editable snapshots.</p></div><button class="button" data-action="preview-price-recalculation">Recalculate Prices</button></div><form id="price-rule-form" class="form-grid"><label class="field"><span>Rule Name</span><input name="rule_name" required></label><label class="field"><span>Supplier (optional)</span><input name="supplier_name"></label><label class="field"><span>Category (optional)</span><select name="category_id"><option value="">Global</option>${pricing.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label><label class="field"><span>Multiplier</span><input name="multiplier" type="number" step=".01" min=".01" required></label><label class="field"><span>Fixed Add-on</span><input name="fixed_addon" type="number" step=".01" value="0"></label><label class="field"><span>Rounding</span><select name="rounding_rule">${pricing.roundingRules.map(r=>`<option>${esc(r)}</option>`).join('')}</select></label><label class="field"><span>Currency</span><select name="currency">${pricing.currencies.map(c=>`<option>${esc(c)}</option>`).join('')}</select></label><label class="field"><span>Effective Date</span><input name="effective_date" type="date" value="${new Date().toISOString().slice(0,10)}"></label><button class="button button--primary">Add Price Rule</button></form><div class="foundation-manager-list">${pricing.rules.map(r=>`<article><span><strong>${esc(r.rule_name)}</strong><small>${esc(r.supplier_name||'All suppliers')} · ${esc(r.category_name||'All categories')} · ×${r.multiplier} + ${r.fixed_addon} · ${esc(r.rounding_rule)}</small></span>${badge(r.active?'Active':'Inactive')}</article>`).join('')||'<p>No pricing rules. Imports will be marked Needs Pricing Review.</p>'}</div><div id="pricing-preview"></div>`;$('#page').append(panel);$('#price-rule-form').addEventListener('submit',async event=>{event.preventDefault();await api('/api/price-rules',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))});toast('Price rule created.');await renderImports(batchId)})}
 };
+
+function importIssueChips(draft){const issues=[...(draft.missing_fields||[])];if(draft.possible_match_product_id)issues.push('Duplicate Candidate');if(Number(draft.attribute_mapping_confidence||0)<70)issues.push('Low Mapping Confidence');return `<div class="import-issue-chips">${issues.length?issues.map(issue=>`<span>${esc(issue)}</span>`).join(''):'<span class="is-ok">Ready for approval</span>'}</div>`}
+function importQualityScore(draft){const missing=(draft.missing_fields||[]).filter(item=>item!=='Image Assets Needed').length,score=Math.max(0,Math.min(100,100-missing*12-(draft.main_image_url?0:10)));return `<div class="import-quality"><strong>${score}%</strong><small>Product Completeness</small></div>`}
+function importCategorySelect(draft,data){return `<select name="suggested_category_id"><option value="">Needs Review</option>${data.categories.map(category=>`<option value="${category.id}" ${category.id===draft.suggested_category_id?'selected':''}>${esc(category.name)}</option>`).join('')}</select>`}
+function importAttributeSummary(draft){const mapped=draft.mapped_product||{},summary=mapped.normalization_summary||{},attributes=[['Material',mapped.material],['Color',mapped.color],['Finish',mapped.finish],['Size',summary.dimensions||mapped.dimensions],['Length',summary.length_mm?`${summary.length_mm}mm`:null],['Width',summary.width_mm?`${summary.width_mm}mm`:null],['Height',summary.height_mm?`${summary.height_mm}mm`:mapped.height],['Packing',mapped.packing_info],['MOQ',mapped.moq]].filter(([,value])=>value!=null&&value!=='');return `<details class="import-review-details"><summary>Attributes (${attributes.length})</summary><div class="import-attribute-chips">${attributes.map(([label,value])=>`<span><b>${esc(label)}</b>${esc(value)}</span>`).join('')||'<span>No mapped attributes</span>'}</div>${Array.isArray(summary.unknown_columns)&&summary.unknown_columns.length?`<div class="import-unknown-columns"><strong>Needs Human Review</strong>${summary.unknown_columns.map(item=>`<p>${esc(item.column)}: ${esc(item.value)} <small>${Number(item.confidence||45)}% confidence</small></p>`).join('')}</div>`:''}</details>`}
+function importVariantSummary(draft){const variants=draft.suggested_variants||[];return `<details class="import-review-details"><summary>${variants.length||1} variant${(variants.length||1)>1?'s':''}</summary><div class="import-variant-table"><table class="data-table"><thead><tr><th>Variant</th><th>Size</th><th>Material</th><th>Cost</th><th>Selling</th></tr></thead><tbody>${variants.length?variants.map(variant=>`<tr><td>${esc(variant.variant_name||variant.variant_sku||'Default')}</td><td>${esc(variant.normalized_dimensions||variant.dimensions||'—')}</td><td>${esc(variant.material||draft.mapped_product?.material||'—')}</td><td>${variant.supplier_cost??variant.cost_price??'—'} ${esc(variant.supplier_currency||draft.mapped_product?.supplier_currency||'')}</td><td>${variant.reference_price??'Needs Review'}</td></tr>`).join(''):`<tr><td>${esc(draft.product_name||'Default')}</td><td>${esc(draft.mapped_product?.normalized_dimensions||draft.mapped_product?.dimensions||'—')}</td><td>${esc(draft.mapped_product?.material||'—')}</td><td>${draft.mapped_product?.supplier_cost??draft.mapped_product?.cost_price??'—'} ${esc(draft.mapped_product?.supplier_currency||'')}</td><td>${draft.mapped_product?.reference_price??'Needs Review'}</td></tr>`}</tbody></table></div></details>`}
+function importPricingCell(draft,data){const p=draft.mapped_product||{};return `<div class="import-pricing-cell"><strong>${p.reference_price==null?'Needs Pricing Review':`USD ${Number(p.reference_price).toFixed(2)}`}</strong><small>${esc(p.pricing_status||'Needs Pricing Review')}</small>${data.capabilities.canViewSensitive?`<span>Supplier: ${esc(p.supplier_currency||'')} ${p.supplier_cost??p.cost_price??'—'}</span>`:''}</div>`}
+function importReviewRow(draft,data){const p=draft.mapped_product||{},imageSource=p.image_source||draft.image_status||'Supplier image evidence pending';return `<tr data-import-draft="${draft.id}"><td><label class="import-select-cell"><input type="checkbox" data-import-select value="${draft.id}" ${draft.status==='Imported'||draft.status==='Rejected'?'disabled':''}></label></td><td class="import-product-image-cell">${draft.main_image_url?`<img src="${esc(draft.main_image_url)}" alt="Imported product image">`:'<div class="library-image-empty">Image Assets Needed</div>'}<small>${esc(imageSource)}</small><small>Image confidence: ${Number(p.image_confidence||draft.image_matching_confidence||0)}%</small></td><td class="import-product-info-cell"><input name="product_name" value="${esc(draft.product_name||'')}" aria-label="Product Name"><input name="product_sku" value="${esc(draft.product_sku||'')}" aria-label="SKU"><small>${data.capabilities.canViewSensitive?esc(p.default_supplier||'Supplier not set'):'Supplier hidden by role'}</small></td><td>${importCategorySelect(draft,data)}</td><td>${importAttributeSummary(draft)}</td><td>${importVariantSummary(draft)}</td><td>${importPricingCell(draft,data)}</td><td>${importQualityScore(draft)}${importIssueChips(draft)}</td><td>${badge(draft.status)}${draft.possible_match_product_id?`<select name="resolution_action"><option value="create_new">Create Product</option><option value="update_existing">Update Existing</option><option value="add_variant">Add Variant</option><option value="ignore">Ignore</option></select>`:'<input type="hidden" name="resolution_action" value="create_new">'}</td><td><div class="row-actions vertical">${draft.suggested_variants.length>1?`<button class="button button--compact" data-action="split-import-draft" data-id="${draft.id}">Split</button>`:''}<button class="button button--compact" data-action="save-import-draft" data-id="${draft.id}">Save</button>${data.capabilities.canApprove&&draft.status!=='Imported'?`<button class="button button--compact button--primary" data-action="approve-import-draft" data-id="${draft.id}">Approve</button><button class="button button--compact" data-action="reject-import-draft" data-id="${draft.id}">Reject</button>`:''}</div></td></tr>`}
+function enhanceImportReviewPIC2C(){const data=state.imports,batch=data?.batch;if(!batch)return;const review=[...document.querySelectorAll('.section-gap')].find(node=>node.querySelector('h2')?.textContent==='Draft Review');if(!review)return;review.classList.add('pic2c-import-review');review.innerHTML=`<div class="panel-header"><div><h2>Product Import Review</h2><p>Review normalized products, variants, attributes, pricing, and image evidence before approval.</p></div>${data.capabilities.canApprove?'<div class="row-actions"><button class="button" data-action="merge-selected-imports">Merge Selected</button><button class="button button--primary" data-action="approve-selected-imports">Approve Selected</button></div>':''}</div><div class="import-workflow-status"><span>Imported</span><span>AI Processing</span><span>Needs Review</span><span>Approved</span><span>Product Library</span></div><div class="import-filter-bar"><button class="button button--compact" data-action="filter-import-drafts" data-status="all">All (${batch.drafts.length})</button><button class="button button--compact" data-action="filter-import-drafts" data-status="Needs Review">Needs Review (${batch.drafts.filter(draft=>draft.status==='Needs Review').length})</button></div><div class="table-scroll"><table class="data-table import-review-table"><thead><tr><th></th><th>Image Evidence</th><th>Basic Product Information</th><th>Category</th><th>Attributes</th><th>Variants</th><th>Pricing</th><th>Quality / Issues</th><th>Status</th><th>Actions</th></tr></thead><tbody>${batch.drafts.map(draft=>importReviewRow(draft,data)).join('')||'<tr><td colspan="10"><div class="empty-state">No drafts detected.</div></td></tr>'}</tbody></table></div>`}
+const renderImportsPIC2CBase=renderImports;
+renderImports=async function(batchId=null){await renderImportsPIC2CBase(batchId);enhanceImportReviewPIC2C()};
 
 async function submitProductImport(event){
   event.preventDefault();const form=event.currentTarget,file=form.elements.spreadsheet.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let index=0;index<bytes.length;index+=0x8000)binary+=String.fromCharCode(...bytes.subarray(index,index+0x8000));const body=Object.fromEntries(new FormData(form));delete body.spreadsheet;body.filename=file.name;body.file_base64=btoa(binary);
@@ -1534,6 +2144,9 @@ async function renderDebugCenter() {
     <article class="panel section-gap">
       ${panelHeader('AI Cost Control', `${esc(data.aiCostControl.providerMode)} · unified budget guard`)}
       <div class="metrics-grid compact-metrics">
+        ${metricCard('AI Brain Status', data.aiBusinessBrain?.status || 'not initialized', `${esc(data.aiBusinessBrain?.providers?.active || 'mock')} provider`, 'sparkles', data.aiBusinessBrain?.status === 'ready' ? 'green' : 'gold', true)}
+        ${metricCard('AI Executions', data.aiBusinessBrain?.executionLogs || 0, `${data.aiBusinessBrain?.contextSnapshots || 0} context snapshots`, 'document', 'green', true)}
+        ${metricCard('Prompt Templates', data.aiBusinessBrain?.promptTemplates || 0, 'Phase 1 prompt foundation', 'briefcase', 'green', true)}
         ${metricCard('Today AI Cost', `$${Number(data.aiCostControl.dashboard.todayAiCost || 0).toFixed(4)}`, 'Daily spend', 'money', 'green', true)}
         ${metricCard('Monthly AI Cost', `$${Number(data.aiCostControl.dashboard.monthlyAiCost || 0).toFixed(4)}`, 'Monthly spend', 'money', 'green', true)}
         ${metricCard('Budget Remaining', `$${Number(data.aiCostControl.budgetRemaining || 0).toFixed(2)}`, 'Effective remaining budget', 'check', 'green', true)}
@@ -1706,6 +2319,48 @@ async function handleAction(action, node) {
   } else if (action === 'opportunity-tab') {
     state.opportunityView = node.dataset.tab;
     await renderOpportunityIntelligence();
+  } else if (action === 'analyze-discovery-requirement') {
+    await runCustomerDiscovery('analyze');
+  } else if (action === 'generate-discovery-plan') {
+    await runCustomerDiscovery('generate');
+  } else if (action === 'create-search-task') {
+    await createSearchTaskFromPlan();
+  } else if (action === 'view-search-task') {
+    await viewSearchTask(node.dataset.id);
+  } else if (action === 'start-search-task') {
+    await startSearchTask(node.dataset.id);
+  } else if (action === 'back-search-tasks') {
+    state.searchTaskDetail = null;
+    state.searchResultDetail = null;
+    state.searchResultEdit = null;
+    await renderOpportunityIntelligence();
+  } else if (action === 'back-lead-pool') {
+    state.searchResultDetail = null;
+    state.searchResultEdit = null;
+    state.opportunityView = 'lead-pool';
+    await renderOpportunityIntelligence();
+  } else if (action === 'cancel-search-task') {
+    toast('Cancel is reserved for the future execution workflow. This MVP supports Draft to Ready only.');
+  } else if (action === 'view-search-result') {
+    await viewSearchResult(node.dataset.id);
+  } else if (action === 'edit-search-result') {
+    await editSearchResult(node.dataset.id);
+  } else if (action === 'cancel-search-result-edit') {
+    state.searchResultEdit = null;
+    await renderOpportunityIntelligence();
+  } else if (action === 'convert-search-result') {
+    await convertSearchResult(node.dataset.id);
+  } else if (action === 'discard-search-result') {
+    await discardSearchResult(node.dataset.id);
+  } else if (action === 'run-lead-ai') {
+    await runLeadAi(node.dataset.id);
+  } else if (action === 'show-score-detail') {
+    const id = Number(node.dataset.id);
+    state.customerScoreDetail = (state.opportunityIntelligence?.customers || []).find(customer => Number(customer.id) === id)
+      || (state.opportunityIntelligence?.priority || []).find(customer => Number(customer.id) === id)
+      || (state.opportunityIntelligence?.queue || []).find(customer => Number(customer.id) === id)
+      || null;
+    await renderOpportunityIntelligence();
   } else if (action === 'view-customer') {
     await renderCustomerDetail(node.dataset.id);
   } else if (action === 'back-opportunities') {
@@ -1713,6 +2368,8 @@ async function handleAction(action, node) {
     await renderOpportunityIntelligence();
   } else if (action === 'run-customer-ai') {
     await runCustomerAi(node.dataset.id);
+  } else if (action === 'run-customer-intelligence') {
+    await runCustomerIntelligence(node.dataset.id);
   } else if (action === 'run-selected-customers') {
     await runSelectedCustomers();
   } else if (action === 'save-outreach') {

@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '017_product_price_engine');
+  assert.equal(database.migrationVersion, '024_v53_customer_source');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -799,6 +799,582 @@ test('Module 06A Supplement 01 controls AI budgets, confirmations, logs, provide
   assert.ok(debug.aiCostControl.cacheRecordsCount > 0);
 });
 
+test('V5.3 Phase 1 AI Business Brain runs through context, provider, cost control, and logging without mutating source records', async () => {
+  const admin = await login('admin@rspro.ai');
+  const sales = await login('sales@rspro.ai');
+  const library = await fetch(`http://127.0.0.1:${port}/api/products`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  const product = library.products.find(item => item.sku === 'CH-JP-505') || library.products[0];
+  assert.ok(product?.id);
+  const before = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+
+  const runResponse = await fetch(`http://127.0.0.1:${port}/api/ai-brain/actions/run`, {
+    method: 'POST',
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      moduleName: 'ai-business-brain',
+      actionName: 'foundation-check',
+      entityType: 'product',
+      entityId: product.id,
+      contextType: 'product',
+      promptTemplateKey: 'v53.foundation.mock.v1',
+      options: { provider: 'rules' }
+    })
+  });
+  const run = await runResponse.json();
+  assert.equal(runResponse.status, 200);
+  assert.equal(run.status, 'completed');
+  assert.equal(run.provider, 'rules');
+  assert.equal(run.result.outputType, 'analysis');
+  assert.equal(run.result.reviewRequired, true);
+  assert.ok(run.result.guardrails.some(item => item.includes('No source-of-truth')));
+  assert.ok(run.executionLogId);
+  assert.ok(run.contextSnapshotId);
+
+  const after = await fetch(`http://127.0.0.1:${port}/api/products/${product.id}`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.equal(after.product.id, before.product.id);
+  assert.equal(after.product.sku, before.product.sku);
+  assert.equal(after.product.name, before.product.name);
+
+  const status = await fetch(`http://127.0.0.1:${port}/api/ai-brain/status`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.equal(status.status, 'ready');
+  assert.ok(status.promptTemplates >= 1);
+  assert.ok(status.contextSnapshots >= 1);
+  assert.ok(status.executionLogs >= 1);
+  assert.ok(status.completedRuns >= 1);
+
+  const logs = await fetch(`http://127.0.0.1:${port}/api/ai-cost/logs`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(logs.logs.some(log => log.module_name === 'ai-business-brain' && log.action_name === 'foundation-check' && log.status === 'executed'));
+
+  const forbidden = await fetch(`http://127.0.0.1:${port}/api/ai-brain/actions/run`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moduleName: 'ai-business-brain', actionName: 'foundation-check', entityType: 'product', entityId: product.id, contextType: 'product' })
+  });
+  assert.equal(forbidden.status, 403);
+
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.equal(debug.aiBusinessBrain.status, 'ready');
+  assert.ok(debug.aiBusinessBrain.executionLogs >= 1);
+});
+
+test('V5.3 Phase 2A Customer Intelligence separates customer value, buying opportunity, priority, and feedback', async () => {
+  const admin = await login('admin@rspro.ai');
+  const sales = await login('sales@rspro.ai');
+  const create = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST',
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'Phase 2A Hospitality Supply',
+      business_type: 'Hospitality Furniture Distributor',
+      country: 'United States',
+      city: 'Los Angeles',
+      website: 'https://phase2a.example.com',
+      source: 'Manual',
+      source_confidence: 80
+    })
+  });
+  const created = await create.json();
+  assert.equal(create.status, 201, created.error);
+  const customerId = created.customer.id;
+
+  const firstRun = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/customer-intelligence/run`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_type: 'Hospitality Furniture Distributor', industry: 'Hospitality Furniture' })
+  });
+  const first = await firstRun.json();
+  assert.equal(firstRun.status, 200, first.error);
+  assert.equal(first.customer.customer_type, 'Hospitality Furniture Distributor');
+  assert.equal(first.customer.industry, 'Hospitality Furniture');
+  assert.ok(first.customer.customer_value_score >= 70);
+  assert.equal(first.customer.purchase_timing, 'Unknown');
+  assert.equal(first.customer.purchase_timing_confidence, 'Low');
+  assert.ok(first.customer.sales_priority_score > 0);
+  assert.ok(first.customer.intelligence_profiles.length >= 1);
+  assert.ok(first.customer.score_history.some(row => row.score_type === 'customer_value'));
+  assert.ok(first.ai.executionLogId);
+
+  const secondRun = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/customer-intelligence/run`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_information: 'New restaurant project opening soon, RFQ for tables and chairs.',
+      expected_purchase_timing: 'Near term',
+      opportunity_notes: 'Customer asked for a commercial furniture package quote.'
+    })
+  });
+  const second = await secondRun.json();
+  assert.equal(secondRun.status, 200, second.error);
+  assert.equal(second.customer.purchase_timing, 'Near term');
+  assert.equal(second.customer.purchase_timing_confidence, 'High');
+  assert.ok(second.customer.buying_opportunity_score > first.customer.buying_opportunity_score);
+
+  const feedbackResponse = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/customer-intelligence/feedback`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedback_type: 'Interested', feedback_note: 'Sales confirmed distributor wants future package pricing.' })
+  });
+  const feedback = await feedbackResponse.json();
+  assert.equal(feedbackResponse.status, 201, feedback.error);
+  assert.equal(feedback.feedback.feedback_type, 'Interested');
+  assert.ok(feedback.customer.intelligence_feedback.some(item => item.feedback_type === 'Interested'));
+
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/customers/${customerId}/customer-intelligence/updates`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      update_reason: 'New customer requirement',
+      original_input: 'Customer is planning a second restaurant location and asked about booth seating.',
+      reference_note: 'Future attachment placeholder: customer-wechat-note.png'
+    })
+  });
+  const update = await updateResponse.json();
+  assert.equal(updateResponse.status, 201, update.error);
+  assert.equal(update.update.update_reason, 'New customer requirement');
+  assert.match(update.update.ai_summary, /Latest customer situation:/);
+  assert.match(update.update.ai_summary, /Important changes:/);
+  assert.match(update.update.ai_summary, /Opportunity impact:/);
+  assert.match(update.update.ai_summary, /Recommended next action:/);
+  assert.ok(update.customer.intelligence_updates.some(item => item.id === update.update.id));
+  assert.equal(update.customer.project_information, 'New restaurant project opening soon, RFQ for tables and chairs.');
+
+  const priority = await fetch(`http://127.0.0.1:${port}/api/customer-intelligence/priority`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(priority.customers.some(customer => customer.id === customerId));
+
+  const logs = await fetch(`http://127.0.0.1:${port}/api/ai-cost/logs`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(logs.logs.some(log => log.module_name === 'customer-intelligence' && log.action_name === 'phase2a-score-explanation' && log.status === 'executed'));
+  assert.ok(logs.logs.some(log => log.module_name === 'customer-intelligence' && log.action_name === 'manual-intelligence-update' && log.status === 'executed'));
+
+  const debug = await fetch(`http://127.0.0.1:${port}/api/debug/system`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(debug.opportunityIntelligence.customer_intelligence_profiles_count >= 2);
+  assert.ok(debug.opportunityIntelligence.customer_intelligence_feedback_count >= 1);
+  assert.ok(debug.opportunityIntelligence.score_history_count >= 3);
+});
+
+test('V3.1 Restaurant owner scoring uses owner-specific opportunity factors', async () => {
+  const admin = await login('admin@rspro.ai');
+  const sales = await login('sales@rspro.ai');
+  const create = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST',
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'V3.1 Cafe Owner Test',
+      business_type: 'Cafe Owner',
+      country: 'United States',
+      city: 'Pasadena',
+      website: 'https://v31-cafe.example.com',
+      years_in_business: 5,
+      renovation_probability: 80,
+      expansion_probability: 70,
+      source: 'Manual',
+      source_confidence: 85
+    })
+  });
+  const created = await create.json();
+  assert.equal(create.status, 201, created.error);
+
+  const runResponse = await fetch(`http://127.0.0.1:${port}/api/customers/${created.customer.id}/customer-intelligence/run`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customer_type: 'Cafe Owner',
+      industry: 'Hospitality Furniture',
+      opportunity_notes: 'Owner mentioned renovation planning and possible new location expansion.'
+    })
+  });
+  const run = await runResponse.json();
+  assert.equal(runResponse.status, 200, run.error);
+  assert.equal(run.customer.customer_type, 'Cafe Owner');
+  assert.ok(run.customer.buying_opportunity_score >= 70);
+  assert.match(run.customer.buying_opportunity_explanation, /Renovation Opportunity 24\/30/);
+  assert.match(run.customer.buying_opportunity_explanation, /Years Operating 30\/30/);
+  assert.match(run.customer.buying_opportunity_explanation, /Expansion Signal 16\/20/);
+  assert.match(run.customer.buying_opportunity_explanation, /Contact Availability 20\/20/);
+});
+
+test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with dynamic scoring profiles', async () => {
+  const admin = await login('admin@rspro.ai');
+  const sales = await login('sales@rspro.ai');
+
+  const configResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/config`, { headers: { Cookie: sales.cookie } });
+  const config = await configResponse.json();
+  assert.equal(configResponse.status, 200, config.error);
+  assert.ok(config.customerTypes.some(profile => profile.customer_type === 'Restaurant Furniture Distributor'));
+  assert.ok(config.customerTypes.some(profile => profile.customer_type === 'Restaurant Interior Design Company'));
+  for (const ownerType of ['Independent Restaurant Owner', 'Multi-location Restaurant Group', 'Cafe Owner', 'Bar Owner', 'Bubble Tea Shop Owner']) {
+    assert.ok(config.customerTypes.some(profile => profile.customer_type === ownerType), `${ownerType} should be available`);
+  }
+  const ownerProfile = config.customerTypes.find(profile => profile.customer_type === 'Independent Restaurant Owner');
+  assert.ok(ownerProfile.dimensions.some(dimension => dimension.name === 'Renovation Opportunity' && dimension.weight === 30));
+  assert.ok(ownerProfile.dimensions.some(dimension => dimension.name === 'Years Operating' && dimension.weight === 30));
+  assert.ok(ownerProfile.dimensions.some(dimension => dimension.name === 'Expansion Signal' && dimension.weight === 20));
+  assert.ok(ownerProfile.dimensions.some(dimension => dimension.name === 'Contact Availability' && dimension.weight === 20));
+
+  const distributorResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find restaurant furniture suppliers in California' })
+  });
+  const distributor = await distributorResponse.json();
+  assert.equal(distributorResponse.status, 201, distributor.error);
+  assert.equal(distributor.plan.target_customer_type, 'Restaurant Furniture Distributor');
+  assert.equal(distributor.plan.country, 'USA');
+  assert.equal(distributor.plan.region_city, 'California');
+  assert.ok(distributor.plan.recommended_keywords.includes('restaurant furniture supplier'));
+  assert.ok(distributor.scoring_profile.dimensions.some(dimension => dimension.name === 'Business Match' && dimension.weight === 40));
+  assert.equal(distributor.ai.provider, 'rules');
+  assert.ok(distributor.ai.executionLogId);
+
+  const incompleteResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/generate-plan`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find restaurant customers' })
+  });
+  const incomplete = await incompleteResponse.json();
+  assert.equal(incompleteResponse.status, 201, incomplete.error);
+  assert.equal(incomplete.guidance.needs_more_information, true);
+  assert.equal(incomplete.generated_search_plan.status, 'Draft Search Plan');
+  assert.ok(incomplete.generated_search_plan.recommended_data_fields.includes('Company Name'));
+  assert.ok(incomplete.generated_search_plan.recommended_data_fields.includes('LinkedIn'));
+  assert.ok(incomplete.guidance.suggestions.includes('Target country'));
+  assert.ok(incomplete.guidance.suggestions.includes('Company size'));
+
+  const generatedResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/generate-plan`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find restaurant furniture distributors in California' })
+  });
+  const generated = await generatedResponse.json();
+  assert.equal(generatedResponse.status, 201, generated.error);
+  assert.equal(generated.action_name, 'generate-search-plan');
+  assert.equal(generated.generated_search_plan.status, 'Ready for Search');
+  assert.equal(generated.generated_search_plan.customer_type, 'Restaurant Furniture Distributor');
+  assert.match(generated.generated_search_plan.search_objective, /sales qualification/i);
+  assert.deepEqual(generated.generated_search_plan.recommended_filters, ['Location', 'Company Size', 'Customer Type', 'Decision Maker', 'Business Type', 'Purchase Potential']);
+  assert.ok(generated.generated_search_plan.search_keywords.includes('hospitality furniture distributor'));
+  assert.ok(generated.generated_search_plan.exclude.includes('Residential furniture stores'));
+  assert.equal(generated.generated_search_plan.priority, 'High');
+  assert.equal(generated.generated_search_plan.recommended_search_volume, '100 companies');
+  assert.ok(generated.generated_search_plan.priority_reasons.includes('Hospitality related business'));
+  assert.ok(generated.generated_search_plan.priority_reasons.includes('Potential repeat buyer'));
+
+  const sizedResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/generate-plan`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find restaurant furniture distributors in California with 5-50 employees' })
+  });
+  const sized = await sizedResponse.json();
+  assert.equal(sizedResponse.status, 201, sized.error);
+  assert.equal(sized.generated_search_plan.company_size, 'Small company');
+  assert.equal(sized.generated_search_plan.company_size_detail, '5-50 employees');
+  assert.match(sized.generated_search_plan.target_customer, /Small company/);
+
+  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_discovery_request_id: sized.request.id, generated_search_plan: sized.generated_search_plan })
+  });
+  const createdTask = await createTaskResponse.json();
+  assert.equal(createTaskResponse.status, 201, createdTask.error);
+  assert.match(createdTask.task.task_name, /Search Task #/);
+  assert.equal(createdTask.task.customer_discovery_request_id, sized.request.id);
+  assert.equal(createdTask.task.target_customer, sized.generated_search_plan.target_customer);
+  assert.equal(createdTask.task.customer_type, 'Restaurant Furniture Distributor');
+  assert.equal(createdTask.task.industry, 'Hospitality Furniture');
+  assert.equal(createdTask.task.location, 'California, USA');
+  assert.equal(createdTask.task.company_size, '5-50 employees');
+  assert.equal(createdTask.task.target_quantity, 100);
+  assert.equal(createdTask.task.priority, 'High');
+  assert.equal(createdTask.task.status, 'Draft');
+  assert.ok(createdTask.task.keywords.includes('restaurant furniture supplier'));
+  assert.ok(createdTask.task.filters.includes('Purchase Potential'));
+  assert.ok(createdTask.task.required_data_fields.includes('Phone'));
+  assert.ok(createdTask.task.required_data_fields.includes('Business Type'));
+
+  const tasks = await fetch(`http://127.0.0.1:${port}/api/search-tasks`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(tasks.tasks.some(task => task.id === createdTask.task.id && task.status === 'Draft'));
+
+  const taskDetail = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.equal(taskDetail.task.id, createdTask.task.id);
+  assert.equal(taskDetail.task.search_objective, sized.generated_search_plan.search_objective);
+
+  const readyResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/ready`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const ready = await readyResponse.json();
+  assert.equal(readyResponse.status, 200, ready.error);
+  assert.equal(ready.task.status, 'Ready');
+
+  const resultResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/results`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'V3.2 Hospitality Distributor',
+      customer_type: 'Restaurant Furniture Distributor',
+      country: 'USA',
+      city: 'Irvine',
+      website: 'v32-distributor.example.com',
+      contact_person: 'Morgan Smith',
+      email: 'morgan@v32-distributor.example.com',
+      phone: '+1 555 3200',
+      linkedin: 'linkedin.com/company/v32-distributor',
+      instagram: 'instagram.com/v32distributor',
+      company_size: '5-50 employees',
+      business_type: 'Hospitality furniture distributor',
+      purchase_potential: 'High',
+      opportunity_score: 82,
+      qualification_reason: 'Distributor matches target customer type and has contact information.',
+      source_type: 'Manual',
+      source_reference: 'Manual alpha search'
+    })
+  });
+  const searchResult = await resultResponse.json();
+  assert.equal(resultResponse.status, 201, searchResult.error);
+  assert.equal(searchResult.result.company_name, 'V3.2 Hospitality Distributor');
+  assert.equal(searchResult.result.status, 'reviewed');
+  assert.equal(searchResult.result.website, 'https://v32-distributor.example.com');
+  assert.match(searchResult.result.opportunity_summary, /V3\.2 Hospitality Distributor/);
+  assert.match(searchResult.result.why_customer_matters, /Restaurant Furniture Distributor/);
+  assert.ok(searchResult.ai.executionLogId);
+
+  const resultsList = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/results`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.equal(resultsList.summary.total, 1);
+  assert.ok(resultsList.results.some(result => result.id === searchResult.result.id));
+
+  const resultDetail = await fetch(`http://127.0.0.1:${port}/api/search-results/${searchResult.result.id}`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.equal(resultDetail.result.company_name, 'V3.2 Hospitality Distributor');
+
+  const editedResponse = await fetch(`http://127.0.0.1:${port}/api/search-results/${searchResult.result.id}`, {
+    method: 'PUT',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...resultDetail.result, opportunity_score: 88, status: 'reviewed', purchase_potential: 'High' })
+  });
+  const edited = await editedResponse.json();
+  assert.equal(editedResponse.status, 200, edited.error);
+  assert.equal(edited.result.opportunity_score, 88);
+  assert.equal(edited.result.status, 'reviewed');
+
+  const convertResponse = await fetch(`http://127.0.0.1:${port}/api/search-results/${searchResult.result.id}/convert`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const converted = await convertResponse.json();
+  assert.equal(convertResponse.status, 200, converted.error);
+  assert.equal(converted.result.status, 'converted');
+  assert.equal(converted.customer.company_name, 'V3.2 Hospitality Distributor');
+  assert.equal(converted.customer.customer_type, 'Restaurant Furniture Distributor');
+  assert.equal(converted.customer.customer_source, 'Search Result');
+  assert.equal(converted.customer.is_test_data, false);
+  assert.match(converted.customer.recommended_product_reason, /Hospitality furniture reseller/);
+  assert.ok(converted.customer.contacts.some(contact => contact.email === 'morgan@v32-distributor.example.com'));
+
+  const sourceFilteredCustomers = await fetch(`http://127.0.0.1:${port}/api/customers?customer_source=Search%20Result`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(sourceFilteredCustomers.customers.some(customer => customer.id === converted.customer.id && customer.customer_source === 'Search Result'));
+  const typeFilteredCustomers = await fetch(`http://127.0.0.1:${port}/api/customers?customer_type=Restaurant%20Furniture%20Distributor`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(typeFilteredCustomers.customers.some(customer => customer.id === converted.customer.id));
+
+  const simplifiedResultResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/results`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'V3.15.2 Quick Entry Distributor',
+      customer_type: 'Restaurant Furniture Distributor',
+      country: 'USA',
+      city: 'Anaheim',
+      source_type: 'Google Maps',
+      website: 'https://v3152-distributor.example.com',
+      source_url: 'https://www.google.com/maps/place/V3152+Quick+Entry+Distributor',
+      reference_note: 'Found during manual Google Maps review.'
+    })
+  });
+  const simplifiedResult = await simplifiedResultResponse.json();
+  assert.equal(simplifiedResultResponse.status, 201, simplifiedResult.error);
+  assert.equal(simplifiedResult.result.status, 'reviewed');
+  assert.ok(simplifiedResult.result.opportunity_score > 0);
+  assert.equal(simplifiedResult.result.purchase_potential, 'High');
+  assert.match(simplifiedResult.result.qualification_reason, /Source evidence is saved/);
+  assert.equal(simplifiedResult.result.source_url, 'https://www.google.com/maps/place/V3152+Quick+Entry+Distributor');
+  assert.equal(simplifiedResult.result.reference_note, 'Found during manual Google Maps review.');
+  assert.match(simplifiedResult.result.recommended_product_reason, /Hospitality furniture reseller/);
+
+  const duplicateResult = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/results`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'V3.2 Hospitality Distributor Duplicate',
+      customer_type: 'Restaurant Furniture Distributor',
+      country: 'USA',
+      city: 'Irvine',
+      website: 'https://v32-distributor.example.com',
+      opportunity_score: 72
+    })
+  }).then(response => response.json());
+  const duplicateConvertResponse = await fetch(`http://127.0.0.1:${port}/api/search-results/${duplicateResult.result.id}/convert`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const duplicateConvert = await duplicateConvertResponse.json();
+  assert.equal(duplicateConvertResponse.status, 409);
+  assert.equal(duplicateConvert.error, 'Possible existing customer found.');
+  assert.equal(duplicateConvert.duplicate.company_name, 'V3.2 Hospitality Distributor');
+
+  const discardResponse = await fetch(`http://127.0.0.1:${port}/api/search-results/${duplicateResult.result.id}/discard`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const discarded = await discardResponse.json();
+  assert.equal(discardResponse.status, 200, discarded.error);
+  assert.equal(discarded.result.status, 'discarded');
+
+  const designResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find restaurant design companies in Texas' })
+  });
+  const design = await designResponse.json();
+  assert.equal(designResponse.status, 201, design.error);
+  assert.equal(design.plan.target_customer_type, 'Restaurant Interior Design Company');
+  assert.ok(design.scoring_profile.dimensions.some(dimension => dimension.name === 'Project Capability' && dimension.weight === 40));
+
+  const cafeResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find cafe owners in California' })
+  });
+  const cafe = await cafeResponse.json();
+  assert.equal(cafeResponse.status, 201, cafe.error);
+  assert.equal(cafe.plan.target_customer_type, 'Cafe Owner');
+  assert.ok(cafe.scoring_profile.dimensions.some(dimension => dimension.name === 'Years Operating' && dimension.weight === 30));
+
+  const bubbleTeaResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find bubble tea shop owners in Texas' })
+  });
+  const bubbleTea = await bubbleTeaResponse.json();
+  assert.equal(bubbleTeaResponse.status, 201, bubbleTea.error);
+  assert.equal(bubbleTea.plan.target_customer_type, 'Bubble Tea Shop Owner');
+
+  const barResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find bar owners in Florida' })
+  });
+  const bar = await barResponse.json();
+  assert.equal(barResponse.status, 201, bar.error);
+  assert.equal(bar.plan.target_customer_type, 'Bar Owner');
+
+  const groupResponse = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/analyze`, {
+    method: 'POST',
+    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_text: 'Find multi-location restaurant groups in California' })
+  });
+  const group = await groupResponse.json();
+  assert.equal(groupResponse.status, 201, group.error);
+  assert.equal(group.plan.target_customer_type, 'Multi-location Restaurant Group');
+
+  const createCustomer = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST',
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'Discovery Flow Furniture Supplier',
+      business_type: distributor.plan.target_customer_type,
+      country: distributor.plan.country,
+      city: distributor.plan.region_city,
+      source: 'Manual',
+      is_test_data: true
+    })
+  });
+  const created = await createCustomer.json();
+  assert.equal(createCustomer.status, 201, created.error);
+  assert.equal(created.customer.customer_source, 'Manual Import');
+  assert.equal(created.customer.is_test_data, true);
+  const customers = await fetch(`http://127.0.0.1:${port}/api/customers?q=Discovery%20Flow`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(customers.customers.some(customer => customer.company_name === 'Discovery Flow Furniture Supplier'));
+
+  for (const source of ['Google Maps', 'Website', 'Instagram', 'Facebook']) {
+    const sourceCustomerResponse = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+      method: 'POST',
+      headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        company_name: `V3.2.1 ${source} Source Customer`,
+        business_type: 'Restaurant Furniture Distributor',
+        country: 'USA',
+        city: 'Los Angeles',
+        source
+      })
+    });
+    const sourceCustomer = await sourceCustomerResponse.json();
+    assert.equal(sourceCustomerResponse.status, 201, sourceCustomer.error);
+    assert.equal(sourceCustomer.customer.customer_source, source);
+  }
+  const googleMapsUrlCustomerResponse = await fetch(`http://127.0.0.1:${port}/api/customers`, {
+    method: 'POST',
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_name: 'V3.2.1.1 Restaurant Furniture Wooden',
+      business_type: 'Restaurant Furniture Distributor',
+      country: 'USA',
+      city: 'Los Angeles',
+      source: 'Manual',
+      google_maps_url: 'https://www.google.com/maps/place/Restaurant+Furniture+Wooden'
+    })
+  });
+  const googleMapsUrlCustomer = await googleMapsUrlCustomerResponse.json();
+  assert.equal(googleMapsUrlCustomerResponse.status, 201, googleMapsUrlCustomer.error);
+  assert.equal(googleMapsUrlCustomer.customer.customer_source, 'Google Maps');
+  const googleMapsFilteredCustomers = await fetch(`http://127.0.0.1:${port}/api/customers?customer_source=Google%20Maps`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(googleMapsFilteredCustomers.customers.some(customer => customer.id === googleMapsUrlCustomer.customer.id && customer.customer_source === 'Google Maps'));
+
+  const history = await fetch(`http://127.0.0.1:${port}/api/customer-discovery/requests`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
+  assert.ok(history.requests.length >= 3);
+  assert.ok(history.requests.some(request => request.target_customer_type === 'Restaurant Furniture Distributor'));
+
+  const logs = await fetch(`http://127.0.0.1:${port}/api/ai-cost/logs`, { headers: { Cookie: admin.cookie } }).then(response => response.json());
+  assert.ok(logs.logs.some(log => log.module_name === 'customer-discovery' && log.action_name === 'analyze-requirement' && log.status === 'executed'));
+  assert.ok(logs.logs.some(log => log.module_name === 'opportunity-intelligence' && log.action_name === 'search-result-qualification' && log.status === 'executed'));
+
+  const appJs = await fetch(`http://127.0.0.1:${port}/app.js`).then(response => response.text());
+  assert.match(appJs, /AI Discovery/);
+  assert.match(appJs, /Describe your ideal customer/);
+  assert.match(appJs, /Customer Discovery Plan/);
+  assert.match(appJs, /Generated Search Plan/);
+  assert.match(appJs, /Create Search Task/);
+  assert.match(appJs, /Search Tasks/);
+  assert.match(appJs, /Start Search/);
+  assert.match(appJs, /Recommended Data Fields/);
+  assert.match(appJs, /Recommended Search Volume/);
+  assert.match(appJs, /Update Customer Intelligence/);
+  assert.match(appJs, /New salesperson handoff/);
+  assert.match(appJs, /Future Attachment/);
+  assert.match(appJs, /Search Results/);
+  assert.match(appJs, /Lead Pool/);
+  assert.match(appJs, /Lead Detail/);
+  assert.match(appJs, /Customers CRM/);
+  assert.match(appJs, /Add Search Result/);
+  assert.match(appJs, /Save Search Result/);
+  assert.match(appJs, /Contact Information \(Optional\)/);
+  assert.match(appJs, /Customer Evidence/);
+  assert.match(appJs, /AI Analysis Completed/);
+  assert.match(appJs, /Customer Evidence History/);
+  assert.match(appJs, /Convert to Customer/);
+  assert.match(appJs, /30-second entry/);
+  assert.match(appJs, /Analyze Selected Customers/);
+  assert.match(appJs, /AI Customer Analysis/);
+  assert.match(appJs, /\$0\/customer \(Rule-based analysis\)/);
+  assert.match(appJs, /Total Estimated Cost/);
+  assert.match(appJs, /AI analysis will update scoring fields/);
+  assert.match(appJs, /Existing customer information will not be deleted/);
+  assert.match(appJs, /Opportunity Analysis/);
+  assert.match(appJs, /Customer Source/);
+  assert.match(appJs, /TEST/);
+});
+
 test('Module 07 Part 1 completes the simple inquiry to quote and order workflow', async () => {
   const admin = await login('admin@rspro.ai');
   await fetch(`http://127.0.0.1:${port}/api/customers`, {
@@ -1133,12 +1709,79 @@ test('Module 08D calculates reference prices, preserves overrides, and protects 
   const ruleBResponse=await createRule({rule_name:'Chair Factory USD',supplier_name:'Chair Factory',category_id:chair.id,multiplier:2.2,rounding_rule:'Round to nearest 1',currency:'USD',active:true,effective_date:'2026-01-01'});assert.equal(ruleBResponse.status,201);
   const tableCsv=['SKU,Product Name,Dimensions,Material,RMB','UP-PRICE-01,UP Table Base,380x380,Steel,156','UP-PRICE-01,UP Table Base,450x450,Steel,156'].join('\n');
   const importResponse=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'Table Base Price.xlsx.csv',file_base64:Buffer.from(tableCsv).toString('base64'),supplier_name:'UP Furniture',supplier_currency:'CNY',exchange_rate:7.2,default_category_id:tableBase.id})});const imported=await importResponse.json();assert.equal(importResponse.status,201,imported.error);const draft=imported.batch.drafts[0];assert.equal(draft.mapped_product.converted_cost,21.67);assert.equal(draft.mapped_product.reference_price,43);assert.equal(draft.mapped_product.pricing_rule_applied,'UP Table Base USD');assert.equal(draft.mapped_product.pricing_confidence,100);
-  const approveResponse=await fetch(`http://127.0.0.1:${port}/api/imports/drafts/${draft.id}/approve`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({resolution_action:'create_new'})});const approved=await approveResponse.json();assert.equal(approveResponse.status,200,approved.error);const detail=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(detail.foundation.variants.length,2);assert.equal(detail.foundation.variants[0].reference_price,43);assert.equal(detail.foundation.variants[0].supplier_cost,156);assert.equal(detail.foundation.variants[0].pricing_rule_id,ruleA.rule.id);
+  const approveResponse=await fetch(`http://127.0.0.1:${port}/api/imports/drafts/${draft.id}/approve`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({resolution_action:'create_new'})});const approved=await approveResponse.json();assert.equal(approveResponse.status,200,approved.error);const detail=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(detail.foundation.variants.length,2);assert.equal(detail.foundation.variants[0].reference_price,43);assert.equal(detail.foundation.variants[0].supplier_cost,156);assert.equal(detail.foundation.variants[0].supplier_currency,'CNY');assert.equal(detail.foundation.variants[0].converted_cost,21.67);assert.equal(detail.foundation.variants[0].pricing_rule_id,ruleA.rule.id);
+  const ownerPricingDetail=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());const ownerVariantPricing=ownerPricingDetail.product.pricing_summary.variants[0];assert.equal(ownerVariantPricing.supplier_cost,156);assert.equal(ownerVariantPricing.supplier_currency,'CNY');assert.equal(ownerVariantPricing.converted_cost,21.67);assert.equal(ownerVariantPricing.converted_cost_currency,'USD');assert.equal(ownerVariantPricing.recommended_selling_price,43);assert.equal(ownerVariantPricing.selling_currency,'USD');
   const chairCsv=['SKU,Product Name,Material,RMB','CHAIR-PRICE-01,Chair Factory Dining Chair,Ash Wood,153'].join('\n');const chairImport=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'Chair Price.csv',file_base64:Buffer.from(chairCsv).toString('base64'),supplier_name:'Chair Factory',supplier_currency:'CNY',exchange_rate:7.2,default_category_id:chair.id})}).then(r=>r.json());assert.equal(chairImport.batch.drafts[0].mapped_product.reference_price,47);
-  const salesDetail=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:sales.cookie}}).then(r=>r.json()),salesText=JSON.stringify(salesDetail);for(const key of ['supplier_cost','converted_cost','pricing_rule_id','multiplier','minimum_margin'])assert.equal(salesText.includes(`"${key}"`),false);
+  const salesDetail=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:sales.cookie}}).then(r=>r.json()),salesText=JSON.stringify(salesDetail);for(const key of ['supplier_cost','supplier_currency','converted_cost','converted_cost_currency','pricing_rule_id','multiplier','minimum_margin'])assert.equal(salesText.includes(`"${key}"`),false);
+  const salesPricingDetail=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${approved.result.productId}`,{headers:{Cookie:sales.cookie}}).then(r=>r.json()),salesPricingText=JSON.stringify(salesPricingDetail);for(const key of ['supplier_cost','supplier_currency','converted_cost','converted_cost_currency','pricing_rule_id'])assert.equal(salesPricingText.includes(`"${key}"`),false);assert.equal(salesPricingDetail.product.pricing_summary.variants[0].recommended_selling_price,43);assert.equal(salesPricingDetail.product.pricing_summary.variants[0].selling_currency,'USD');
   const salesRuleAccess=await fetch(`http://127.0.0.1:${port}/api/price-rules`,{headers:{Cookie:sales.cookie}});assert.equal(salesRuleAccess.status,403);
-  const workspace=await fetch(`http://127.0.0.1:${port}/api/sales-workspace`,{headers:{Cookie:sales.cookie}}).then(r=>r.json());let quoteId=workspace.quotes[0]?.id;if(!quoteId){const inquiry=await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({customer_id:workspace.customers[0].id,inquiry_type:'Product Inquiry',customer_message:'Need table bases.'})}).then(r=>r.json());await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/analyze`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'});quoteId=(await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/quote`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'}).then(r=>r.json())).quote.id}const variant=detail.foundation.variants[0];const quoteAddResponse=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/items/library`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({product_id:approved.result.productId,variant_id:variant.id})});const quoteAdd=await quoteAddResponse.json();assert.equal(quoteAddResponse.status,201,quoteAdd.error);const item=quoteAdd.quote.items.find(row=>row.product_id===approved.result.productId);assert.equal(item.unit_price,43);assert.equal(item.reference_price_snapshot,43);assert.equal(item.pricing_source,'Reference');assert.equal('cost_snapshot' in item,false);
+  const workspace=await fetch(`http://127.0.0.1:${port}/api/sales-workspace`,{headers:{Cookie:sales.cookie}}).then(r=>r.json());let quoteId=workspace.quotes[0]?.id;if(!quoteId){const inquiry=await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({customer_id:workspace.customers[0].id,inquiry_type:'Product Inquiry',customer_message:'Need table bases.'})}).then(r=>r.json());await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/analyze`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'});quoteId=(await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/quote`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'}).then(r=>r.json())).quote.id}const variant=detail.foundation.variants[0];const quoteAddResponse=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/items/library`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({product_id:approved.result.productId,variant_id:variant.id})});const quoteAdd=await quoteAddResponse.json();assert.equal(quoteAddResponse.status,201,quoteAdd.error);const item=quoteAdd.quote.items.find(row=>row.product_id===approved.result.productId);assert.equal(item.unit_price,43);assert.equal(item.reference_price_snapshot,43);assert.equal(item.pricing_source,'Reference');assert.equal('cost_snapshot' in item,false);const piExport=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/export/excel`,{headers:{Cookie:sales.cookie}});assert.equal(piExport.status,200);const piText=await piExport.text();assert.equal(piText.includes('supplier_cost'),false);assert.equal(piText.includes('CNY'),false);assert.equal(piText.includes('156'),false);
   const overrideResponse=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}/variants/${variant.id}/price-override`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({reference_price:50})});assert.equal(overrideResponse.status,200);const preview=await fetch(`http://127.0.0.1:${port}/api/pricing/recalculate/preview?product_ids=${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(preview.preview[0].old_reference_price,50);assert.equal(preview.preview[0].new_reference_price,43);assert.equal(preview.preview[0].manual_override,true);await fetch(`http://127.0.0.1:${port}/api/pricing/recalculate/apply`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({confirm:true,variant_ids:[variant.id]})});const after=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(after.foundation.variants[0].reference_price,50);assert.equal(after.foundation.variants[0].pricing_status,'Manual Override');
+});
+
+test('V5.3 PIC-2C normalizes supplier imports and preserves Product Library to Quote to PI flow',async()=>{
+  const owner=await login('owner@rspro.ai'),sales=await login('sales@rspro.ai');
+  const categories=(await fetch(`http://127.0.0.1:${port}/api/product-categories`,{headers:{Cookie:owner.cookie}}).then(r=>r.json())).categories;
+  const tableBase=categories.find(category=>category.name==='Table Base')||categories[0],chair=categories.find(category=>category.name==='Dining Chair')||categories[0];
+
+  const chineseCsv=['型号,图片,材质,尺寸,单价,特殊说明','PIC2C-CN-01,,钢,1200*700*750,150,供应商备注需要人工确认'].join('\n');
+  const chineseResponse=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'PIC2C Chinese Supplier.csv',file_base64:Buffer.from(chineseCsv).toString('base64'),import_mode:'Smart Import',supplier_name:'PIC2C Factory',supplier_currency:'CNY',exchange_rate:7.2,default_category_id:tableBase.id})});
+  const chinese=await chineseResponse.json();assert.equal(chineseResponse.status,201,chinese.error);const chineseDraft=chinese.batch.drafts[0];assert.equal(chineseDraft.product_sku,'PIC2C-CN-01');assert.equal(chineseDraft.mapped_product.material,'钢');assert.equal(chineseDraft.mapped_product.normalization_summary.length_mm,1200);assert.equal(chineseDraft.mapped_product.normalization_summary.width_mm,700);assert.equal(chineseDraft.mapped_product.normalization_summary.height_mm,750);assert.ok(chineseDraft.missing_fields.some(field=>field.includes('Needs Human Review')));assert.equal(chineseDraft.status,'Needs Review');
+
+  const englishCsv=['SKU,Product Name,Material,Price','PIC2C-EN-01,PIC2C Dining Chair,Ash Wood,95'].join('\n');
+  const english=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'PIC2C English Supplier.csv',file_base64:Buffer.from(englishCsv).toString('base64'),import_mode:'Smart Import',supplier_currency:'USD',default_category_id:chair.id})}).then(r=>r.json());assert.equal(english.batch.drafts[0].product_sku,'PIC2C-EN-01');assert.equal(english.batch.drafts[0].mapped_product.material,'Ash Wood');
+
+  const reorderedCsv=['Price,Material,Product Name,SKU','108,Metal,PIC2C Reordered Chair,PIC2C-ORDER-01'].join('\n');
+  const reordered=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'PIC2C Reordered Supplier.csv',file_base64:Buffer.from(reorderedCsv).toString('base64'),import_mode:'Smart Import',supplier_currency:'USD',default_category_id:chair.id})}).then(r=>r.json());assert.equal(reordered.batch.drafts[0].product_name,'PIC2C Reordered Chair');assert.equal(reordered.batch.drafts[0].mapped_product.reference_price,108);
+
+  const missingCsv=['SKU,Material,Price','PIC2C-MISSING-01,Steel,88'].join('\n');
+  const missing=await fetch(`http://127.0.0.1:${port}/api/imports/analyze`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({filename:'PIC2C Missing Fields.csv',file_base64:Buffer.from(missingCsv).toString('base64'),import_mode:'Smart Import',supplier_currency:'USD',default_category_id:tableBase.id})}).then(r=>r.json());assert.equal(missing.batch.drafts[0].status,'Needs Review');assert.ok(missing.batch.drafts[0].missing_fields.includes('Product Name'));
+
+  const approveResponse=await fetch(`http://127.0.0.1:${port}/api/imports/drafts/${english.batch.drafts[0].id}/approve`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({resolution_action:'create_new'})});const approved=await approveResponse.json();assert.equal(approveResponse.status,200,approved.error);
+  const product=await fetch(`http://127.0.0.1:${port}/api/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(product.product.sku,'PIC2C-EN-01');assert.equal(product.product.library_status,'Approved');
+  const intelligence=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${approved.result.productId}`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());assert.equal(intelligence.product.basic_information.sku,'PIC2C-EN-01');
+  const workspace=await fetch(`http://127.0.0.1:${port}/api/sales-workspace`,{headers:{Cookie:sales.cookie}}).then(r=>r.json());let quoteId=workspace.quotes[0]?.id;if(!quoteId){const inquiry=await fetch(`http://127.0.0.1:${port}/api/sales-inquiries`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({customer_id:workspace.customers[0].id,inquiry_type:'Product Inquiry',customer_message:'Need PIC2C chair.'})}).then(r=>r.json());quoteId=(await fetch(`http://127.0.0.1:${port}/api/sales-inquiries/${inquiry.inquiry.id}/quote`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:'{}'}).then(r=>r.json())).quote.id}
+  const quoteAddResponse=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/items/library`,{method:'POST',headers:{Cookie:sales.cookie,'Content-Type':'application/json'},body:JSON.stringify({product_id:approved.result.productId})});const quoteAdd=await quoteAddResponse.json();assert.equal(quoteAddResponse.status,201,quoteAdd.error);const item=quoteAdd.quote.items.find(row=>row.product_id===approved.result.productId);assert.equal(item.unit_price,95);assert.equal('cost_snapshot' in item,false);
+  const piExport=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}/export/excel`,{headers:{Cookie:sales.cookie}});assert.equal(piExport.status,200);const piText=await piExport.text();assert.equal(piText.includes('supplier_cost'),false);assert.ok(piText.includes('PIC2C Dining Chair'));
+
+  const ui=await fetch(`http://127.0.0.1:${port}/app.js`).then(r=>r.text());for(const contract of ['Product Import Review','Image Evidence','Product Completeness','Needs Human Review','importReviewRow'])assert.match(ui,new RegExp(contract));
+});
+
+test('V5.3 PIC-1 exposes Product Intelligence API boundary without leaking supplier data',async()=>{
+  const owner=await login('owner@rspro.ai'),sales=await login('sales@rspro.ai');
+  const library=await fetch(`http://127.0.0.1:${port}/api/products`,{headers:{Cookie:owner.cookie}}).then(r=>r.json());
+  const category=library.categories.find(row=>row.name==='Dining Chair')||library.categories[0];
+  const createResponse=await fetch(`http://127.0.0.1:${port}/api/products`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({category_id:category.id,sku:'PIC1-BOUNDARY-CHAIR',name:'PIC1 Boundary Chair',materials:'Ash Wood',size:'520 x 560 x 820 mm',color:'Walnut',finish:'Matte PU',price_range:'USD 100 - 150',moq:20,lead_time_days:30,sales_notes:'Use for Product Intelligence API boundary regression.',library_status:'Approved',visibility:'Website + Quote',default_supplier:'PIC1 Factory',supplier_sku:'PIC1-SUP-001',supplier_cost:42,supplier_notes:'Confidential supplier note'})});
+  const created=await createResponse.json();assert.equal(createResponse.status,201,created.error);
+  const variantResponse=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/variants`,{method:'POST',headers:{Cookie:owner.cookie,'Content-Type':'application/json'},body:JSON.stringify({variant_name:'Standard',variant_sku:'PIC1-STD',dimensions:'520 x 560 x 820 mm',material:'Ash Wood',finish:'Matte PU',color:'Walnut',reference_price:128,cost_price:42,supplier_cost:42,supplier_sku:'PIC1-SUP-V1',supplier_currency:'USD',status:'Active'})});
+  const variant=await variantResponse.json();assert.equal(variantResponse.status,201,variant.error);
+
+  const listResponse=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products`,{headers:{Cookie:owner.cookie}});
+  const list=await listResponse.json();assert.equal(listResponse.status,200,list.error);
+  const listItem=list.products.find(product=>product.id===created.product.id);assert.ok(listItem);assert.equal(listItem.product_name,'PIC1 Boundary Chair');assert.equal(typeof listItem.data_quality,'number');assert.equal(list.aiIntegration.externalProviderCalled,false);
+
+  const ownerDetailResponse=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${created.product.id}`,{headers:{Cookie:owner.cookie}});
+  const ownerDetail=await ownerDetailResponse.json();assert.equal(ownerDetailResponse.status,200,ownerDetail.error);
+  assert.equal(ownerDetail.product.basic_information.sku,'PIC1-BOUNDARY-CHAIR');
+  assert.ok(ownerDetail.product.variants.some(row=>row.id===variant.variant.id));
+  assert.ok(ownerDetail.product.attributes.definitions);
+  assert.ok(ownerDetail.product.media);
+  assert.equal(ownerDetail.product.pricing_summary.variants[0].supplier_cost,42);
+  assert.ok(ownerDetail.product.source_information);
+
+  const qualityResponse=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${created.product.id}/quality`,{headers:{Cookie:owner.cookie}});
+  const quality=await qualityResponse.json();assert.equal(qualityResponse.status,200,quality.error);assert.equal(quality.sku,'PIC1-BOUNDARY-CHAIR');assert.equal(typeof quality.quality.data_quality,'number');assert.ok(Array.isArray(quality.quality.missing_fields));
+
+  const salesDetail=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/products/${created.product.id}`,{headers:{Cookie:sales.cookie}}).then(r=>r.json());
+  const salesText=JSON.stringify(salesDetail);for(const secret of ['default_supplier','supplier_sku','supplier_cost','supplier_notes','cost_price','converted_cost','exchange_rate','source_supplier'])assert.equal(salesText.includes(`"${secret}"`),false,`Sales Product Intelligence detail leaked ${secret}`);
+  assert.equal(salesDetail.product.source_information,null);
+
+  const contextResponse=await fetch(`http://127.0.0.1:${port}/api/product-intelligence/context/products/${created.product.id}`,{headers:{Cookie:sales.cookie}});
+  const context=await contextResponse.json();assert.equal(contextResponse.status,200,context.error);
+  assert.equal(context.context.product.sku,'PIC1-BOUNDARY-CHAIR');
+  assert.ok(context.context.usage_contract.allowed_for.includes('AI recommendation'));
+  assert.ok(context.context.variants.some(row=>row.variant_sku==='PIC1-STD'));
+  const contextText=JSON.stringify(context);for(const secret of ['supplier_cost','supplier_sku','cost_price','source_supplier'])assert.equal(contextText.includes(`"${secret}"`),false,`Sales Product Intelligence context leaked ${secret}`);
 });
 
 test('Alpha Test Issue 012 keeps a failed Import Batch with a clear spreadsheet error report',async()=>{

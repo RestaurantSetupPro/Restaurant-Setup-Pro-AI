@@ -8,6 +8,7 @@ import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
+import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
@@ -29,6 +30,7 @@ const demoMode = process.env.DEMO_MODE === 'true' || (process.env.DEMO_MODE !== 
 
 let db;
 let aiCostControl;
+let aiBusinessBrain;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -107,14 +109,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('017_product_price_engine');
-      databaseDiagnostics.migration = migration?.version === '017_product_price_engine';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('024_v53_customer_source');
+      databaseDiagnostics.migration = migration?.version === '024_v53_customer_source';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 017_product_price_engine was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 024_v53_customer_source was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -126,11 +128,14 @@ function initializeDatabase() {
       ensureMediaColumns();
       ensureImageTaskColumns();
       ensureQuoteBuilderColumns();
+      ensureCustomerIntelligenceColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '017_product_price_engine';
+      databaseDiagnostics.migrationVersion = '024_v53_customer_source';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
+    seedCustomerDiscoveryProfiles();
     aiCostControl = createAiCostControl(db);
+    aiBusinessBrain = createAiBusinessBrain({ db, aiCostControl, buildContext: buildAiContext });
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
     seedDatabase();
@@ -234,6 +239,188 @@ function ensureImageTaskColumns() {
   db.prepare("UPDATE ai_image_generation_tasks SET lifecycle_status = status WHERE lifecycle_status = 'pending' AND status != 'pending'").run();
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_lifecycle ON ai_image_generation_tasks(product_id, lifecycle_status, created_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_execution_queue ON ai_image_generation_tasks(lifecycle_status, provider, created_at)');
+}
+
+function ensureCustomerIntelligenceColumns() {
+  const existing = new Set(db.prepare('PRAGMA table_info(customers)').all().map(column => column.name));
+  const columns = {
+    customer_type: 'TEXT',
+    industry: 'TEXT',
+    customer_value_score: 'INTEGER NOT NULL DEFAULT 0',
+    customer_value_grade: "TEXT NOT NULL DEFAULT 'D'",
+    customer_value_explanation: 'TEXT',
+    buying_opportunity_score: 'INTEGER NOT NULL DEFAULT 0',
+    buying_opportunity_grade: "TEXT NOT NULL DEFAULT 'D'",
+    buying_opportunity_explanation: 'TEXT',
+    purchase_timing: "TEXT NOT NULL DEFAULT 'Unknown'",
+    purchase_timing_confidence: "TEXT NOT NULL DEFAULT 'Low'",
+    sales_priority_score: 'INTEGER NOT NULL DEFAULT 0',
+    sales_priority_explanation: 'TEXT',
+    project_information: 'TEXT',
+    customer_comments: 'TEXT',
+    expected_purchase_timing: 'TEXT',
+    opportunity_notes: 'TEXT',
+    last_customer_intelligence_run_at: 'TEXT',
+    customer_source: "TEXT NOT NULL DEFAULT 'Manual Import'",
+    is_test_data: 'INTEGER NOT NULL DEFAULT 0',
+    recommended_product_reason: 'TEXT'
+  };
+  for (const [name, type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE customers ADD COLUMN ${name} ${type}`);
+  db.prepare(`UPDATE customers SET customer_source = CASE source
+    WHEN 'Google Maps' THEN 'Google Maps'
+    WHEN 'Website' THEN 'Website'
+    WHEN 'Instagram' THEN 'Instagram'
+    WHEN 'Facebook' THEN 'Facebook'
+    ELSE customer_source END
+    WHERE customer_source = 'Manual Import' AND source IN ('Google Maps', 'Website', 'Instagram', 'Facebook')`).run();
+  db.prepare(`UPDATE customers SET customer_source = 'Google Maps'
+    WHERE customer_source = 'Manual Import'
+      AND (
+        NULLIF(TRIM(COALESCE(google_maps_url, '')), '') IS NOT NULL
+        OR LOWER(COALESCE(source_url, '')) LIKE '%google%maps%'
+        OR LOWER(COALESCE(source_url, '')) LIKE '%maps.app.goo.gl%'
+        OR LOWER(COALESCE(source_url, '')) LIKE '%goo.gl/maps%'
+        OR LOWER(COALESCE(source_url, '')) LIKE '%g.page%'
+      )`).run();
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_intelligence_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    customer_type TEXT, industry TEXT NOT NULL DEFAULT 'Hospitality Furniture',
+    customer_value_score INTEGER NOT NULL DEFAULT 0, customer_value_grade TEXT NOT NULL DEFAULT 'D',
+    customer_value_explanation TEXT, buying_opportunity_score INTEGER NOT NULL DEFAULT 0,
+    buying_opportunity_grade TEXT NOT NULL DEFAULT 'D', buying_opportunity_explanation TEXT,
+    purchase_timing TEXT NOT NULL DEFAULT 'Unknown', purchase_timing_confidence TEXT NOT NULL DEFAULT 'Low',
+    sales_priority_score INTEGER NOT NULL DEFAULT 0, sales_priority_explanation TEXT, ai_recommendation TEXT,
+    review_status TEXT NOT NULL DEFAULT 'draft', input_snapshot TEXT NOT NULL DEFAULT '{}', output_snapshot TEXT NOT NULL DEFAULT '{}',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_intelligence_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    feedback_type TEXT NOT NULL, feedback_note TEXT, sales_result_reference_type TEXT, sales_result_reference_id INTEGER,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_score_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    score_type TEXT NOT NULL, previous_score INTEGER, new_score INTEGER NOT NULL, reason TEXT,
+    source TEXT NOT NULL DEFAULT 'rules', created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_intelligence_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    update_reason TEXT NOT NULL,
+    original_input TEXT NOT NULL,
+    reference_note TEXT,
+    ai_summary TEXT NOT NULL,
+    latest_customer_situation TEXT,
+    important_changes TEXT,
+    opportunity_impact TEXT,
+    recommended_next_action TEXT,
+    ai_execution_log_id INTEGER REFERENCES ai_execution_logs(id) ON DELETE SET NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_type_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_type TEXT NOT NULL UNIQUE,
+    industry TEXT NOT NULL DEFAULT 'Hospitality Furniture',
+    description TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_type_score_dimensions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_type_profile_id INTEGER NOT NULL REFERENCES customer_type_profiles(id) ON DELETE CASCADE,
+    dimension_name TEXT NOT NULL,
+    weight_percent INTEGER NOT NULL DEFAULT 0,
+    description TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS customer_discovery_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_request TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    target_customer_type TEXT,
+    industry TEXT,
+    region TEXT,
+    country TEXT,
+    search_plan TEXT NOT NULL DEFAULT '{}',
+    guidance TEXT NOT NULL DEFAULT '{}',
+    scoring_profile TEXT NOT NULL DEFAULT '{}',
+    ai_execution_log_id INTEGER,
+    cost_log_id INTEGER,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS search_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_discovery_request_id INTEGER REFERENCES customer_discovery_requests(id) ON DELETE SET NULL,
+    task_name TEXT NOT NULL,
+    target_customer TEXT,
+    customer_type TEXT,
+    industry TEXT,
+    location TEXT,
+    company_size TEXT,
+    search_objective TEXT,
+    keywords TEXT NOT NULL DEFAULT '[]',
+    filters TEXT NOT NULL DEFAULT '[]',
+    target_quantity INTEGER NOT NULL DEFAULT 0,
+    priority TEXT NOT NULL DEFAULT 'Medium',
+    required_data_fields TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'Draft',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS search_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_task_id INTEGER NOT NULL REFERENCES search_tasks(id) ON DELETE CASCADE,
+    customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+    company_name TEXT NOT NULL,
+    customer_type TEXT,
+    industry TEXT NOT NULL DEFAULT 'Hospitality Furniture',
+    country TEXT,
+    city TEXT,
+    website TEXT,
+    contact_person TEXT,
+    email TEXT,
+    phone TEXT,
+    linkedin TEXT,
+    instagram TEXT,
+    company_size TEXT,
+    business_type TEXT,
+    purchase_potential TEXT,
+    opportunity_score INTEGER NOT NULL DEFAULT 0,
+    qualification_reason TEXT,
+    opportunity_summary TEXT,
+    why_customer_matters TEXT,
+    recommended_next_action TEXT,
+    source_type TEXT NOT NULL DEFAULT 'Manual',
+    source_reference TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_intelligence_profiles_customer ON customer_intelligence_profiles(customer_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_intelligence_profiles_priority ON customer_intelligence_profiles(sales_priority_score DESC, review_status, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_intelligence_feedback_customer ON customer_intelligence_feedback(customer_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_score_history_customer ON customer_score_history(customer_id, score_type, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_intelligence_updates_customer ON customer_intelligence_updates(customer_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_phase2a_priority ON customers(sales_priority_score DESC, customer_value_score DESC, buying_opportunity_score DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_customer_source ON customers(customer_source, opportunity_grade, sales_priority_score DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_test_data ON customers(is_test_data, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customer_discovery_requests_created ON customer_discovery_requests(created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_tasks_status_created ON search_tasks(status, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_tasks_discovery_request ON search_tasks(customer_discovery_request_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_task_status ON search_results(search_task_id, status, opportunity_score DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_company_country ON search_results(company_name, country)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_customer_id ON search_results(customer_id)');
 }
 
 const rolePermissions = Object.freeze({
@@ -672,7 +859,7 @@ function canManageProductLibrary(user) {
   return Boolean(user && (['Admin', 'Owner'].includes(user.role) || String(user.email).toLowerCase() === 'salesadmin@rspro.ai'));
 }
 
-const sensitiveProductFields=new Set(['default_supplier','supplier_sku','supplier_cost','supplier_currency','supplier_moq','supplier_lead_time_days','supplier_notes','cost_price','converted_cost','exchange_rate','pricing_rule_id','pricing_rule','multiplier','fixed_addon','minimum_margin','purchase_cost_history','profit','profit_margin','source_supplier','cost_snapshot','cost_currency_snapshot']);
+const sensitiveProductFields=new Set(['default_supplier','supplier_sku','supplier_cost','supplier_currency','supplier_moq','supplier_lead_time_days','supplier_notes','cost_price','converted_cost','converted_cost_currency','exchange_rate','pricing_rule_id','pricing_rule','multiplier','fixed_addon','minimum_margin','purchase_cost_history','profit','profit_margin','source_supplier','cost_snapshot','cost_currency_snapshot']);
 function canViewSensitiveProductData(user){return Boolean(user&&['Admin','Owner','General Manager','Purchasing'].includes(user.role))}
 function redactSensitiveProductData(value,user){if(canViewSensitiveProductData(user)||value==null)return value;if(Array.isArray(value))return value.map(item=>redactSensitiveProductData(item,user));if(typeof value!=='object')return value;const result={};for(const [key,item] of Object.entries(value)){if(sensitiveProductFields.has(key))continue;if(key==='supplier')continue;result[key]=redactSensitiveProductData(item,user)}return result}
 function redactImportBatch(batch,user){if(!batch)return batch;const result=redactSensitiveProductData(batch,user);if(!canViewSensitiveProductData(user))for(const key of ['supplier_name','supplier_code','supplier_contact','supplier_country','supplier_currency','exchange_rate','import_remark'])delete result[key];return result}
@@ -707,6 +894,41 @@ function requiredText(value, field) {
     throw error;
   }
   return text;
+}
+
+function normalizeUrl(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) return text;
+  return `https://${text}`;
+}
+
+function customerSourceValue(input = {}, fallbackSource = 'Manual Import') {
+  const explicit = String(input.customer_source || '').trim();
+  const sourceEvidence = [
+    input.source,
+    fallbackSource,
+    input.google_maps_url,
+    input.source_url
+  ].map(value => String(value || '').toLowerCase()).join(' ');
+  const hasGoogleMapsEvidence = (
+    sourceEvidence.includes('google maps')
+    || sourceEvidence.includes('google_maps')
+    || sourceEvidence.includes('googlemaps')
+    || sourceEvidence.includes('google.com/maps')
+    || sourceEvidence.includes('maps.app.goo.gl')
+    || sourceEvidence.includes('goo.gl/maps')
+    || sourceEvidence.includes('g.page')
+  );
+  if (hasGoogleMapsEvidence) return 'Google Maps';
+  if (['AI Discovery', 'Search Result', 'Manual Import', 'Website Import', 'Website', 'Google Maps', 'Instagram', 'Facebook', 'Existing Customer'].includes(explicit)) return explicit;
+  const source = String(input.source || fallbackSource || '').toLowerCase();
+  if (source.includes('instagram')) return 'Instagram';
+  if (source.includes('facebook')) return 'Facebook';
+  if (source.includes('website')) return 'Website';
+  if (source.includes('discovery')) return 'AI Discovery';
+  if (source.includes('search result')) return 'Search Result';
+  return 'Manual Import';
 }
 
 function allowedType(value, values, field) {
@@ -869,6 +1091,254 @@ function productFoundation(id) {
     relatedProducts: db.prepare("SELECT p.id,p.sku,p.name FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? AND pfr.relationship_type='related' ORDER BY pfr.sort_order,p.name").all(id),
     frequentlyBoughtTogether: db.prepare("SELECT p.id,p.sku,p.name FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? AND pfr.relationship_type='frequently_bought_together' ORDER BY pfr.sort_order,p.name").all(id)
   };
+}
+
+function productQualitySummary(product) {
+  const readiness = product.product_readiness || productReadiness(product);
+  const missing = [];
+  if (!readiness.checks.basicInformation) {
+    for (const [field, value] of Object.entries({
+      name: product.name,
+      sku: product.sku,
+      category: product.category_id,
+      material: product.materials,
+      size: product.size,
+      color: product.color,
+      finish: product.finish
+    })) if (!value) missing.push(field);
+  }
+  if (!readiness.checks.images) missing.push('main_image');
+  if (!readiness.checks.commercialTerms) {
+    if (!product.price_range && product.reference_price == null) missing.push('price');
+    if (!(Number(product.moq) > 0)) missing.push('moq');
+    if (!(Number(product.lead_time_days) > 0)) missing.push('lead_time');
+  }
+  if (!readiness.checks.aiTags) missing.push('ai_tags');
+  if (!readiness.checks.salesNotes) missing.push('sales_notes');
+  for (const item of product.missing_knowledge || []) if (!missing.includes(item)) missing.push(item);
+  const aiFields = [product.ai_summary, product.product_keywords, product.llm_summary, product.faq, product.buying_guide, product.sales_talking_points].filter(value => String(value || '').trim()).length;
+  return {
+    score: readiness.score,
+    status: readiness.status,
+    checks: readiness.checks,
+    missing_fields: missing,
+    data_quality: readiness.score,
+    ai_readiness: {
+      score: Math.round((aiFields / 6) * 100),
+      has_ai_summary: Boolean(String(product.ai_summary || '').trim()),
+      has_ai_keywords: Array.isArray(product.ai_tags) && product.ai_tags.length > 0,
+      has_sales_content: Boolean(String(product.sales_talking_points || product.sales_notes || '').trim()),
+      has_customer_facing_content: Boolean(String(product.english_description || product.short_sales_description || '').trim())
+    }
+  };
+}
+
+function productIntelligenceAiProfile(product) {
+  return {
+    ai_summary: product.ai_summary || null,
+    ai_keywords: product.ai_keywords || product.ai_tags || [],
+    ai_search_keywords: product.ai_search_keywords || [],
+    ai_recommendation_weight: product.ai_recommendation_weight ?? null,
+    product_keywords: product.product_keywords || null,
+    suitable_store_types: product.knowledge?.store_type || [],
+    suitable_styles: product.knowledge?.style || [],
+    features: product.knowledge?.feature || [],
+    target_customers: product.knowledge?.customer_type || [],
+    selling_points: product.sales_talking_points || product.advantages || null,
+    application_scenarios: product.use_cases || product.recommended_usage || null,
+    best_for: product.best_for || null,
+    not_recommended_for: product.not_recommended_for || null,
+    faq: product.faq || null,
+    buying_guide: product.buying_guide || null,
+    proposal_usage_notes: product.proposal_usage_notes || null
+  };
+}
+
+function productPricingSummary(product, foundation) {
+  const variants = (foundation?.variants || []).map(variant => ({
+    id: variant.id,
+    variant_name: variant.variant_name,
+    variant_sku: variant.variant_sku,
+    reference_price: variant.reference_price,
+    recommended_selling_price: variant.reference_price,
+    selling_currency: 'USD',
+    pricing_status: variant.pricing_status || null,
+    pricing_confidence: variant.pricing_confidence ?? null,
+    price_manual_override: Boolean(variant.price_manual_override),
+    supplier_cost: variant.supplier_cost ?? variant.cost_price ?? null,
+    supplier_currency: variant.supplier_currency || null,
+    converted_cost: variant.converted_cost ?? null,
+    converted_cost_currency: 'USD',
+    exchange_rate: variant.exchange_rate ?? null,
+    pricing_rule_id: variant.pricing_rule_id ?? null,
+    updated_at: variant.updated_at || null
+  }));
+  const prices = variants.map(variant => Number(variant.reference_price)).filter(Number.isFinite);
+  const hasManualOverride = variants.some(variant => variant.price_manual_override);
+  const missingCost = variants.length > 0 && variants.some(variant => variant.supplier_cost == null);
+  const needsReview = variants.some(variant => variant.pricing_status === 'Needs Pricing Review');
+  const status = hasManualOverride ? 'Manual Override' : missingCost ? 'Missing Cost' : needsReview ? 'Needs Pricing Review' : (prices.length ? 'Ready' : 'Missing Price');
+  return {
+    price_range: product.price_range || null,
+    reference_price_min: prices.length ? Math.min(...prices) : product.reference_price ?? null,
+    reference_price_max: prices.length ? Math.max(...prices) : product.reference_price_max ?? product.reference_price ?? null,
+    reference_price_display: product.reference_price_display || product.price_range || 'Request Quote',
+    selling_currency: 'USD',
+    variants,
+    priced_variant_count: prices.length,
+    pricing_status: status
+  };
+}
+
+function productIntelligenceSourceInformation(product, foundation, user) {
+  if (!canViewSensitiveProductData(user)) return null;
+  return {
+    source_supplier: product.source_supplier || product.default_supplier || null,
+    source_file: product.source_file || product.import_batch_file || null,
+    source_sheet: product.source_sheet || null,
+    source_row: product.source_row ?? null,
+    import_batch_id: product.import_batch_id ?? null,
+    imported_at: product.imported_at || null,
+    imported_by: product.imported_by_name || null,
+    last_updated_by: product.last_updated_by_name || null,
+    variants: (foundation?.variants || []).map(variant => ({
+      id: variant.id,
+      variant_name: variant.variant_name,
+      source_supplier: variant.source_supplier || variant.default_supplier || null,
+      source_file: variant.source_file || variant.import_batch_file || null,
+      source_sheet: variant.source_sheet || null,
+      source_row: variant.source_row ?? null,
+      import_batch_id: variant.import_batch_id ?? null,
+      imported_at: variant.imported_at || null,
+      imported_by: variant.imported_by_name || null,
+      last_updated_by: variant.last_updated_by_name || null
+    }))
+  };
+}
+
+function productIntelligenceListItem(product, user) {
+  const quality = productQualitySummary(product);
+  const pricing = productPricingSummary(product, productFoundation(product.id));
+  return redactSensitiveProductData({
+    id: product.id,
+    image: product.main_image_url || null,
+    main_image_url: product.main_image_url || null,
+    product_name: product.name,
+    name: product.name,
+    sku: product.sku,
+    category: product.category || null,
+    category_id: product.category_id || null,
+    variant_count: product.variant_count ?? 0,
+    status: product.library_status || product.status || null,
+    library_status: product.library_status || null,
+    visibility: product.visibility || null,
+    ai_confidence: product.ai_recommendation_weight ?? null,
+    data_quality: quality.data_quality,
+    data_quality_status: quality.status,
+    missing_fields: quality.missing_fields,
+    product_readiness_score: quality.score,
+    proposal_ready_status: product.proposal_ready_status,
+    ai_readiness_score: quality.ai_readiness.score,
+    ai_readiness_status: quality.ai_readiness.score >= 80 ? 'AI Ready' : 'Needs AI Data',
+    pricing_status: pricing.pricing_status,
+    reference_price_display: pricing.reference_price_display,
+    reference_price_min: pricing.reference_price_min,
+    reference_price_max: pricing.reference_price_max,
+    priced_variant_count: pricing.priced_variant_count,
+    updated_at: product.updated_at
+  }, user);
+}
+
+function productIntelligenceDetailData(id, user) {
+  const product = productKnowledge(id);
+  if (!product) return null;
+  const foundation = productFoundation(id);
+  const quality = productQualitySummary(product);
+  const payload = {
+    basic_information: {
+      id: product.id,
+      product_name: product.name,
+      name: product.name,
+      sku: product.sku,
+      category_id: product.category_id,
+      category: product.category || null,
+      main_image: product.main_image_url || null,
+      main_image_url: product.main_image_url || null,
+      status: product.library_status || product.status || null,
+      library_status: product.library_status || null,
+      visibility: product.visibility || null,
+      summary: product.summary || product.short_description || null,
+      material: product.materials || null,
+      size: product.size || null,
+      color: product.color || null,
+      finish: product.finish || null,
+      updated_at: product.updated_at
+    },
+    attributes: {
+      definitions: foundation.attributeDefinitions,
+      values: foundation.attributeValues
+    },
+    variants: foundation.variants,
+    media: product.media || [],
+    pricing_summary: productPricingSummary(product, foundation),
+    ai_profile: productIntelligenceAiProfile(product),
+    source_information: productIntelligenceSourceInformation(product, foundation, user),
+    quality,
+    relationships: {
+      recommended_products: product.recommended_products || [],
+      ai_related_products: product.ai_related_products || [],
+      related_cases: product.related_cases || [],
+      related_categories: product.related_categories || [],
+      related_products: foundation.relatedProducts,
+      frequently_bought_together: foundation.frequentlyBoughtTogether
+    }
+  };
+  return redactSensitiveProductData(payload, user);
+}
+
+function productIntelligenceContextData(id, user) {
+  const detail = productIntelligenceDetailData(id, user);
+  if (!detail) return null;
+  const context = {
+    product: detail.basic_information,
+    attributes: detail.attributes.values.map(value => ({
+      name: value.name,
+      code: value.code,
+      value: value.value,
+      variant_id: value.variant_id || null,
+      variant_name: value.variant_name || null
+    })),
+    variants: detail.variants.map(variant => ({
+      id: variant.id,
+      variant_name: variant.variant_name,
+      variant_sku: variant.variant_sku,
+      dimensions: variant.dimensions,
+      material: variant.material,
+      finish: variant.finish,
+      color: variant.color,
+      reference_price: variant.reference_price,
+      pricing_status: variant.pricing_status || null,
+      status: variant.status
+    })),
+    media: detail.media.map(media => ({
+      id: media.id,
+      file_url: media.file_url,
+      image_type: media.image_type,
+      image_status: media.image_status,
+      is_primary: Boolean(media.is_primary)
+    })),
+    knowledge: {
+      ai_profile: detail.ai_profile,
+      relationships: detail.relationships,
+      quality: detail.quality
+    },
+    usage_contract: {
+      source_of_truth: 'Product Library / Product Intelligence Center',
+      allowed_for: ['AI recommendation', 'Quote Builder', 'PI Builder', 'Sales Assistant'],
+      restrictions: ['AI may suggest only', 'Do not overwrite Product Library without approval', 'Do not change pricing outside Product Price Engine']
+    }
+  };
+  return redactSensitiveProductData(context, user);
 }
 
 function attributeMasterRows(){return db.prepare('SELECT * FROM product_attribute_definitions ORDER BY sort_order,name').all().map(attribute=>({...attribute,category_ids:db.prepare('SELECT category_id FROM product_attribute_category_links WHERE attribute_id=? ORDER BY category_id').all(attribute.id).map(row=>Number(row.category_id)),options:db.prepare('SELECT * FROM product_attribute_options WHERE attribute_id=? ORDER BY sort_order,option_value').all(attribute.id)}))}
@@ -1385,6 +1855,21 @@ function aiCostDebugData() {
   };
 }
 
+function aiBusinessBrainDebugData() {
+  return aiBusinessBrain?.debugData?.() || {
+    status: 'not-initialized',
+    providers: { active: 'mock', supported: ['mock', 'rules'], paidProviderReady: false },
+    promptTemplates: 0,
+    contextSnapshots: 0,
+    executionLogs: 0,
+    completedRuns: 0,
+    failedRuns: 0,
+    blockedRuns: 0,
+    lastRun: null,
+    lastError: null
+  };
+}
+
 function variantFieldValues(body, existing = {}) {
   const text = name => String(body[name] ?? existing[name] ?? '').trim() || null;
   const number = name => body[name] === '' ? null : body[name] == null ? existing[name] ?? null : Number(body[name]);
@@ -1554,6 +2039,52 @@ function salesQuoteDetail(id, user) {
 }
 function saveQuoteVersion(quoteId,user){const quote=salesQuoteDetail(quoteId,user);const version=Number(db.prepare('SELECT COALESCE(MAX(version_number),0)+1 AS v FROM sales_quote_versions WHERE quote_id=?').get(quoteId).v);db.prepare('INSERT INTO sales_quote_versions(quote_id,version_number,snapshot,created_by) VALUES(?,?,?,?)').run(quoteId,version,JSON.stringify(quote),user.id);db.prepare('UPDATE sales_quotes SET current_version=? WHERE id=?').run(version,quoteId);return version;}
 function syncQuoteStoredTotals(quoteId,user){db.prepare("UPDATE sales_quote_items SET final_selling_price_snapshot=unit_price,pricing_source=CASE WHEN reference_price_snapshot IS NOT NULL AND ABS(unit_price-reference_price_snapshot)>.0001 THEN 'Manual Quote Edit' ELSE 'Reference' END WHERE quote_id=?").run(quoteId);const quote=salesQuoteDetail(quoteId,user);if(quote)db.prepare('UPDATE sales_quotes SET subtotal=?,discount_total=?,total=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(quote.summary.product_subtotal,quote.summary.discount,quote.summary.grand_total,quoteId)}
+
+function buildAiContext({ contextType, entityType, entityId, user, options = {} }) {
+  const id = Number(entityId);
+  const normalizedType = String(contextType || '').toLowerCase().replace(/[_\s-]+/g, '-');
+  const sourceReferences = [];
+  const base = { contextType: normalizedType, entityType, entityId: String(entityId), redactionLevel: canViewSensitiveProductData(user) ? 'internal-sensitive' : 'internal-redacted', sourceReferences };
+  if (normalizedType === 'product') {
+    if (!requires(user, 'products')) throw Object.assign(new Error('Product context access denied.'), { status: 403 });
+    const product = productKnowledge(id);
+    if (!product) throw Object.assign(new Error('Product not found for AI context.'), { status: 404 });
+    sourceReferences.push({ module: 'Product Library', table: 'products', id: product.id }, { module: 'Product Knowledge Engine', table: 'product_knowledge_terms', product_id: product.id });
+    return { ...base, context: redactSensitiveProductData({ product, knowledge: product.knowledge, relatedProducts: product.recommended_products, relatedCases: product.related_cases, readiness: product.product_readiness, knowledgeScore: product.knowledge_score }, user) };
+  }
+  if (normalizedType === 'customer') {
+    if (!requires(user, 'opportunity-intelligence') && !requires(user, 'crm')) throw Object.assign(new Error('Customer context access denied.'), { status: 403 });
+    const customer = customerDetailData(id);
+    if (!customer) throw Object.assign(new Error('Customer not found for AI context.'), { status: 404 });
+    sourceReferences.push({ module: 'Opportunity Intelligence', table: 'customers', id: customer.id }, { module: 'Customer Activity', table: 'customer_activity_log', customer_id: customer.id });
+    return { ...base, context: { customer, contacts: customer.contacts, gaps: customer.gaps, recommendations: customer.recommended_products, outreachDrafts: customer.outreach_drafts, activity: customer.activity } };
+  }
+  if (normalizedType === 'customer-discovery') {
+    if (!requires(user, 'opportunity-intelligence')) throw Object.assign(new Error('Customer discovery context access denied.'), { status: 403 });
+    const request = db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(id);
+    if (!request) throw Object.assign(new Error('Customer discovery request not found for AI context.'), { status: 404 });
+    sourceReferences.push({ module: 'Opportunity Intelligence', table: 'customer_discovery_requests', id: request.id }, { module: 'Dynamic Customer Types', table: 'customer_type_profiles' });
+    return {
+      ...base,
+      context: {
+        request: { ...request, search_plan: parseJsonValue(request.search_plan), guidance: parseJsonValue(request.guidance), scoring_profile: parseJsonValue(request.scoring_profile) },
+        customerTypes: discoveryProfiles(),
+        downstreamFlow: ['AI Discovery', 'Search Tasks', 'Lead Pool', 'Lead Detail', 'Convert to Customer', 'Customers CRM', 'Sales Pipeline']
+      }
+    };
+  }
+  if (normalizedType === 'quote' || normalizedType === 'pi') {
+    if (!requires(user, 'sales-quotes')) throw Object.assign(new Error('Quote/PI context access denied.'), { status: 403 });
+    const quote = salesQuoteDetail(id, user);
+    if (!quote) throw Object.assign(new Error('Quote not found for AI context.'), { status: 404 });
+    sourceReferences.push({ module: 'Quote Builder', table: 'sales_quotes', id: quote.id }, { module: 'PI Builder', table: 'sales_quotes', id: quote.id }, { module: 'Price Engine', table: 'sales_quote_items', quote_id: quote.id });
+    const context = normalizedType === 'pi'
+      ? { quoteNumber: quote.quote_number, customer: quote.customer_name, currency: quote.currency, tradeTerm: quote.trade_term, payment: { depositPercent: quote.deposit_percent, balancePercent: quote.balance_percent, note: quote.payment_note }, freight: { method: quote.shipping_method, destination: quote.destination_address || quote.destination_port, cost: quote.freight_cost }, summary: quote.summary, items: quote.all_items, companySettings: quote.company_settings, bankSelected: Boolean(quote.selected_bank_account), piTerms: quote.pi_terms }
+      : { quote: { id: quote.id, quote_number: quote.quote_number, status: quote.status, currency: quote.currency, customer_name: quote.customer_name }, summary: quote.summary, items: quote.all_items, versions: quote.versions, libraryOptionsCount: quote.library_options?.length || 0 };
+    return { ...base, context: redactSensitiveProductData(context, user) };
+  }
+  throw Object.assign(new Error(`Unsupported AI context type: ${contextType}`), { status: 400 });
+}
 function quoteMessage(quote,type){const name=quote.customer_name||'Customer';const itemSummary=quote.all_items.map(item=>`${item.name} × ${item.quantity}`).join(', ');const total=`${quote.currency} ${Number(quote.summary.grand_total).toFixed(2)}`;if(type==='whatsapp')return {message:`Hello ${name},\n\nThank you for your inquiry.\n\nYour Proforma Invoice ${quote.quote_number} is ready. Grand Total: ${total}. Items: ${itemSummary}. Please find the attached PI.\n\nIf you have any questions, please let us know.\n\nBest regards,\n${quote.salesperson||'Sales Team'}`};return {subject:`Proforma Invoice ${quote.quote_number} — ${total}`,body:`Dear ${name},\n\nThank you for your inquiry. Please find attached our Proforma Invoice ${quote.quote_number} for ${itemSummary}.\n\nGrand Total: ${total}\nValid Until: ${quote.valid_until||'the date shown in the PI'}\n\nPlease let us know if you need any clarification or adjustment.\n\nBest regards,\n${quote.salesperson||'Sales Team'}\n${quote.salesperson_email||''}`};}
 function simplePdf(text){const escape=line=>String(line).replace(/[()\\]/g,'\\$&').replace(/[^\x20-\x7E]/g,'?').slice(0,110);const source=String(text).split('\n');const pages=[];for(let index=0;index<source.length;index+=43)pages.push(source.slice(index,index+43));const fontRegular=3,fontBold=4;const pageIds=pages.map((_,index)=>5+index*2);const objects=[];objects[1]='<< /Type /Catalog /Pages 2 0 R >>';objects[2]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;objects[fontRegular]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';objects[fontBold]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';pages.forEach((lines,index)=>{const pageId=pageIds[index],contentId=pageId+1;const commands=lines.map((line,lineIndex)=>{const heading=/^(PROFORMA INVOICE|COMPANY INFORMATION|PI HEADER|BUYER INFORMATION|PRODUCT TABLE|PACKING \/ LOGISTICS SUMMARY|COMMERCIAL SUMMARY|PAYMENT TERMS|BANK INFORMATION|SHIPPING INFORMATION|REMARKS|TERMS & CONDITIONS|SIGNATURES)$/.test(line);return `${lineIndex?'0 -17 Td ':''}${heading?'/F2 11 Tf 0 .28 .20 rg':'/F1 8 Tf 0 0 0 rg'} (${escape(line)}) Tj`;}).join(' ');const stream=`BT 42 805 Td ${commands} ET`;objects[pageId]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 ${fontRegular} 0 R /F2 ${fontBold} 0 R >> >> /Contents ${contentId} 0 R >>`;objects[contentId]=`<< /Length ${Buffer.byteLength(stream)} >> stream\n${stream}\nendstream`;});const header='%PDF-1.4\n';let body=header,offset=Buffer.byteLength(header);const xref=['0000000000 65535 f '];for(let id=1;id<objects.length;id++){const object=`${id} 0 obj ${objects[id]} endobj\n`;xref[id]=String(offset).padStart(10,'0')+' 00000 n ';body+=object;offset+=Buffer.byteLength(object)}const startxref=offset;body+=`xref\n0 ${objects.length}\n${xref.join('\n')}\ntrailer << /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF`;return Buffer.from(body);}
 
@@ -1615,6 +2146,8 @@ function opportunityCapabilities(user) {
     canImport: ['Admin', 'Owner', 'VA'].includes(role),
     canEditBasic: ['Admin', 'Owner', 'VA'].includes(role),
     canRunAi: ['Admin', 'Owner'].includes(role),
+    canRunCustomerIntelligence: ['Admin', 'Owner', 'Sales'].includes(role),
+    canSubmitFeedback: ['Admin', 'Owner', 'Sales'].includes(role),
     canEditDraft: ['Admin', 'Owner', 'Sales'].includes(role),
     canApproveDraft: ['Admin', 'Owner'].includes(role),
     canAcceptLead: ['Admin', 'Owner', 'Sales'].includes(role),
@@ -1638,10 +2171,18 @@ function opportunityDebugData() {
   const openGaps = Number(db.prepare("SELECT COUNT(*) AS count FROM customer_data_gaps WHERE status = 'Open'").get().count);
   const queue = Number(db.prepare("SELECT COUNT(*) AS count FROM customers WHERE opportunity_grade IN ('A+', 'A') AND opportunity_status NOT IN ('Won', 'Lost')").get().count);
   const lastRun = db.prepare("SELECT MAX(completed_at) AS value FROM customer_ai_analysis_runs WHERE status = 'completed'").get().value;
+  const lastCustomerIntelligenceRun = db.prepare("SELECT MAX(created_at) AS value FROM customer_intelligence_profiles").get()?.value || null;
   const lastError = db.prepare("SELECT error_message FROM customer_ai_analysis_runs WHERE status = 'failed' ORDER BY created_at DESC LIMIT 1").get()?.error_message || null;
   return {
     customers_count: count('customers'), contacts_count: count('customer_contacts'), gaps_open: openGaps,
     outreach_drafts_count: count('customer_outreach_drafts'), opportunity_queue_count: queue, last_ai_run_at: lastRun,
+    customer_intelligence_profiles_count: count('customer_intelligence_profiles'),
+    customer_intelligence_feedback_count: count('customer_intelligence_feedback'),
+    score_history_count: count('customer_score_history'),
+    discovery_requests_count: count('customer_discovery_requests'),
+    search_tasks_count: count('search_tasks'),
+    customer_type_profiles_count: count('customer_type_profiles'),
+    last_customer_intelligence_run_at: lastCustomerIntelligenceRun,
     scoring_engine_status: 'rules-ready', product_matching_status: 'product-intelligence-connected',
     duplicate_check_status: 'active', provider: process.env.OPPORTUNITY_AI_PROVIDER || 'rules', engine_version: opportunityEngineVersion,
     last_error: lastError
@@ -1663,6 +2204,550 @@ function opportunityMetrics() {
     gradeAPlus: Number(row.grade_aplus || 0), gradeA: Number(row.grade_a || 0), readyForSales: Number(row.ready_for_sales || 0),
     missingDecisionMaker: gapCount('Missing Decision Maker'), missingEmail: gapCount('Missing Email'),
     missingWhatsApp: gapCount('Missing WhatsApp'), salesAcceptedLeads: Number(row.accepted || 0)
+  };
+}
+
+const phase2aCustomerTypes = Object.freeze([
+  'Hospitality Furniture Distributor',
+  'Commercial Furniture Dealer',
+  'Hospitality Design Firm',
+  'Restaurant Group',
+  'Independent Restaurant Owner',
+  'Multi-location Restaurant Group',
+  'Cafe Owner',
+  'Bar Owner',
+  'Bubble Tea Shop Owner'
+]);
+const customerIntelligenceFeedbackTypes = Object.freeze(['Interested', 'Not interested', 'Wrong customer', 'Purchased', 'Future opportunity', 'No response', 'Lost opportunity']);
+const customerIntelligenceUpdateReasons = Object.freeze(['New salesperson handoff', 'Customer follow-up restart', 'New customer requirement', 'New information obtained', 'Manual update']);
+const restaurantOwnerCustomerTypes = Object.freeze([
+  'Restaurant Owner',
+  'Restaurant Group',
+  'Independent Restaurant Owner',
+  'Multi-location Restaurant Group',
+  'Cafe Owner',
+  'Bar Owner',
+  'Bubble Tea Shop Owner'
+]);
+
+const discoveryCustomerTypes = Object.freeze([
+  'Restaurant Furniture Distributor',
+  'Hospitality Furniture Dealer',
+  'Restaurant Interior Design Company',
+  'Restaurant Contractor',
+  'Restaurant Owner',
+  'Independent Restaurant Owner',
+  'Multi-location Restaurant Group',
+  'Cafe Owner',
+  'Bar Owner',
+  'Bubble Tea Shop Owner',
+  'Importer'
+]);
+
+const restaurantOwnerDiscoveryDimensions = Object.freeze([
+  ['Renovation Opportunity', 30, 'Signals of remodel, refresh, design change, or furniture replacement.'],
+  ['Years Operating', 30, 'Operating history that suggests stable business and likely refresh cycles.'],
+  ['Expansion Signal', 20, 'Signals of new opening, additional locations, growth, or rollout.'],
+  ['Contact Availability', 20, 'Availability of owner, operator, email, phone, website, or decision maker.']
+]);
+
+const discoveryProfileTemplates = Object.freeze({
+  'Restaurant Furniture Distributor': [
+    ['Business Match', 40, 'Fit with commercial restaurant furniture distribution.'],
+    ['Purchase Potential', 30, 'Likelihood of recurring product sourcing or project demand.'],
+    ['Company Size', 20, 'Ability to handle ongoing hospitality furniture volume.'],
+    ['Contact Availability', 10, 'Availability of email, phone, decision maker, or website.']
+  ],
+  'Hospitality Furniture Dealer': [
+    ['Business Match', 40, 'Fit with hospitality or commercial furniture resale.'],
+    ['Purchase Potential', 30, 'Need for product catalog, margin, and quote-ready items.'],
+    ['Company Size', 20, 'Dealer reach, number of projects, or sales coverage.'],
+    ['Contact Availability', 10, 'Availability of verified contact channels.']
+  ],
+  'Restaurant Interior Design Company': [
+    ['Project Capability', 40, 'Ability to specify furniture for restaurant build-outs.'],
+    ['Restaurant Experience', 30, 'Visible hospitality, restaurant, cafe, or bar project experience.'],
+    ['Client Base', 20, 'Potential access to restaurant owners and groups.'],
+    ['Contact Availability', 10, 'Availability of principal, designer, or project manager contact.']
+  ],
+  'Restaurant Contractor': [
+    ['Project Capability', 40, 'Ability to influence restaurant renovation or opening projects.'],
+    ['Restaurant Experience', 30, 'Commercial hospitality construction or fit-out experience.'],
+    ['Business Value', 20, 'Potential recurring project furniture package demand.'],
+    ['Contact Availability', 10, 'Availability of estimator, owner, or project manager contact.']
+  ],
+  'Restaurant Owner': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  'Independent Restaurant Owner': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  'Multi-location Restaurant Group': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  'Cafe Owner': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  'Bar Owner': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  'Bubble Tea Shop Owner': [
+    ...restaurantOwnerDiscoveryDimensions
+  ],
+  Importer: [
+    ['Business Match', 40, 'Fit with importing commercial furniture or hospitality products.'],
+    ['Purchase Potential', 30, 'Potential demand for container-level sourcing.'],
+    ['Company Size', 20, 'Import capability, market coverage, and sales volume.'],
+    ['Contact Availability', 10, 'Availability of purchasing or owner contact.']
+  ]
+});
+
+function seedCustomerDiscoveryProfiles() {
+  const insertProfile = db.prepare(`INSERT INTO customer_type_profiles
+    (customer_type, industry, description, sort_order) VALUES (?, 'Hospitality Furniture', ?, ?) RETURNING id`);
+  const updateProfile = db.prepare(`UPDATE customer_type_profiles SET industry = 'Hospitality Furniture',
+    description = ?, active = TRUE, sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`);
+  const deleteDimensions = db.prepare('DELETE FROM customer_type_score_dimensions WHERE customer_type_profile_id = ?');
+  const insertDimension = db.prepare(`INSERT INTO customer_type_score_dimensions
+    (customer_type_profile_id, dimension_name, weight_percent, description, sort_order) VALUES (?, ?, ?, ?, ?)`);
+  discoveryCustomerTypes.forEach((customerType, index) => {
+    let profile = db.prepare('SELECT id FROM customer_type_profiles WHERE customer_type = ?').get(customerType);
+    const description = `${customerType} profile for AI-assisted customer discovery.`;
+    if (!profile) profile = insertProfile.get(customerType, description, index + 1);
+    else updateProfile.run(description, index + 1, profile.id);
+    deleteDimensions.run(profile.id);
+    (discoveryProfileTemplates[customerType] || []).forEach(([name, weight, descriptionText], sortIndex) =>
+      insertDimension.run(profile.id, name, weight, descriptionText, sortIndex + 1));
+  });
+  db.prepare("UPDATE customer_type_profiles SET active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE customer_type = 'Restaurant Group'").run();
+}
+
+function discoveryProfiles() {
+  const profiles = db.prepare("SELECT * FROM customer_type_profiles WHERE active = 1 ORDER BY sort_order, customer_type").all();
+  const dimensions = db.prepare('SELECT * FROM customer_type_score_dimensions ORDER BY sort_order, id').all();
+  return profiles.map(profile => ({
+    ...profile,
+    dimensions: dimensions.filter(dimension => dimension.customer_type_profile_id === profile.id)
+      .map(dimension => ({ name: dimension.dimension_name, weight: Number(dimension.weight_percent || 0), description: dimension.description }))
+  }));
+}
+
+function discoveryKeywordsFor(type) {
+  const map = {
+    'Restaurant Furniture Distributor': ['restaurant furniture supplier', 'hospitality furniture distributor', 'commercial seating supplier', 'restaurant tables and chairs distributor'],
+    'Hospitality Furniture Dealer': ['hospitality furniture dealer', 'commercial furniture dealer', 'restaurant furniture showroom', 'contract furniture dealer'],
+    'Restaurant Interior Design Company': ['restaurant interior design company', 'hospitality design firm', 'restaurant design studio', 'cafe interior designer'],
+    'Restaurant Contractor': ['restaurant contractor', 'restaurant build out contractor', 'hospitality fit out contractor', 'commercial kitchen and dining contractor'],
+    'Restaurant Owner': ['restaurant owner', 'coffee shop owner', 'restaurant opening', 'restaurant renovation'],
+    'Independent Restaurant Owner': ['independent restaurant owner', 'local restaurant owner', 'restaurant renovation', 'restaurant opening'],
+    'Multi-location Restaurant Group': ['restaurant group', 'multi location restaurant group', 'hospitality group', 'restaurant chain expansion'],
+    'Cafe Owner': ['coffee shop owner', 'cafe owner', 'coffee shop renovation', 'cafe furniture package'],
+    'Bar Owner': ['bar owner', 'cocktail bar owner', 'bar renovation', 'bar furniture package'],
+    'Bubble Tea Shop Owner': ['bubble tea shop owner', 'boba tea shop owner', 'bubble tea renovation', 'bubble tea furniture package'],
+    Importer: ['furniture importer', 'restaurant furniture importer', 'commercial furniture importer', 'hospitality product importer']
+  };
+  return map[type] || ['restaurant furniture buyer', 'hospitality furniture customer', 'commercial furniture project'];
+}
+
+function inferDiscoveryCustomerType(text) {
+  const value = String(text || '').toLowerCase();
+  if (/\b(importer|importing|import)\b/.test(value)) return 'Importer';
+  if (/\b(distributor|distributors|supplier|suppliers|wholesale|reseller|resellers)\b/.test(value)) return 'Restaurant Furniture Distributor';
+  if (/\b(dealer|showroom)\b/.test(value)) return 'Hospitality Furniture Dealer';
+  if (/\b(design|designer|interior|architect|studio)\b/.test(value)) return 'Restaurant Interior Design Company';
+  if (/\b(contractor|builder|build[- ]?out|fit[- ]?out|construction)\b/.test(value)) return 'Restaurant Contractor';
+  if (/\b(group|chain|multi[- ]?location|franchise)\b/.test(value)) return 'Multi-location Restaurant Group';
+  if (/\b(bubble tea|boba)\b/.test(value)) return 'Bubble Tea Shop Owner';
+  if (/\b(bar|pub|cocktail)\b/.test(value)) return 'Bar Owner';
+  if (/\b(coffee shop|restaurant cafe|cafe|café)\b/.test(value)) return 'Cafe Owner';
+  if (/\b(owner|operator|restaurant|bakery)\b/.test(value)) return 'Independent Restaurant Owner';
+  return null;
+}
+
+function inferDiscoveryLocation(text) {
+  const raw = String(text || '');
+  const lower = raw.toLowerCase();
+  const countries = [
+    ['usa', 'USA'], ['united states', 'USA'], ['america', 'USA'], ['canada', 'Canada'], ['mexico', 'Mexico'],
+    ['malaysia', 'Malaysia'], ['singapore', 'Singapore'], ['australia', 'Australia'], ['uk', 'United Kingdom'], ['united kingdom', 'United Kingdom']
+  ];
+  const regions = ['California', 'Texas', 'Florida', 'New York', 'Los Angeles', 'San Francisco', 'Dallas', 'Houston', 'Austin', 'Miami', 'Chicago', 'Seattle', 'Toronto', 'London'];
+  let country = countries.find(([needle]) => lower.includes(needle))?.[1] || null;
+  const region = regions.find(regionName => lower.includes(regionName.toLowerCase())) || null;
+  if (!country && ['California', 'Texas', 'Florida', 'New York', 'Los Angeles', 'San Francisco', 'Dallas', 'Houston', 'Austin', 'Miami', 'Chicago', 'Seattle'].includes(region)) country = 'USA';
+  return { country, region };
+}
+
+function inferCompanySize(text, customerType) {
+  const value = String(text || '').toLowerCase();
+  const range = value.match(/\b(\d{1,5})\s*(?:-|to|–|—)\s*(\d{1,5})\s*(?:employees|employee|staff|people|team members)?\b/i);
+  const single = value.match(/\b(\d{1,5})\s*(?:employees|employee|staff|people|team members)\b/i);
+  const classify = count => count <= 50 ? 'Small company' : count <= 250 ? 'Medium company' : 'Large company';
+  if (range) {
+    const min = Number(range[1]);
+    const max = Number(range[2]);
+    return { label: classify(max), detail: `${min}-${max} employees` };
+  }
+  if (single) {
+    const count = Number(single[1]);
+    return { label: classify(count), detail: `${count} employees` };
+  }
+  if (/\bsmall\b/.test(value)) return { label: 'Small company', detail: 'Small company' };
+  if (/\bmedium|mid[- ]?size\b/.test(value)) return { label: 'Medium company', detail: 'Medium company' };
+  if (/\blarge|enterprise|national|chain\b/.test(value)) return { label: 'Large company', detail: 'Large company' };
+  const fallback = ['Restaurant Furniture Distributor', 'Hospitality Furniture Dealer', 'Restaurant Interior Design Company', 'Restaurant Contractor', 'Importer'].includes(customerType)
+    ? 'Small / Medium company'
+    : 'Unknown';
+  return { label: fallback, detail: fallback };
+}
+
+function buildDiscoveryGuidance({ rawRequest, customerType, country, region }) {
+  const value = String(rawRequest || '').trim();
+  const suggestions = [];
+  if (!country) suggestions.push('Target country');
+  if (!customerType) suggestions.push('Customer type');
+  if (!region) suggestions.push('Region / city');
+  if (!/\b(small|medium|large|chain|group|distributor|dealer|owner|designer|contractor)\b/i.test(value)) suggestions.push('Company size');
+  if (!/\b(chair|table|booth|seating|furniture|bar stool|counter|partition)\b/i.test(value)) suggestions.push('Product category');
+  if (!/\b(owner|purchasing|manager|designer|decision maker|buyer)\b/i.test(value)) suggestions.push('Decision maker requirement');
+  const broad = value.split(/\s+/).filter(Boolean).length < 4 || /find restaurant customers?$/i.test(value);
+  return {
+    needs_more_information: broad || suggestions.length >= 3,
+    message: broad || suggestions.length >= 3
+      ? 'Your search request is broad. Add a few filters before execution to improve result quality.'
+      : 'The request is specific enough to create an initial search plan.',
+    suggestions,
+    recommended_next_step: customerType
+      ? `Search ${inferCompanySize(value, customerType).label.toLowerCase()} ${customerType.toLowerCase()} first.`
+      : 'Choose a customer type before running discovery.'
+  };
+}
+
+function buildDiscoveryPlan(rawRequest) {
+  const customerType = inferDiscoveryCustomerType(rawRequest);
+  const { country, region } = inferDiscoveryLocation(rawRequest);
+  const companySize = inferCompanySize(rawRequest, customerType);
+  const industry = 'Hospitality Furniture';
+  const profiles = discoveryProfiles();
+  const scoringProfile = profiles.find(profile => profile.customer_type === customerType) || null;
+  const plan = {
+    target_customer_type: customerType || 'Needs Clarification',
+    industry,
+    country: country || 'Needs Clarification',
+    region_city: region || 'Needs Clarification',
+    company_size: companySize.label,
+    company_size_detail: companySize.detail,
+    recommended_keywords: discoveryKeywordsFor(customerType),
+    recommended_search_sources: ['Google Maps', 'LinkedIn', 'Company Website'],
+    suggested_filters: ['Target country', 'Customer type', 'Company size', 'Product category', 'Decision maker requirement'].filter(Boolean),
+    excluded_customers: restaurantOwnerCustomerTypes.includes(customerType)
+      ? ['Residential furniture shoppers', 'Low-budget one-time buyers without project timing', 'Non-commercial home decor stores']
+      : ['Large retail furniture chains', 'Residential furniture stores', 'Non-hospitality furniture sellers'],
+    confidence_score: customerType && country ? 82 : customerType || country ? 58 : 35
+  };
+  return { plan, guidance: buildDiscoveryGuidance({ rawRequest, customerType, country, region }), scoringProfile };
+}
+
+function buildGeneratedSearchPlan(plan, guidance) {
+  const ready = !guidance?.needs_more_information && plan?.target_customer_type !== 'Needs Clarification' && plan?.country !== 'Needs Clarification';
+  const customerType = String(plan?.target_customer_type || '');
+  const priority = customerType.includes('Distributor') || customerType.includes('Importer') || customerType.includes('Design') || customerType.includes('Dealer')
+    ? 'High'
+    : customerType.includes('Owner')
+    ? 'Medium'
+    : ready ? 'Medium' : 'Low';
+  const priorityReasons = [
+    'Hospitality related business',
+    ...(customerType.includes('Distributor') || customerType.includes('Dealer') ? ['Potential repeat buyer'] : []),
+    ...(customerType.includes('Importer') || customerType.includes('Distributor') ? ['Possible furniture importer'] : []),
+    ...(customerType.includes('Design') || customerType.includes('Contractor') ? ['Works with restaurant clients'] : []),
+    ...(customerType.includes('Owner') || customerType.includes('Group') ? ['Direct restaurant furniture demand'] : [])
+  ];
+  const searchVolume = priority === 'High' ? '100 companies' : priority === 'Medium' ? '50 companies' : '25 companies';
+  return {
+    status: ready ? 'Ready for Search' : 'Draft Search Plan',
+    target_customer: [plan?.company_size, plan?.target_customer_type].filter(value => value && value !== 'Unknown' && value !== 'Needs Clarification').join(' ') || plan?.target_customer_type || 'Needs Clarification',
+    customer_type: plan?.target_customer_type || 'Needs Clarification',
+    industry: plan?.industry || 'Hospitality Furniture',
+    location: [plan?.region_city, plan?.country].filter(value => value && value !== 'Needs Clarification').join(', ') || 'Needs Clarification',
+    company_size: plan?.company_size || 'Unknown',
+    company_size_detail: plan?.company_size_detail || plan?.company_size || 'Unknown',
+    recommended_search_volume: searchVolume,
+    priority,
+    priority_reasons: priorityReasons,
+    search_objective: ready
+      ? `Find ${String(plan.target_customer_type).toLowerCase()} leads in ${[plan.region_city, plan.country].filter(value => value && value !== 'Needs Clarification').join(', ')} for Restaurant Setup Pro sales qualification.`
+      : 'Clarify the missing search requirements, then use this plan to guide customer discovery.',
+    recommended_filters: ['Location', 'Company Size', 'Customer Type', 'Decision Maker', 'Business Type', 'Purchase Potential'],
+    search_keywords: plan?.recommended_keywords || [],
+    recommended_data_fields: ['Company Name', 'Website', 'City', 'Country', 'Contact Person', 'Email', 'Phone', 'LinkedIn', 'Instagram', 'Company Size', 'Business Type'],
+    exclude: plan?.excluded_customers || []
+  };
+}
+
+function normalizeSearchTask(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    keywords: parseJsonValue(row.keywords, []),
+    filters: parseJsonValue(row.filters, []),
+    required_data_fields: parseJsonValue(row.required_data_fields, [])
+  };
+}
+
+function nextSearchTaskName() {
+  const next = Number(db.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS value FROM search_tasks').get().value || 1);
+  return `Search Task #${String(next).padStart(3, '0')}`;
+}
+
+const searchTaskStatuses = Object.freeze(['Draft', 'Ready', 'Running', 'Paused', 'Completed']);
+const searchResultStatuses = Object.freeze(['new', 'reviewed', 'converted', 'discarded']);
+
+function normalizeSearchResult(row) {
+  if (!row) return null;
+  const evidence = parseSearchResultEvidence(row.source_reference);
+  return {
+    ...row,
+    opportunity_score: Number(row.opportunity_score || 0),
+    source_url: evidence.source_url,
+    reference_note: evidence.reference_note,
+    recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
+  };
+}
+
+function parseSearchResultEvidence(value) {
+  const text = String(value || '').trim();
+  if (!text) return { source_url: null, reference_note: null };
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        source_url: String(parsed.source_url || parsed.sourceReference || '').trim() || null,
+        reference_note: String(parsed.reference_note || parsed.referenceNote || '').trim() || null
+      };
+    }
+  } catch {}
+  return { source_url: text, reference_note: null };
+}
+
+function searchResultEvidenceValue(body = {}, existing = {}) {
+  const existingEvidence = parseSearchResultEvidence(existing.source_reference);
+  const sourceUrl = String(body.source_url ?? body.source_reference ?? existing.source_url ?? existingEvidence.source_url ?? '').trim();
+  const referenceNote = String(body.reference_note ?? existing.reference_note ?? existingEvidence.reference_note ?? '').trim();
+  if (!sourceUrl && !referenceNote) return null;
+  return JSON.stringify({ source_url: sourceUrl || null, reference_note: referenceNote || null });
+}
+
+function searchResultsForTask(taskId) {
+  return db.prepare(`SELECT search_results.*, users.name AS created_by_name, customers.company_name AS converted_customer_name
+    FROM search_results LEFT JOIN users ON users.id = search_results.created_by
+    LEFT JOIN customers ON customers.id = search_results.customer_id
+    WHERE search_results.search_task_id = ?
+    ORDER BY CASE search_results.status WHEN 'new' THEN 1 WHEN 'reviewed' THEN 2 WHEN 'converted' THEN 3 ELSE 4 END,
+      search_results.opportunity_score DESC, search_results.updated_at DESC, search_results.id DESC`).all(taskId).map(normalizeSearchResult);
+}
+
+function searchResultDetail(id) {
+  return normalizeSearchResult(db.prepare(`SELECT search_results.*, search_tasks.task_name, users.name AS created_by_name,
+    customers.company_name AS converted_customer_name
+    FROM search_results JOIN search_tasks ON search_tasks.id = search_results.search_task_id
+    LEFT JOIN users ON users.id = search_results.created_by
+    LEFT JOIN customers ON customers.id = search_results.customer_id
+    WHERE search_results.id = ?`).get(id));
+}
+
+function searchResultSummary(results) {
+  const counts = { total: results.length, new: 0, reviewed: 0, converted: 0, discarded: 0 };
+  for (const result of results) if (counts[result.status] !== undefined) counts[result.status] += 1;
+  return counts;
+}
+
+function buildSearchResultQualification(body, task) {
+  const hasManualScore = body.opportunity_score !== undefined && body.opportunity_score !== null && String(body.opportunity_score).trim() !== '';
+  const location = [body.city, body.country].filter(Boolean).join(', ') || task?.location || 'Unknown location';
+  const customerType = String(body.customer_type || task?.customer_type || 'Hospitality customer').trim();
+  const company = requiredText(body.company_name, 'Company name');
+  const inferredScore = clampScore(
+    35
+    + (customerType ? 20 : 0)
+    + (body.website ? 15 : 0)
+    + (body.email || body.phone || body.contact_person ? 15 : 0)
+    + (body.source_url || body.source_reference ? 10 : 0)
+    + (body.business_type ? 5 : 0)
+  );
+  const score = clampScore(hasManualScore ? body.opportunity_score : inferredScore);
+  const evaluatedPotential = String(body.purchase_potential || '').trim() || (score >= 75 ? 'High' : score >= 45 ? 'Medium' : 'Low');
+  const why = [
+    customerType && `${customerType} matches the active search task.`,
+    body.business_type && `Business type: ${body.business_type}.`,
+    evaluatedPotential && `Purchase potential: ${evaluatedPotential}.`,
+    body.email || body.phone || body.website ? 'Contact or website information is available.' : 'Contact information still needs review.',
+    body.source_url || body.source_reference ? 'Source evidence is saved for future handoff.' : null,
+    body.reference_note ? `Evidence note: ${body.reference_note}.` : null
+  ].filter(Boolean).join(' ');
+  return {
+    purchase_potential: evaluatedPotential,
+    opportunity_score: score,
+    qualification_reason: String(body.qualification_reason || why).trim(),
+    opportunity_summary: `${company} is a ${customerType} candidate in ${location} with ${evaluatedPotential} purchase potential.`,
+    why_customer_matters: why,
+    recommended_next_action: score >= 75
+      ? 'Review immediately, verify decision maker, and prepare a first sales touch.'
+      : score >= 45
+        ? 'Review details, complete missing contact information, and keep in the opportunity queue.'
+        : 'Keep as low-priority discovery result unless better qualification evidence appears.'
+  };
+}
+
+function searchResultFieldValues(body, existing = {}, task = {}) {
+  const qualification = buildSearchResultQualification({ ...existing, ...body }, task);
+  return {
+    company_name: requiredText(body.company_name ?? existing.company_name, 'Company name'),
+    customer_type: String(body.customer_type ?? existing.customer_type ?? task.customer_type ?? '').trim() || null,
+    industry: String(body.industry ?? existing.industry ?? task.industry ?? 'Hospitality Furniture').trim() || 'Hospitality Furniture',
+    country: String(body.country ?? existing.country ?? '').trim() || null,
+    city: String(body.city ?? existing.city ?? '').trim() || null,
+    website: normalizeUrl(body.website ?? existing.website),
+    contact_person: String(body.contact_person ?? existing.contact_person ?? '').trim() || null,
+    email: String(body.email ?? existing.email ?? '').trim() || null,
+    phone: String(body.phone ?? existing.phone ?? '').trim() || null,
+    linkedin: normalizeUrl(body.linkedin ?? existing.linkedin),
+    instagram: normalizeUrl(body.instagram ?? existing.instagram),
+    company_size: String(body.company_size ?? existing.company_size ?? '').trim() || null,
+    business_type: String(body.business_type ?? existing.business_type ?? '').trim() || null,
+    purchase_potential: qualification.purchase_potential,
+    opportunity_score: qualification.opportunity_score,
+    qualification_reason: qualification.qualification_reason,
+    opportunity_summary: qualification.opportunity_summary,
+    why_customer_matters: qualification.why_customer_matters,
+    recommended_next_action: qualification.recommended_next_action,
+    source_type: String(body.source_type ?? existing.source_type ?? 'Manual').trim() || 'Manual',
+    source_reference: searchResultEvidenceValue(body, existing)
+  };
+}
+
+function scoreGrade(score) {
+  const value = Number(score || 0);
+  if (value >= 90) return 'A+';
+  if (value >= 75) return 'A';
+  if (value >= 60) return 'B';
+  if (value >= 40) return 'C';
+  return 'D';
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, Math.round(Number(value || 0))));
+}
+
+function inferCustomerType(customer) {
+  const existing = String(customer.customer_type || '').trim();
+  if (phase2aCustomerTypes.includes(existing)) return existing;
+  const text = `${customer.business_type || ''} ${customer.company_name || ''} ${customer.brand_name || ''} ${customer.website || ''}`.toLowerCase();
+  if (/distributor|wholesale|importer/.test(text)) return 'Hospitality Furniture Distributor';
+  if (/dealer|commercial furniture|contract furniture/.test(text)) return 'Commercial Furniture Dealer';
+  if (/design|interior|architecture|studio|firm/.test(text)) return 'Hospitality Design Firm';
+  if (/bubble tea|boba/.test(text)) return 'Bubble Tea Shop Owner';
+  if (/\bbar\b|pub|cocktail/.test(text)) return 'Bar Owner';
+  if (/coffee shop|cafe|café/.test(text)) return 'Cafe Owner';
+  if (/group|chain|franchise|restaurant group|hospitality group|multi[- ]?location/.test(text) || Number(customer.store_count || 0) >= 2) return 'Multi-location Restaurant Group';
+  return 'Independent Restaurant Owner';
+}
+
+function timingFromSignals(customer, signalText) {
+  const explicit = String(customer.expected_purchase_timing || '').trim();
+  if (explicit) return { purchase_timing: explicit, purchase_timing_confidence: 'High' };
+  if (/\b(now|urgent|asap|rfq|quote|opening soon|this month|next month|within 30|within 60)\b/i.test(signalText)) return { purchase_timing: 'Near term', purchase_timing_confidence: 'Medium' };
+  if (/\b(future|later|planning|next year)\b/i.test(signalText)) return { purchase_timing: 'Future opportunity', purchase_timing_confidence: 'Medium' };
+  return { purchase_timing: 'Unknown', purchase_timing_confidence: 'Low' };
+}
+
+function calculateCustomerIntelligence(customer) {
+  const type = inferCustomerType(customer);
+  const recommendations = productRecommendationsFor({ ...customer, business_type: customer.business_type || (type.includes('Restaurant') ? 'Restaurant' : customer.business_type) });
+  const contacts = db.prepare('SELECT * FROM customer_contacts WHERE customer_id = ?').all(customer.id);
+  const hasContact = Boolean(customer.email || customer.whatsapp || customer.phone || customer.website || contacts.length);
+  const hasDecisionMaker = contacts.some(contact => Number(contact.is_primary_decision_maker) === 1);
+  const quoteCount = Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quotes WHERE customer_id = ?').get(customer.id).count || 0);
+  const orderCount = Number(db.prepare('SELECT COUNT(*) AS count FROM sales_orders WHERE customer_id = ?').get(customer.id).count || 0);
+  const inquiryCount = Number(db.prepare('SELECT COUNT(*) AS count FROM sales_inquiries WHERE customer_id = ?').get(customer.id).count || 0);
+  const typePoints = {
+    'Hospitality Furniture Distributor': 35,
+    'Commercial Furniture Dealer': 32,
+    'Hospitality Design Firm': 30,
+    'Restaurant Group': 26,
+    'Multi-location Restaurant Group': 28,
+    'Independent Restaurant Owner': 16,
+    'Cafe Owner': 18,
+    'Bar Owner': 18,
+    'Bubble Tea Shop Owner': 18
+  }[type] || 10;
+  const industryText = `${customer.industry || ''} ${customer.business_type || ''} ${customer.company_name || ''}`.toLowerCase();
+  const industryFit = /hospitality|restaurant|coffee|bar|bakery|hotel|food|furniture|design/.test(industryText) ? 20 : 8;
+  const productFit = Math.min(15, recommendations.length * 4);
+  const businessModel = (type.includes('Distributor') || type.includes('Dealer') ? 10 : 0) + (Number(customer.store_count || 0) >= 2 ? 6 : 0) + (customer.country ? 4 : 0);
+  const relationship = Math.min(20, quoteCount * 5 + orderCount * 10 + inquiryCount * 3 + (hasDecisionMaker ? 4 : 0));
+  const customerValueScore = clampScore(typePoints + industryFit + productFit + businessModel + relationship);
+  const customerValueExplanation = `${type} profile: type fit ${typePoints}, industry fit ${industryFit}, product fit ${productFit}, business model ${businessModel}, relationship ${relationship}.`;
+
+  const signalText = `${customer.project_information || ''} ${customer.customer_comments || ''} ${customer.opportunity_notes || ''} ${customer.ai_summary || ''} ${customer.ai_recommendation || ''} ${customer.business_type || ''}`.toLowerCase();
+  const signals = [];
+  if (/\b(new project|new store|opening|buildout|project)\b/i.test(signalText)) signals.push('Project signal');
+  if (/\b(expansion|new location|chain|franchise)\b/i.test(signalText) || Number(customer.expansion_probability || 0) >= 60) signals.push('Expansion signal');
+  if (/\b(renovation|remodel|rebrand|upgrade)\b/i.test(signalText) || Number(customer.renovation_probability || 0) >= 60) signals.push('Renovation signal');
+  if (/\b(rfq|quote|quotation|price|ddp|proposal|pi)\b/i.test(signalText)) signals.push('RFQ signal');
+  if (inquiryCount > 0) signals.push('Direct inquiry');
+  if (Number(customer.furniture_need_probability || 0) >= 60) signals.push('Furniture need probability');
+  const timing = timingFromSignals(customer, signalText);
+  let buyingOpportunityScore;
+  let buyingOpportunityExplanation;
+  if (restaurantOwnerCustomerTypes.includes(type)) {
+    const renovationProbability = Number(customer.renovation_probability || 0);
+    const expansionProbability = Number(customer.expansion_probability || 0);
+    const yearsOperating = Number(customer.years_in_business || 0);
+    const hasRenovationSignal = /\b(renovation|remodel|rebrand|upgrade|refresh|replace|replacement)\b/i.test(signalText);
+    const hasExpansionSignal = /\b(expansion|new location|opening|chain|franchise|multi[- ]?location)\b/i.test(signalText) || Number(customer.store_count || 0) >= 2;
+    const renovationScore = Math.min(30, Math.max(Math.round(renovationProbability * 0.3), hasRenovationSignal ? 24 : 0));
+    const yearsScore = yearsOperating >= 3 ? 30 : yearsOperating >= 1 ? 18 : 0;
+    const expansionScore = Math.min(20, Math.max(Math.round(expansionProbability * 0.2), hasExpansionSignal ? 16 : 0));
+    const ownerContactScore = hasContact ? 20 : 0;
+    buyingOpportunityScore = clampScore(renovationScore + yearsScore + expansionScore + ownerContactScore);
+    buyingOpportunityExplanation = `Restaurant Owner opportunity model: Renovation Opportunity ${renovationScore}/30, Years Operating ${yearsScore}/30, Expansion Signal ${expansionScore}/20, Contact Availability ${ownerContactScore}/20. Purchase timing: ${timing.purchase_timing}.`;
+  } else {
+    const signalScore = Math.min(45, signals.length * 10);
+    const probabilityScore = Math.round((Number(customer.expansion_probability || 0) + Number(customer.renovation_probability || 0) + Number(customer.furniture_need_probability || 0)) / 10);
+    const contactScore = hasContact ? 10 : 0;
+    const confidenceBoost = timing.purchase_timing === 'Unknown' ? 0 : 10;
+    buyingOpportunityScore = clampScore(signalScore + probabilityScore + contactScore + confidenceBoost);
+    buyingOpportunityExplanation = signals.length
+      ? `Detected ${signals.join(', ')}. Purchase timing: ${timing.purchase_timing}.`
+      : 'No clear project, RFQ, expansion, renovation, or timing signal is available. Purchase timing remains Unknown with Low confidence.';
+  }
+
+  const salesPriorityScore = clampScore(customerValueScore * 0.45 + buyingOpportunityScore * 0.45 + (hasContact ? 10 : 0));
+  const salesPriorityExplanation = `Sales priority combines long-term customer value (${customerValueScore}), short-term buying opportunity (${buyingOpportunityScore}), and contactability (${hasContact ? 'available' : 'missing'}).`;
+  const aiRecommendation = salesPriorityScore >= 75
+    ? 'Prioritize for sales review and prepare a tailored hospitality furniture conversation.'
+    : customerValueScore >= 75
+      ? 'High-value strategic customer. Maintain relationship and monitor buying signals.'
+      : buyingOpportunityScore >= 60
+        ? 'Short-term opportunity exists. Verify budget, timing, and decision maker before quoting.'
+        : 'Keep in nurture or data completion queue until stronger buying signals appear.';
+  return {
+    customer_type: type,
+    industry: customer.industry || 'Hospitality Furniture',
+    customer_value_score: customerValueScore,
+    customer_value_grade: scoreGrade(customerValueScore),
+    customer_value_explanation: customerValueExplanation,
+    buying_opportunity_score: buyingOpportunityScore,
+    buying_opportunity_grade: scoreGrade(buyingOpportunityScore),
+    buying_opportunity_explanation: buyingOpportunityExplanation,
+    purchase_timing: timing.purchase_timing,
+    purchase_timing_confidence: timing.purchase_timing_confidence,
+    sales_priority_score: salesPriorityScore,
+    sales_priority_explanation: salesPriorityExplanation,
+    ai_recommendation: aiRecommendation,
+    signals,
+    recommendations: recommendations.slice(0, 5)
   };
 }
 
@@ -1701,9 +2786,40 @@ function productRecommendationsFor(customer) {
   return matched;
 }
 
+function recommendedProductReasonFor(customerType, businessType) {
+  const type = String(customerType || businessType || '').toLowerCase();
+  if (type.includes('distributor') || type.includes('dealer') || type.includes('reseller')) {
+    return 'Hospitality furniture reseller: recommend Booth Seating, Restaurant Tables, and Dining Chairs as repeatable catalog products.';
+  }
+  if (type.includes('design') || type.includes('contractor')) {
+    return 'Restaurant project capability: recommend Custom Booth Seating and Project Furniture Package for design-led projects.';
+  }
+  if (type.includes('group') || type.includes('multi-location')) {
+    return 'Multi-location operator: recommend standardized Dining Chairs, Restaurant Tables, Booth Seating, and repeatable package pricing.';
+  }
+  if (type.includes('cafe') || type.includes('coffee')) {
+    return 'Cafe operator: recommend compact Dining Chairs, Restaurant Tables, Booth Seating, and Counter / Service Bar options.';
+  }
+  if (type.includes('bar')) {
+    return 'Bar operator: recommend Bar Stools, Counter / Service Bar, and durable Restaurant Tables.';
+  }
+  if (type.includes('bubble') || type.includes('boba')) {
+    return 'Bubble tea shop operator: recommend Dining Chairs, Restaurant Tables, and Counter / Service Bar for fast casual layout.';
+  }
+  return 'Hospitality related business: recommend core restaurant furniture categories after confirming store type and project scope.';
+}
+
 function mappedCustomer(row) {
   if (!row) return null;
-  return { ...row, source_confidence: Number(row.source_confidence || 0), confidence_score: Number(row.confidence_score || 0) };
+  return {
+    ...row,
+    is_test_data: Boolean(row.is_test_data),
+    source_confidence: Number(row.source_confidence || 0),
+    confidence_score: Number(row.confidence_score || 0),
+    customer_value_score: Number(row.customer_value_score || 0),
+    buying_opportunity_score: Number(row.buying_opportunity_score || 0),
+    sales_priority_score: Number(row.sales_priority_score || 0)
+  };
 }
 
 function customerRecommendationNames(customerId) {
@@ -1723,6 +2839,13 @@ function customerDetailData(id) {
   customer.recommended_product_categories = [...new Set(customer.recommended_products.map(item => item.category).filter(Boolean))];
   customer.recommended_sales_angle = customer.recommended_products.map(item => item.sales_angle).filter(Boolean).join(' ');
   customer.outreach_drafts = db.prepare('SELECT * FROM customer_outreach_drafts WHERE customer_id = ? ORDER BY updated_at DESC').all(id).map(row => ({ ...row, recommended_products_snapshot: parseJsonValue(row.recommended_products_snapshot, []) }));
+  customer.intelligence_profiles = db.prepare('SELECT * FROM customer_intelligence_profiles WHERE customer_id = ? ORDER BY created_at DESC, id DESC LIMIT 10').all(id).map(row => ({ ...row, input_snapshot: parseJsonValue(row.input_snapshot), output_snapshot: parseJsonValue(row.output_snapshot) }));
+  customer.latest_intelligence_profile = customer.intelligence_profiles[0] || null;
+  customer.intelligence_feedback = db.prepare('SELECT customer_intelligence_feedback.*, users.name AS created_by_name FROM customer_intelligence_feedback LEFT JOIN users ON users.id = customer_intelligence_feedback.created_by WHERE customer_id = ? ORDER BY customer_intelligence_feedback.created_at DESC LIMIT 20').all(id);
+  customer.intelligence_updates = db.prepare(`SELECT customer_intelligence_updates.*, users.name AS created_by_name
+    FROM customer_intelligence_updates LEFT JOIN users ON users.id = customer_intelligence_updates.created_by
+    WHERE customer_id = ? ORDER BY customer_intelligence_updates.created_at DESC, customer_intelligence_updates.id DESC LIMIT 30`).all(id);
+  customer.score_history = db.prepare('SELECT * FROM customer_score_history WHERE customer_id = ? ORDER BY created_at DESC, id DESC LIMIT 30').all(id);
   customer.ai_runs = db.prepare('SELECT * FROM customer_ai_analysis_runs WHERE customer_id = ? ORDER BY created_at DESC LIMIT 20').all(id).map(row => ({ ...row, input_snapshot: parseJsonValue(row.input_snapshot), output_snapshot: parseJsonValue(row.output_snapshot) }));
   customer.activity = db.prepare('SELECT customer_activity_log.*, users.name AS created_by_name FROM customer_activity_log LEFT JOIN users ON users.id = customer_activity_log.created_by WHERE customer_id = ? ORDER BY customer_activity_log.created_at DESC LIMIT 50').all(id).map(row => ({ ...row, metadata: parseJsonValue(row.metadata) }));
   return customer;
@@ -1747,6 +2870,9 @@ function createCustomerRecord(input, source, user) {
     normalized.expansion_probability, normalized.renovation_probability, normalized.furniture_need_probability,
     normalized.budget_estimate || null, normalized.style_signal || null, Math.min(100, Math.max(0, Number(normalized.confidence_score) || 50)), user.id
   ).id);
+  db.prepare('UPDATE customers SET customer_source = ?, is_test_data = ?, recommended_product_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(customerSourceValue(input, validSource), input.is_test_data === true || input.is_test_data === 1 || input.is_test_data === 'true' ? 1 : 0,
+      recommendedProductReasonFor(normalized.customer_type, normalized.business_type), id);
   customerActivity(id, 'imported', `Customer imported from ${validSource}.`, user.id, { sourceUrl: normalized.source_url || null });
   audit(user.id, 'create', 'customers', String(id), { source: validSource });
   return { id, duplicate: false };
@@ -1819,6 +2945,147 @@ function runOpportunityEngine(customerId, user) {
     throw error;
   }
   return customerDetailData(customerId);
+}
+
+async function runCustomerIntelligenceEngine(customerId, user, body = {}) {
+  const existing = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+  if (!existing) { const error = new Error('Customer not found.'); error.status = 404; throw error; }
+  const text = name => String(body[name] ?? existing[name] ?? '').trim() || null;
+  if (['project_information', 'customer_comments', 'expected_purchase_timing', 'opportunity_notes', 'customer_type', 'industry'].some(name => body[name] !== undefined)) {
+    db.prepare(`UPDATE customers SET customer_type = ?, industry = ?, project_information = ?, customer_comments = ?,
+      expected_purchase_timing = ?, opportunity_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      text('customer_type'), text('industry') || 'Hospitality Furniture', text('project_information'), text('customer_comments'),
+      text('expected_purchase_timing'), text('opportunity_notes'), customerId
+    );
+  }
+  const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+  const previous = {
+    customer_value: Number(customer.customer_value_score || 0),
+    buying_opportunity: Number(customer.buying_opportunity_score || 0),
+    sales_priority: Number(customer.sales_priority_score || 0)
+  };
+  const intelligence = calculateCustomerIntelligence(customer);
+  const aiResult = await aiBusinessBrain.runAiAction({
+    moduleName: 'customer-intelligence',
+    actionName: 'phase2a-score-explanation',
+    entityType: 'customer',
+    entityId: customerId,
+    contextType: 'customer',
+    promptTemplateKey: 'v53.foundation.mock.v1',
+    userId: user.id,
+    user,
+    options: { provider: body.provider || 'rules' }
+  });
+  const output = { ...intelligence, aiExecutionLogId: aiResult.executionLogId, aiProvider: aiResult.provider, aiBrainSummary: aiResult.result?.summary || null };
+  let profileId;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    profileId = Number(db.prepare(`INSERT INTO customer_intelligence_profiles
+      (customer_id, customer_type, industry, customer_value_score, customer_value_grade, customer_value_explanation,
+       buying_opportunity_score, buying_opportunity_grade, buying_opportunity_explanation, purchase_timing,
+       purchase_timing_confidence, sales_priority_score, sales_priority_explanation, ai_recommendation, review_status,
+       input_snapshot, output_snapshot, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?) RETURNING id`).get(
+      customerId, intelligence.customer_type, intelligence.industry, intelligence.customer_value_score, intelligence.customer_value_grade,
+      intelligence.customer_value_explanation, intelligence.buying_opportunity_score, intelligence.buying_opportunity_grade,
+      intelligence.buying_opportunity_explanation, intelligence.purchase_timing, intelligence.purchase_timing_confidence,
+      intelligence.sales_priority_score, intelligence.sales_priority_explanation, intelligence.ai_recommendation,
+      JSON.stringify(customer), JSON.stringify(output), user.id
+    ).id);
+    db.prepare(`UPDATE customers SET customer_type = ?, industry = ?, customer_value_score = ?, customer_value_grade = ?,
+      customer_value_explanation = ?, buying_opportunity_score = ?, buying_opportunity_grade = ?, buying_opportunity_explanation = ?,
+      purchase_timing = ?, purchase_timing_confidence = ?, sales_priority_score = ?, sales_priority_explanation = ?,
+      ai_recommendation = ?, recommended_product_reason = ?, last_customer_intelligence_run_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      intelligence.customer_type, intelligence.industry, intelligence.customer_value_score, intelligence.customer_value_grade,
+      intelligence.customer_value_explanation, intelligence.buying_opportunity_score, intelligence.buying_opportunity_grade,
+      intelligence.buying_opportunity_explanation, intelligence.purchase_timing, intelligence.purchase_timing_confidence,
+      intelligence.sales_priority_score, intelligence.sales_priority_explanation, intelligence.ai_recommendation,
+      recommendedProductReasonFor(intelligence.customer_type, customer.business_type), customerId
+    );
+    const addHistory = db.prepare('INSERT INTO customer_score_history (customer_id, score_type, previous_score, new_score, reason, source, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    addHistory.run(customerId, 'customer_value', previous.customer_value, intelligence.customer_value_score, intelligence.customer_value_explanation, 'rules+ai-explanation', user.id);
+    addHistory.run(customerId, 'buying_opportunity', previous.buying_opportunity, intelligence.buying_opportunity_score, intelligence.buying_opportunity_explanation, 'rules+ai-explanation', user.id);
+    addHistory.run(customerId, 'sales_priority', previous.sales_priority, intelligence.sales_priority_score, intelligence.sales_priority_explanation, 'rules+ai-explanation', user.id);
+    customerActivity(customerId, 'customer intelligence scored', `Customer Value ${intelligence.customer_value_score}, Buying Opportunity ${intelligence.buying_opportunity_score}, Sales Priority ${intelligence.sales_priority_score}.`, user.id, { profileId, aiExecutionLogId: aiResult.executionLogId });
+    db.exec('COMMIT');
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  }
+  return { customer: customerDetailData(customerId), profile: db.prepare('SELECT * FROM customer_intelligence_profiles WHERE id = ?').get(profileId), ai: aiResult };
+}
+
+function buildCustomerIntelligenceUpdateSummary(customer, reason, input, referenceNote = '') {
+  const cleanInput = String(input || '').trim().replace(/\s+/g, ' ');
+  const cleanReference = String(referenceNote || '').trim().replace(/\s+/g, ' ');
+  const sourceText = `${cleanInput} ${cleanReference}`.toLowerCase();
+  const latest = cleanInput || 'Manual customer information update was submitted.';
+  const importantChanges = `${reason}: ${cleanInput || 'No detailed change text provided.'}${cleanReference ? ` Reference: ${cleanReference}` : ''}`;
+  const hasExpansion = /\b(second|new location|expansion|expand|chain|franchise|opening|open)\b/i.test(sourceText);
+  const hasRequirement = /\b(need|requirement|quote|quotation|rfq|pi|table|chair|booth|bar stool|counter|furniture|package)\b/i.test(sourceText);
+  const hasRestart = reason === 'Customer follow-up restart' || /\b(inactive|restart|follow[- ]?up|reconnect|again)\b/i.test(sourceText);
+  const hasHandoff = reason === 'New salesperson handoff';
+  const opportunityImpact = hasExpansion
+    ? 'Potential opportunity increased because the update indicates expansion, new location, or opening activity.'
+    : hasRequirement
+      ? 'Potential opportunity increased because the update includes a new requirement or quote-related signal.'
+      : hasRestart
+        ? 'Opportunity should be rechecked because the relationship is being restarted after inactivity.'
+        : hasHandoff
+          ? 'Opportunity status should be reviewed by the new salesperson before the next customer touchpoint.'
+          : 'Opportunity impact is informational until stronger requirement, timing, or contact signals are confirmed.';
+  const nextAction = hasRequirement
+    ? 'Review the requirement, confirm quantity / budget / timing, and prepare product matching or quotation if appropriate.'
+    : hasExpansion
+      ? 'Confirm project timing, decision maker, destination, and furniture package scope.'
+      : hasRestart
+        ? 'Send a light follow-up, confirm whether the project is still active, and update purchase timing.'
+        : hasHandoff
+          ? 'New salesperson should review customer history and schedule the next follow-up.'
+          : 'Review the note and decide whether Customer Intelligence should be rerun.';
+  return {
+    latest_customer_situation: latest,
+    important_changes: importantChanges,
+    opportunity_impact: opportunityImpact,
+    recommended_next_action: nextAction,
+    ai_summary: `Latest customer situation: ${latest}\nImportant changes: ${importantChanges}\nOpportunity impact: ${opportunityImpact}\nRecommended next action: ${nextAction}`
+  };
+}
+
+async function saveCustomerIntelligenceUpdate(customerId, user, body = {}) {
+  const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
+  if (!customer) { const error = new Error('Customer not found.'); error.status = 404; throw error; }
+  const updateReason = allowedType(body.update_reason, customerIntelligenceUpdateReasons, 'Update reason');
+  const originalInput = requiredText(body.original_input, 'New information');
+  const referenceNote = String(body.reference_note || '').trim() || null;
+  const aiResult = await aiBusinessBrain.runAiAction({
+    moduleName: 'customer-intelligence',
+    actionName: 'manual-intelligence-update',
+    entityType: 'customer',
+    entityId: customerId,
+    contextType: 'customer',
+    promptTemplateKey: 'v53.foundation.mock.v1',
+    userId: user.id,
+    user,
+    options: { provider: body.provider || 'rules', updateReason }
+  });
+  const summary = buildCustomerIntelligenceUpdateSummary(customer, updateReason, originalInput, referenceNote);
+  const updateId = Number(db.prepare(`INSERT INTO customer_intelligence_updates
+    (customer_id, update_reason, original_input, reference_note, ai_summary, latest_customer_situation,
+     important_changes, opportunity_impact, recommended_next_action, ai_execution_log_id, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(
+    customerId, updateReason, originalInput, referenceNote, summary.ai_summary, summary.latest_customer_situation,
+    summary.important_changes, summary.opportunity_impact, summary.recommended_next_action, aiResult.executionLogId || null, user.id
+  ).id);
+  customerActivity(customerId, 'customer intelligence updated', `Manual intelligence update: ${updateReason}.`, user.id, { updateId, aiExecutionLogId: aiResult.executionLogId });
+  audit(user.id, 'update_customer_intelligence', 'customers', String(customerId), { updateId, updateReason });
+  return {
+    update: db.prepare(`SELECT customer_intelligence_updates.*, users.name AS created_by_name
+      FROM customer_intelligence_updates LEFT JOIN users ON users.id = customer_intelligence_updates.created_by
+      WHERE customer_intelligence_updates.id = ?`).get(updateId),
+    customer: customerDetailData(customerId),
+    ai: aiResult
+  };
 }
 
 const handlers = {
@@ -1954,6 +3221,28 @@ const handlers = {
     const addCustomOrderItem=db.prepare('INSERT INTO sales_order_custom_items(order_id,source_quote_custom_item_id,item_snapshot) VALUES(?,?,?)');detail.custom_items.forEach(item=>addCustomOrderItem.run(order.id,item.id,JSON.stringify(item)));
     db.prepare("UPDATE sales_inquiries SET status = 'Won', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id); timeline(inquiry.customer_id, id, 'Order Created', `${number} created.`, user, { orderId: order.id });
     return json(res, 201, { order });
+  },
+  async runAiBrainAction(req, res) {
+    const user = currentUser(req);
+    if (!['Admin', 'Owner'].includes(user?.role)) return json(res, user ? 403 : 401, { error: 'AI Business Brain foundation is internal/admin only.' });
+    const body = await readJson(req);
+    const result = await aiBusinessBrain.runAiAction({
+      moduleName: String(body.moduleName || 'ai-business-brain').trim(),
+      actionName: String(body.actionName || 'foundation-check').trim(),
+      entityType: String(body.entityType || body.contextType || '').trim(),
+      entityId: body.entityId,
+      contextType: String(body.contextType || '').trim(),
+      promptTemplateKey: body.promptTemplateKey || 'v53.foundation.mock.v1',
+      userId: user.id,
+      user,
+      options: body.options || {}
+    });
+    return json(res, 200, result);
+  },
+  aiBrainStatus(req, res) {
+    const user = currentUser(req);
+    if (!requires(user, 'debug-center')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    return json(res, 200, aiBusinessBrainDebugData());
   },
   aiCostSettings(req, res) {
     const user = currentUser(req);
@@ -2101,6 +3390,46 @@ const handlers = {
       capabilities:{canViewSensitive:canViewSensitiveProductData(user),canManage:canManageProductLibrary(user)},
       skuRules: { categoryCodes: skuCategoryCodes, styleCodes: skuStyleCodes }
     });
+  },
+
+  productIntelligenceProducts(req, res) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const ids = db.prepare("SELECT id FROM products WHERE status != 'archived' ORDER BY updated_at DESC").all().map(row => row.id);
+    return json(res, 200, {
+      products: ids.map(id => productIntelligenceListItem(productWithTags(id), user)),
+      capabilities: {
+        canViewSensitive: canViewSensitiveProductData(user),
+        canManage: canManageProductLibrary(user)
+      },
+      source: 'Product Library / Product Intelligence Center',
+      aiIntegration: {
+        externalProviderCalled: false,
+        preparedFor: ['AI recommendation', 'Quote Builder', 'PI Builder', 'Sales Assistant']
+      }
+    });
+  },
+
+  productIntelligenceProductDetail(req, res, id) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const detail = productIntelligenceDetailData(id, user);
+    return detail ? json(res, 200, { product: detail, capabilities: { canViewSensitive: canViewSensitiveProductData(user), canManage: canManageProductLibrary(user) } }) : json(res, 404, { error: 'Product not found.' });
+  },
+
+  productIntelligenceProductQuality(req, res, id) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const product = productKnowledge(id);
+    if (!product) return json(res, 404, { error: 'Product not found.' });
+    return json(res, 200, { product_id: id, sku: product.sku, quality: productQualitySummary(product) });
+  },
+
+  productIntelligenceProductContext(req, res, id) {
+    const user = currentUser(req);
+    if (!requires(user, 'products')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const context = productIntelligenceContextData(id, user);
+    return context ? json(res, 200, { context }) : json(res, 404, { error: 'Product not found.' });
   },
 
   async mutateProduct(req, res, id = null) {
@@ -2665,6 +3994,299 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
 
   deleteProduct(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const product=db.prepare('SELECT * FROM products WHERE id=?').get(id);if(!product)return json(res,404,{error:'Product not found.'});const historical=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE product_id=?').get(id).count)+Number(db.prepare('SELECT COUNT(*) AS count FROM sales_order_items WHERE product_id=?').get(id).count);if(historical){db.prepare("UPDATE products SET library_status='Hidden',visibility='Hidden',status='archived',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);return json(res,200,{deleted:false,archived:true,message:'Product hidden to preserve historical Quote, PI, and Order records.'})}db.prepare('DELETE FROM products WHERE id=?').run(id);return json(res,200,{deleted:true,archived:false})},
 
+  customerDiscoveryConfig(req, res) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!capabilities.canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    return json(res, 200, {
+      customerTypes: discoveryProfiles(),
+      capabilities: { canAnalyze: capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi },
+      aiPolicy: { externalProviderCalledOnLoad: false, provider: 'rules', costControlled: true }
+    });
+  },
+
+  customerDiscoveryRequests(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const rows = db.prepare(`SELECT customer_discovery_requests.*, users.name AS created_by_name
+      FROM customer_discovery_requests LEFT JOIN users ON users.id = customer_discovery_requests.created_by
+      ORDER BY customer_discovery_requests.created_at DESC, customer_discovery_requests.id DESC LIMIT 50`).all()
+      .map(row => ({ ...row, search_plan: parseJsonValue(row.search_plan), guidance: parseJsonValue(row.guidance), scoring_profile: parseJsonValue(row.scoring_profile) }));
+    return json(res, 200, { requests: rows });
+  },
+
+  async analyzeCustomerDiscovery(req, res, actionName = 'analyze-requirement') {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Customer discovery analysis is not allowed for this role.' });
+    const body = await readJson(req);
+    const rawRequest = requiredText(body.request_text || body.prompt, 'Discovery request');
+    const { plan, guidance, scoringProfile } = buildDiscoveryPlan(rawRequest);
+    const row = db.prepare(`INSERT INTO customer_discovery_requests
+      (raw_request, status, target_customer_type, industry, region, country, search_plan, guidance, scoring_profile, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(
+      rawRequest,
+      guidance.needs_more_information ? 'needs_more_information' : 'planned',
+      plan.target_customer_type,
+      plan.industry,
+      plan.region_city === 'Needs Clarification' ? null : plan.region_city,
+      plan.country === 'Needs Clarification' ? null : plan.country,
+      JSON.stringify(plan),
+      JSON.stringify(guidance),
+      JSON.stringify(scoringProfile || {}),
+      user.id
+    );
+    const aiResult = await aiBusinessBrain.runAiAction({
+      moduleName: 'customer-discovery',
+      actionName,
+      entityType: 'customer_discovery_request',
+      entityId: row.id,
+      contextType: 'customer-discovery',
+      promptTemplateKey: 'v53.foundation.mock.v1',
+      userId: user.id,
+      user,
+      options: { provider: 'rules' }
+    });
+    db.prepare(`UPDATE customer_discovery_requests SET ai_execution_log_id = ?, cost_log_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(aiResult.executionLogId, aiResult.cost?.executedCostLogId || aiResult.cost?.estimate?.id || null, row.id);
+    audit(user.id, actionName, 'customer_discovery_requests', String(row.id), { targetCustomerType: plan.target_customer_type, confidence: plan.confidence_score });
+    return json(res, 201, {
+      request: db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(row.id),
+      plan,
+      guidance,
+      action_name: actionName,
+      generated_search_plan: buildGeneratedSearchPlan(plan, guidance),
+      scoring_profile: scoringProfile,
+      downstream: ['Lead Pool', 'Lead Detail', 'Convert to Customer', 'Customers CRM', 'Sales Pipeline'],
+      ai: { status: aiResult.status, provider: aiResult.provider, executionLogId: aiResult.executionLogId, cost: aiResult.cost }
+    });
+  },
+
+  searchTasks(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const rows = db.prepare(`SELECT search_tasks.*, users.name AS created_by_name
+      FROM search_tasks LEFT JOIN users ON users.id = search_tasks.created_by
+      ORDER BY search_tasks.created_at DESC, search_tasks.id DESC LIMIT 200`).all().map(normalizeSearchTask);
+    return json(res, 200, { tasks: rows, statuses: searchTaskStatuses });
+  },
+
+  searchTaskDetail(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const task = normalizeSearchTask(db.prepare(`SELECT search_tasks.*, users.name AS created_by_name
+      FROM search_tasks LEFT JOIN users ON users.id = search_tasks.created_by WHERE search_tasks.id = ?`).get(id));
+    if (!task) return json(res, 404, { error: 'Search task not found.' });
+    const results = searchResultsForTask(id);
+    return json(res, 200, { task: { ...task, search_results: results, search_result_summary: searchResultSummary(results) }, statuses: searchTaskStatuses, searchResultStatuses });
+  },
+
+  async createSearchTask(req, res) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Search task creation is not allowed for this role.' });
+    const body = await readJson(req);
+    const discoveryId = Number(body.customer_discovery_request_id || body.discovery_request_id);
+    const request = db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(discoveryId);
+    if (!request) return json(res, 404, { error: 'Customer discovery request not found.' });
+    const plan = parseJsonValue(request.search_plan, {});
+    const guidance = parseJsonValue(request.guidance, {});
+    const generated = body.generated_search_plan && typeof body.generated_search_plan === 'object'
+      ? body.generated_search_plan
+      : buildGeneratedSearchPlan(plan, guidance);
+    const targetQuantity = Number(String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || body.target_quantity || 0);
+    const row = db.prepare(`INSERT INTO search_tasks
+      (customer_discovery_request_id, task_name, target_customer, customer_type, industry, location, company_size,
+       search_objective, keywords, filters, target_quantity, priority, required_data_fields, status, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', ?) RETURNING id`).get(
+      discoveryId,
+      body.task_name || nextSearchTaskName(),
+      generated.target_customer || plan.target_customer_type || null,
+      generated.customer_type || plan.target_customer_type || null,
+      generated.industry || plan.industry || 'Hospitality Furniture',
+      generated.location || [plan.region_city, plan.country].filter(Boolean).join(', ') || null,
+      generated.company_size_detail || generated.company_size || plan.company_size_detail || plan.company_size || null,
+      generated.search_objective || null,
+      JSON.stringify(generated.search_keywords || plan.recommended_keywords || []),
+      JSON.stringify(generated.recommended_filters || []),
+      targetQuantity,
+      generated.priority || 'Medium',
+      JSON.stringify(generated.required_data_fields || generated.recommended_data_fields || []),
+      user.id
+    );
+    const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(row.id));
+    audit(user.id, 'create_search_task', 'search_tasks', String(row.id), { discoveryId, targetQuantity, priority: task.priority });
+    return json(res, 201, { task });
+  },
+
+  updateSearchTaskStatus(req, res, id, action) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunCustomerIntelligence && !opportunityCapabilities(user).canRunAi) return json(res, user ? 403 : 401, { error: 'Search task status update is not allowed for this role.' });
+    const task = db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(id);
+    if (!task) return json(res, 404, { error: 'Search task not found.' });
+    if (action !== 'ready') return json(res, 400, { error: 'Only Draft to Ready is supported in this MVP.' });
+    if (task.status !== 'Draft') return json(res, 409, { error: 'Only Draft tasks can be marked Ready.' });
+    db.prepare("UPDATE search_tasks SET status = 'Ready', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    audit(user.id, 'mark_search_task_ready', 'search_tasks', String(id));
+    const updatedTask = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(id));
+    const results = searchResultsForTask(id);
+    return json(res, 200, { task: { ...updatedTask, search_results: results, search_result_summary: searchResultSummary(results) } });
+  },
+
+  searchTaskResults(req, res, taskId) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(taskId));
+    if (!task) return json(res, 404, { error: 'Search task not found.' });
+    const results = searchResultsForTask(taskId);
+    return json(res, 200, { task, summary: searchResultSummary(results), results, statuses: searchResultStatuses });
+  },
+
+  async createSearchResult(req, res, taskId) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Search result creation is not allowed for this role.' });
+    const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(taskId));
+    if (!task) return json(res, 404, { error: 'Search task not found.' });
+    try {
+      const body = await readJson(req);
+      const values = searchResultFieldValues(body, {}, task);
+      const aiResult = await aiBusinessBrain.runAiAction({
+        moduleName: 'opportunity-intelligence',
+        actionName: 'search-result-qualification',
+        entityType: 'search_task',
+        entityId: task.customer_discovery_request_id || taskId,
+        contextType: 'customer-discovery',
+        promptTemplateKey: 'v53.foundation.mock.v1',
+        userId: user.id,
+        user,
+        options: { provider: 'rules' }
+      });
+      const row = db.prepare(`INSERT INTO search_results
+        (search_task_id, company_name, customer_type, industry, country, city, website, contact_person, email, phone,
+         linkedin, instagram, company_size, business_type, purchase_potential, opportunity_score, qualification_reason,
+         opportunity_summary, why_customer_matters, recommended_next_action, source_type, source_reference, status, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reviewed', ?) RETURNING id`).get(
+        taskId, values.company_name, values.customer_type, values.industry, values.country, values.city, values.website,
+        values.contact_person, values.email, values.phone, values.linkedin, values.instagram, values.company_size,
+        values.business_type, values.purchase_potential, values.opportunity_score, values.qualification_reason,
+        values.opportunity_summary, values.why_customer_matters, values.recommended_next_action, values.source_type,
+        values.source_reference, user.id
+      );
+      audit(user.id, 'create_search_result', 'search_results', String(row.id), { taskId, aiExecutionLogId: aiResult.executionLogId });
+      return json(res, 201, { result: searchResultDetail(row.id), ai: { provider: aiResult.provider, executionLogId: aiResult.executionLogId, cost: aiResult.cost } });
+    } catch (error) {
+      return json(res, error.status || 400, { error: error.message });
+    }
+  },
+
+  searchResultDetail(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    const result = searchResultDetail(id);
+    return result ? json(res, 200, { result, statuses: searchResultStatuses }) : json(res, 404, { error: 'Search result not found.' });
+  },
+
+  async updateSearchResult(req, res, id) {
+    const user = currentUser(req);
+    const capabilities = opportunityCapabilities(user);
+    if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Search result editing is not allowed for this role.' });
+    const existing = searchResultDetail(id);
+    if (!existing) return json(res, 404, { error: 'Search result not found.' });
+    if (existing.status === 'converted') return json(res, 409, { error: 'Converted search results cannot be edited.' });
+    try {
+      const body = await readJson(req);
+      const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(existing.search_task_id));
+      const values = searchResultFieldValues(body, existing, task);
+      const status = body.status && searchResultStatuses.includes(body.status) ? body.status : existing.status;
+      const aiResult = await aiBusinessBrain.runAiAction({
+        moduleName: 'opportunity-intelligence',
+        actionName: 'search-result-qualification',
+        entityType: 'search_result',
+        entityId: task.customer_discovery_request_id || existing.search_task_id,
+        contextType: 'customer-discovery',
+        promptTemplateKey: 'v53.foundation.mock.v1',
+        userId: user.id,
+        user,
+        options: { provider: 'rules' }
+      });
+      db.prepare(`UPDATE search_results SET company_name = ?, customer_type = ?, industry = ?, country = ?, city = ?,
+        website = ?, contact_person = ?, email = ?, phone = ?, linkedin = ?, instagram = ?, company_size = ?,
+        business_type = ?, purchase_potential = ?, opportunity_score = ?, qualification_reason = ?,
+        opportunity_summary = ?, why_customer_matters = ?, recommended_next_action = ?, source_type = ?,
+        source_reference = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+        values.company_name, values.customer_type, values.industry, values.country, values.city, values.website,
+        values.contact_person, values.email, values.phone, values.linkedin, values.instagram, values.company_size,
+        values.business_type, values.purchase_potential, values.opportunity_score, values.qualification_reason,
+        values.opportunity_summary, values.why_customer_matters, values.recommended_next_action, values.source_type,
+        values.source_reference, status, id
+      );
+      audit(user.id, 'update_search_result', 'search_results', String(id), { aiExecutionLogId: aiResult.executionLogId });
+      return json(res, 200, { result: searchResultDetail(id), ai: { provider: aiResult.provider, executionLogId: aiResult.executionLogId, cost: aiResult.cost } });
+    } catch (error) {
+      return json(res, error.status || 400, { error: error.message });
+    }
+  },
+
+  convertSearchResult(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunCustomerIntelligence && !opportunityCapabilities(user).canImport) return json(res, user ? 403 : 401, { error: 'Search result conversion is not allowed for this role.' });
+    const result = searchResultDetail(id);
+    if (!result) return json(res, 404, { error: 'Search result not found.' });
+    if (result.status === 'converted') return json(res, 409, { error: 'Search result already converted.' });
+    const website = String(result.website || '').trim();
+    const duplicate = website
+      ? db.prepare('SELECT * FROM customers WHERE LOWER(COALESCE(website, \'\')) = LOWER(?) LIMIT 1').get(website)
+      : db.prepare('SELECT * FROM customers WHERE LOWER(company_name) = LOWER(?) AND LOWER(COALESCE(country, \'\')) = LOWER(COALESCE(?, \'\')) LIMIT 1').get(result.company_name, result.country);
+    if (duplicate) return json(res, 409, { error: 'Possible existing customer found.', duplicate: mappedCustomer(duplicate) });
+    const created = createCustomerRecord({
+      company_name: result.company_name,
+      business_type: result.business_type || result.customer_type,
+      customer_type: result.customer_type,
+      industry: result.industry,
+      country: result.country,
+      city: result.city,
+      website: result.website,
+      email: result.email,
+      phone: result.phone,
+      source: 'Manual',
+      customer_source: 'Search Result',
+      source_url: result.source_url || result.website,
+      source_confidence: 70,
+      confidence_score: result.opportunity_score,
+      opportunity_notes: result.qualification_reason
+    }, 'Manual', user);
+    db.prepare(`UPDATE customers SET customer_source = 'Search Result', customer_type = ?, industry = ?, opportunity_notes = ?, ai_summary = ?,
+      ai_recommendation = ?, opportunity_score = ?, recommended_product_reason = ?, opportunity_status = 'Imported', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
+      result.customer_type || null, result.industry || 'Hospitality Furniture', result.qualification_reason || null,
+      result.opportunity_summary || null, result.recommended_next_action || null, Number(result.opportunity_score || 0),
+      recommendedProductReasonFor(result.customer_type, result.business_type), created.id
+    );
+    if (result.contact_person || result.email || result.phone || result.linkedin || result.instagram) {
+      db.prepare(`INSERT INTO customer_contacts
+        (customer_id, full_name, role, email, phone, linkedin_url, instagram_url, source, source_url, confidence_score, is_primary_decision_maker, notes, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Manual', ?, ?, ?, ?, ?)`).run(
+        created.id, result.contact_person || 'Unknown Contact', 'Other', result.email, result.phone, result.linkedin,
+        result.instagram, result.source_url || null, 70, result.contact_person ? 1 : 0, 'Created from Search Result conversion.', user.id
+      );
+    }
+    db.prepare("UPDATE search_results SET customer_id = ?, status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(created.id, id);
+    customerActivity(created.id, 'converted from search result', `Converted from Search Result #${id}.`, user.id, { searchResultId: id, searchTaskId: result.search_task_id });
+    audit(user.id, 'convert_search_result', 'search_results', String(id), { customerId: created.id });
+    return json(res, 200, { result: searchResultDetail(id), customer: customerDetailData(created.id) });
+  },
+
+  discardSearchResult(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunCustomerIntelligence && !opportunityCapabilities(user).canImport) return json(res, user ? 403 : 401, { error: 'Search result discard is not allowed for this role.' });
+    const result = searchResultDetail(id);
+    if (!result) return json(res, 404, { error: 'Search result not found.' });
+    if (result.status === 'converted') return json(res, 409, { error: 'Converted search results cannot be discarded.' });
+    db.prepare("UPDATE search_results SET status = 'discarded', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    audit(user.id, 'discard_search_result', 'search_results', String(id));
+    return json(res, 200, { result: searchResultDetail(id) });
+  },
+
   opportunityDashboard(req, res) {
     const user = currentUser(req);
     const capabilities = opportunityCapabilities(user);
@@ -2680,7 +4302,7 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     const params = [];
     const q = String(url.searchParams.get('q') || '').trim();
     if (q) { where.push('(customers.company_name LIKE ? COLLATE NOCASE OR customers.brand_name LIKE ? COLLATE NOCASE OR customers.city LIKE ? COLLATE NOCASE OR customers.country LIKE ? COLLATE NOCASE)'); params.push(...Array(4).fill(`%${q}%`)); }
-    for (const [parameter, column] of [['grade', 'opportunity_grade'], ['status', 'opportunity_status'], ['source', 'source']]) {
+    for (const [parameter, column] of [['grade', 'opportunity_grade'], ['status', 'opportunity_status'], ['source', 'source'], ['customer_source', 'customer_source'], ['customer_type', 'customer_type']]) {
       const value = String(url.searchParams.get(parameter) || '').trim();
       if (value) { where.push(`customers.${column} = ?`); params.push(value); }
     }
@@ -2688,7 +4310,7 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       (SELECT COUNT(*) FROM customer_contacts cc WHERE cc.customer_id = customers.id AND cc.is_primary_decision_maker = TRUE) AS decision_maker_count,
       (SELECT COUNT(*) FROM customer_data_gaps cg WHERE cg.customer_id = customers.id AND cg.status = 'Open') AS open_gap_count
       FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id WHERE ${where.join(' AND ')}
-      ORDER BY customers.opportunity_score DESC, customers.updated_at DESC LIMIT 1000`).all(...params).map(row => ({ ...mappedCustomer(row), recommended_categories: customerRecommendationNames(row.id).join(', ') }));
+      ORDER BY customers.sales_priority_score DESC, customers.opportunity_score DESC, customers.updated_at DESC LIMIT 1000`).all(...params).map(row => ({ ...mappedCustomer(row), recommended_categories: customerRecommendationNames(row.id).join(', ') }));
     return json(res, 200, { customers: rows, capabilities, sources: customerSources, contactRoles, statuses: opportunityStatuses, metrics: opportunityMetrics() });
   },
 
@@ -2776,6 +4398,55 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     const customer = runOpportunityEngine(id, user);
     aiCostControl.cacheSet(costInput, { customerId: id });
     return json(res, 200, { customer });
+  },
+
+  async runCustomerIntelligence(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'Customer Intelligence run is not allowed for this role.' });
+    const body = await readJson(req);
+    const result = await runCustomerIntelligenceEngine(id, user, body);
+    audit(user.id, 'run_customer_intelligence', 'customers', String(id), { profileId: result.profile.id });
+    return json(res, 200, result);
+  },
+
+  async saveCustomerIntelligenceFeedback(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canSubmitFeedback) return json(res, user ? 403 : 401, { error: 'Customer intelligence feedback is not allowed for this role.' });
+    if (!db.prepare('SELECT id FROM customers WHERE id = ?').get(id)) return json(res, 404, { error: 'Customer not found.' });
+    const body = await readJson(req);
+    const feedbackType = allowedType(body.feedback_type, customerIntelligenceFeedbackTypes, 'Feedback type');
+    const feedbackId = Number(db.prepare(`INSERT INTO customer_intelligence_feedback
+      (customer_id, feedback_type, feedback_note, sales_result_reference_type, sales_result_reference_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?) RETURNING id`).get(
+      id, feedbackType, String(body.feedback_note || '').trim() || null,
+      String(body.sales_result_reference_type || '').trim() || null, Number(body.sales_result_reference_id) || null, user.id
+    ).id);
+    customerActivity(id, 'customer intelligence feedback', `Sales feedback: ${feedbackType}.`, user.id, { feedbackId });
+    return json(res, 201, { feedback: db.prepare('SELECT * FROM customer_intelligence_feedback WHERE id = ?').get(feedbackId), customer: customerDetailData(id) });
+  },
+
+  async saveCustomerIntelligenceUpdate(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'Customer Intelligence update is not allowed for this role.' });
+    try {
+      const body = await readJson(req);
+      const result = await saveCustomerIntelligenceUpdate(id, user, body);
+      return json(res, 201, result);
+    } catch (error) {
+      return json(res, error.status || 400, { error: error.message });
+    }
+  },
+
+  customerIntelligencePriority(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Access denied.' });
+    const rows = db.prepare(`SELECT customers.*, users.name AS assigned_sales_name,
+      (SELECT full_name FROM customer_contacts cc WHERE cc.customer_id = customers.id AND cc.is_primary_decision_maker = TRUE ORDER BY cc.id LIMIT 1) AS decision_maker
+      FROM customers LEFT JOIN users ON users.id = customers.assigned_sales_id
+      WHERE customers.sales_priority_score > 0
+      ORDER BY customers.sales_priority_score DESC, customers.customer_value_score DESC, customers.buying_opportunity_score DESC, customers.updated_at DESC
+      LIMIT 200`).all().map(row => ({ ...mappedCustomer(row), recommended_products: customerRecommendationNames(row.id).join(', ') }));
+    return json(res, 200, { customers: rows });
   },
 
   async runSelectedCustomerAi(req, res) {
@@ -3009,7 +4680,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
         const category=db.prepare('SELECT id FROM product_categories WHERE name=?').get(draft.category),categoryId=category?.id||null;
         const attributes=categoryId?db.prepare(`SELECT pad.id,pad.name,pad.code FROM product_attribute_definitions pad JOIN product_attribute_category_links pacl ON pacl.attribute_id=pad.id WHERE pacl.category_id=? AND pad.active=1`).all(categoryId).map(attribute=>{const key=Object.keys(draft.mapped_product).find(field=>normalizeImportField(field)===normalizeImportField(attribute.name));return key&&draft.mapped_product[key]?{attribute_id:attribute.id,name:attribute.name,value:draft.mapped_product[key]}:null}).filter(Boolean):[];
         const pricing=calculateReferencePrice({supplierCost:draft.mapped_product.supplier_cost??draft.mapped_product.cost_price,supplierCurrency:draft.mapped_product.supplier_currency||'USD',exchangeRate:draft.mapped_product.exchange_rate||1,supplier:draft.mapped_product.default_supplier,categoryId,currency:'USD'});draft.mapped_product={...draft.mapped_product,reference_price:pricing.reference_price??draft.mapped_product.reference_price??null,converted_cost:pricing.converted_cost,pricing_rule_id:pricing.rule?.id||null,pricing_rule_applied:pricing.rule?.rule_name||null,pricing_status:pricing.pricing_status,pricing_confidence:pricing.pricing_confidence};draft.variants=draft.variants.map(variant=>{const result=calculateReferencePrice({supplierCost:variant.cost_price??draft.mapped_product.supplier_cost,supplierCurrency:draft.mapped_product.supplier_currency||'USD',exchangeRate:draft.mapped_product.exchange_rate||1,supplier:draft.mapped_product.default_supplier,categoryId,currency:'USD'});return {...variant,reference_price:result.reference_price??variant.reference_price??null,converted_cost:result.converted_cost,pricing_rule_id:result.rule?.id||null,pricing_rule_applied:result.rule?.rule_name||null,pricing_status:result.pricing_status,pricing_confidence:result.pricing_confidence,supplier_currency:draft.mapped_product.supplier_currency,exchange_rate:draft.mapped_product.exchange_rate}});
-        const image=assetUrls[index]||null,missing=[...draft.missing_fields,...(!image?['Image Assets Needed']:[]),...(pricing.rule?[]:['Needs Pricing Review'])],duplicate=findImportDuplicate(draft);
+        const image=assetUrls[index]||null,sourceRow=draft.source_rows?.[0]||{},imageSource=image?`Supplier Excel ${sourceRow.sheet||'Sheet'} Row ${sourceRow.row||sourceRow.row_number||index+1}`:null,missing=[...draft.missing_fields,...(!image?['Image Assets Needed']:[]),...(pricing.rule?[]:['Needs Pricing Review'])],duplicate=findImportDuplicate(draft);
+        draft.mapped_product={...draft.mapped_product,image_source:imageSource,image_confidence:image?95:0,import_workflow_status:missing.some(value=>value!=='Image Assets Needed')?'Needs Review':'AI Processing'};
         insert.run(id,missing.some(value=>value!=='Image Assets Needed')?'Needs Review':draft.status,draft.product_name,draft.product_sku,categoryId,JSON.stringify({...draft.mapped_product,duplicate_match:duplicate}),JSON.stringify(draft.variants),JSON.stringify(attributes),JSON.stringify(draft.source_rows),JSON.stringify(draft.source_mapping),JSON.stringify(draft.original_values),draft.product_group_confidence,draft.variant_confidence,draft.attribute_mapping_confidence,image?75:0,JSON.stringify(missing),image?'Embedded Image Extracted':'Image Assets Needed',image,duplicate?.id||null);
         if(missing.some(value=>value!=='Image Assets Needed'))for(const row of draft.source_rows)db.prepare('INSERT INTO product_import_errors(batch_id,source_row,product_name,reason,suggested_fix) VALUES(?,?,?,?,?)').run(id,row.row_number||null,draft.product_name,`Missing: ${missing.filter(value=>value!=='Image Assets Needed').join(', ')}`,'Complete the highlighted draft fields before approval.');
       });
@@ -3219,6 +4891,7 @@ const server = createServer(async (req, res) => {
         aiProductFactory: aiFactoryDebugData(),
         aiImageGeneration: aiImageGenerationDebugData(),
         opportunityIntelligence: opportunityDebugData(),
+        aiBusinessBrain: aiBusinessBrainDebugData(),
         aiCostControl: aiCostDebugData(),
         salesIntelligence: salesDebugData(),
         events: systemEvents.slice(-50).reverse()
@@ -3256,6 +4929,8 @@ const server = createServer(async (req, res) => {
     const quoteDetailMatch=url.pathname.match(/^\/api\/sales-quotes\/(\d+)$/);
     if(quoteDetailMatch&&req.method==='GET')return handlers.salesQuoteDetail(req,res,Number(quoteDetailMatch[1]));
     if(quoteDetailMatch&&req.method==='PUT')return await handlers.updateSalesQuote(req,res,Number(quoteDetailMatch[1]));
+    if (req.method === 'GET' && url.pathname === '/api/ai-brain/status') return handlers.aiBrainStatus(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/ai-brain/actions/run') return await handlers.runAiBrainAction(req, res);
     if (req.method === 'GET' && url.pathname === '/api/ai-cost/settings') return handlers.aiCostSettings(req, res);
     if (req.method === 'PUT' && url.pathname === '/api/ai-cost/settings') return await handlers.updateAiCostSettings(req, res);
     if (req.method === 'POST' && url.pathname === '/api/ai-cost/estimate') return await handlers.estimateAiCost(req, res);
@@ -3265,6 +4940,26 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/system/ai-image-provider/status') return handlers.aiImageProviderStatus(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity/dashboard') return handlers.opportunityDashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity-queue') return handlers.opportunityQueue(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/customer-intelligence/priority') return handlers.customerIntelligencePriority(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/customer-discovery/config') return handlers.customerDiscoveryConfig(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/customer-discovery/requests') return handlers.customerDiscoveryRequests(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/customer-discovery/analyze') return await handlers.analyzeCustomerDiscovery(req, res, 'analyze-requirement');
+    if (req.method === 'POST' && url.pathname === '/api/customer-discovery/generate-plan') return await handlers.analyzeCustomerDiscovery(req, res, 'generate-search-plan');
+    if (req.method === 'GET' && url.pathname === '/api/search-tasks') return handlers.searchTasks(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/search-tasks') return await handlers.createSearchTask(req, res);
+    const searchTaskResultsMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/results$/);
+    if (searchTaskResultsMatch && req.method === 'GET') return handlers.searchTaskResults(req, res, Number(searchTaskResultsMatch[1]));
+    if (searchTaskResultsMatch && req.method === 'POST') return await handlers.createSearchResult(req, res, Number(searchTaskResultsMatch[1]));
+    const searchTaskActionMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/(ready)$/);
+    if (searchTaskActionMatch && req.method === 'POST') return handlers.updateSearchTaskStatus(req, res, Number(searchTaskActionMatch[1]), searchTaskActionMatch[2]);
+    const searchTaskMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)$/);
+    if (searchTaskMatch && req.method === 'GET') return handlers.searchTaskDetail(req, res, Number(searchTaskMatch[1]));
+    const searchResultActionMatch = url.pathname.match(/^\/api\/search-results\/(\d+)\/(convert|discard)$/);
+    if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'convert') return handlers.convertSearchResult(req, res, Number(searchResultActionMatch[1]));
+    if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'discard') return handlers.discardSearchResult(req, res, Number(searchResultActionMatch[1]));
+    const searchResultMatch = url.pathname.match(/^\/api\/search-results\/(\d+)$/);
+    if (searchResultMatch && req.method === 'GET') return handlers.searchResultDetail(req, res, Number(searchResultMatch[1]));
+    if (searchResultMatch && req.method === 'PUT') return await handlers.updateSearchResult(req, res, Number(searchResultMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/customers/sales-handoff') return handlers.salesHandoff(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/run-ai-selected') return await handlers.runSelectedCustomerAi(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/import') return await handlers.importCustomers(req, res);
@@ -3288,6 +4983,12 @@ const server = createServer(async (req, res) => {
     if (customerGapsMatch && req.method === 'GET') return handlers.customerGaps(req, res, Number(customerGapsMatch[1]));
     const customerRunAiMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/run-ai$/);
     if (customerRunAiMatch && req.method === 'POST') return await handlers.runCustomerAi(req, res, Number(customerRunAiMatch[1]));
+    const customerIntelligenceRunMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/customer-intelligence\/run$/);
+    if (customerIntelligenceRunMatch && req.method === 'POST') return await handlers.runCustomerIntelligence(req, res, Number(customerIntelligenceRunMatch[1]));
+    const customerIntelligenceUpdateMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/customer-intelligence\/updates$/);
+    if (customerIntelligenceUpdateMatch && req.method === 'POST') return await handlers.saveCustomerIntelligenceUpdate(req, res, Number(customerIntelligenceUpdateMatch[1]));
+    const customerIntelligenceFeedbackMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/customer-intelligence\/feedback$/);
+    if (customerIntelligenceFeedbackMatch && req.method === 'POST') return await handlers.saveCustomerIntelligenceFeedback(req, res, Number(customerIntelligenceFeedbackMatch[1]));
     const customerHandoffMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/sales-handoff$/);
     if (customerHandoffMatch && req.method === 'POST') return await handlers.createSalesHandoff(req, res, Number(customerHandoffMatch[1]));
     const customerAcceptMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/accept-lead$/);
@@ -3295,6 +4996,13 @@ const server = createServer(async (req, res) => {
     const customerMatch = url.pathname.match(/^\/api\/customers\/(\d+)$/);
     if (customerMatch && req.method === 'GET') return handlers.customerDetail(req, res, Number(customerMatch[1]));
     if (customerMatch && req.method === 'PUT') return await handlers.updateCustomer(req, res, Number(customerMatch[1]));
+    if(req.method==='GET'&&url.pathname==='/api/product-intelligence/products')return handlers.productIntelligenceProducts(req,res);
+    const productIntelligenceQualityMatch=url.pathname.match(/^\/api\/product-intelligence\/products\/(\d+)\/quality$/);
+    if(productIntelligenceQualityMatch&&req.method==='GET')return handlers.productIntelligenceProductQuality(req,res,Number(productIntelligenceQualityMatch[1]));
+    const productIntelligenceContextMatch=url.pathname.match(/^\/api\/product-intelligence\/context\/products\/(\d+)$/);
+    if(productIntelligenceContextMatch&&req.method==='GET')return handlers.productIntelligenceProductContext(req,res,Number(productIntelligenceContextMatch[1]));
+    const productIntelligenceMatch=url.pathname.match(/^\/api\/product-intelligence\/products\/(\d+)$/);
+    if(productIntelligenceMatch&&req.method==='GET')return handlers.productIntelligenceProductDetail(req,res,Number(productIntelligenceMatch[1]));
     if(req.method==='GET'&&url.pathname==='/api/product-categories')return handlers.productCategories(req,res);
     if(req.method==='POST'&&url.pathname==='/api/product-categories')return await handlers.createProductCategory(req,res);
     const productCategoryMatch=url.pathname.match(/^\/api\/product-categories\/(\d+)$/);
