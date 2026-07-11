@@ -764,6 +764,22 @@ CREATE TABLE IF NOT EXISTS ai_execution_logs (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  knowledge_key TEXT NOT NULL CHECK (LENGTH(TRIM(knowledge_key)) > 0),
+  knowledge_type TEXT NOT NULL CHECK (knowledge_type IN ('company', 'target_customer_profile')),
+  title TEXT NOT NULL, summary TEXT,
+  content_json TEXT NOT NULL DEFAULT '{}', tags_json TEXT NOT NULL DEFAULT '[]',
+  revision_no INTEGER NOT NULL DEFAULT 1 CHECK (revision_no >= 1),
+  supersedes_id INTEGER REFERENCES knowledge_items(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Active', 'Needs Review', 'Outdated', 'Archived')),
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  submitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL, submitted_at TEXT,
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL, approved_at TEXT,
+  review_note TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (knowledge_key, revision_no)
+);
+
 INSERT INTO ai_cost_settings
   (daily_budget_usd, monthly_budget_usd, text_budget_usd, image_budget_usd, default_provider,
    allow_paid_provider, require_confirmation_over_usd, cache_ttl_days)
@@ -833,6 +849,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_prompt_templates_lookup ON ai_prompt_templates
 CREATE INDEX IF NOT EXISTS idx_ai_context_snapshots_lookup ON ai_context_snapshots(context_type, entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_execution_logs_lookup ON ai_execution_logs(module_name, action_name, entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_execution_logs_status ON ai_execution_logs(status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_items_single_active ON knowledge_items(knowledge_key) WHERE status = 'Active';
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(knowledge_type, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_key_revision ON knowledge_items(knowledge_key, revision_no DESC);
 
 CREATE TABLE IF NOT EXISTS sales_inquiries (
   id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
