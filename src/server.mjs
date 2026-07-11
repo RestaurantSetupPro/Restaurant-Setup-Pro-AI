@@ -2,13 +2,14 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
 import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
+import { createKnowledgeCenter } from './services/knowledge-center.mjs';
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
@@ -31,6 +32,7 @@ const demoMode = process.env.DEMO_MODE === 'true' || (process.env.DEMO_MODE !== 
 let db;
 let aiCostControl;
 let aiBusinessBrain;
+let knowledgeCenter;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -109,14 +111,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('024_v53_customer_source');
-      databaseDiagnostics.migration = migration?.version === '024_v53_customer_source';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('025_v53_ai_knowledge_center_foundation');
+      databaseDiagnostics.migration = migration?.version === '025_v53_ai_knowledge_center_foundation';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 024_v53_customer_source was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 025_v53_ai_knowledge_center_foundation was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -130,11 +132,12 @@ function initializeDatabase() {
       ensureQuoteBuilderColumns();
       ensureCustomerIntelligenceColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '024_v53_customer_source';
+      databaseDiagnostics.migrationVersion = '025_v53_ai_knowledge_center_foundation';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     seedCustomerDiscoveryProfiles();
     aiCostControl = createAiCostControl(db);
+    knowledgeCenter = createKnowledgeCenter({ db, audit });
     aiBusinessBrain = createAiBusinessBrain({ db, aiCostControl, buildContext: buildAiContext });
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
@@ -2040,11 +2043,47 @@ function salesQuoteDetail(id, user) {
 function saveQuoteVersion(quoteId,user){const quote=salesQuoteDetail(quoteId,user);const version=Number(db.prepare('SELECT COALESCE(MAX(version_number),0)+1 AS v FROM sales_quote_versions WHERE quote_id=?').get(quoteId).v);db.prepare('INSERT INTO sales_quote_versions(quote_id,version_number,snapshot,created_by) VALUES(?,?,?,?)').run(quoteId,version,JSON.stringify(quote),user.id);db.prepare('UPDATE sales_quotes SET current_version=? WHERE id=?').run(version,quoteId);return version;}
 function syncQuoteStoredTotals(quoteId,user){db.prepare("UPDATE sales_quote_items SET final_selling_price_snapshot=unit_price,pricing_source=CASE WHEN reference_price_snapshot IS NOT NULL AND ABS(unit_price-reference_price_snapshot)>.0001 THEN 'Manual Quote Edit' ELSE 'Reference' END WHERE quote_id=?").run(quoteId);const quote=salesQuoteDetail(quoteId,user);if(quote)db.prepare('UPDATE sales_quotes SET subtotal=?,discount_total=?,total=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(quote.summary.product_subtotal,quote.summary.discount,quote.summary.grand_total,quoteId)}
 
+function knowledgePricingGuidance(user, productIds = []) {
+  if (user?.role === 'Designer' || user?.role === 'VA') return null;
+  const sensitive = canViewSensitiveProductData(user);
+  const ids = (Array.isArray(productIds) ? productIds : []).map(Number).filter(Boolean).slice(0, 50);
+  const where = ids.length ? `WHERE pv.product_id IN (${ids.map(() => '?').join(',')})` : '';
+  const variants = db.prepare(`SELECT pv.id, pv.product_id, pv.variant_name, pv.reference_price, pv.pricing_status${sensitive ? ', pv.supplier_cost, pv.converted_cost, pv.supplier_currency, pv.pricing_rule_id' : ''} FROM product_variants pv ${where} ORDER BY pv.updated_at DESC LIMIT 100`).all(...ids);
+  return { sellingPriceGuidance: variants, rules: sensitive ? db.prepare('SELECT * FROM product_price_rules WHERE active = 1 ORDER BY effective_date DESC, id DESC LIMIT 50').all() : [], sensitiveFieldsIncluded: sensitive };
+}
+
+function existingCustomerLearning(options = {}) {
+  const days = Math.min(730, Math.max(30, Number(options.timeRangeDays || 365)));
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const wonLost = db.prepare("SELECT opportunity_status, COUNT(*) AS count FROM customers WHERE opportunity_status IN ('Won','Lost') AND updated_at >= ? GROUP BY opportunity_status").all(since);
+  const countries = db.prepare("SELECT country, COUNT(*) AS count FROM customers WHERE opportunity_status = 'Won' AND updated_at >= ? AND country IS NOT NULL GROUP BY country ORDER BY count DESC LIMIT 20").all(since);
+  const customerTypes = db.prepare("SELECT customer_type, COUNT(*) AS count FROM customers WHERE opportunity_status = 'Won' AND updated_at >= ? AND customer_type IS NOT NULL GROUP BY customer_type ORDER BY count DESC LIMIT 20").all(since);
+  const feedback = db.prepare('SELECT feedback_type, COUNT(*) AS count FROM customer_intelligence_feedback WHERE created_at >= ? GROUP BY feedback_type ORDER BY count DESC LIMIT 20').all(since);
+  const orderSummary = db.prepare('SELECT COUNT(*) AS order_count, MIN(total) AS min_total, MAX(total) AS max_total, AVG(total) AS average_total FROM sales_orders WHERE created_at >= ?').get(since);
+  return { timeRangeDays: days, wonLost, wonCountries: countries, wonCustomerTypes: customerTypes, feedbackSummary: feedback, orderSummary, confidence: wonLost.some(row => row.opportunity_status === 'Lost') ? 'Low' : 'Low', warnings: ['Lost reasons are not structured; learning output is low confidence.'], privacy: 'Aggregated fields only; no communication bodies or personal contact data.' };
+}
+
+function buildKnowledgeContext({ contextType, user, options = {} }) {
+  if (!user) throw Object.assign(new Error('Authentication required.'), { status: 401 });
+  const requestedTypes = (Array.isArray(options.knowledgeTypes) ? options.knowledgeTypes : []).filter(type => knowledgeCenter.types.includes(type));
+  const types = requestedTypes.length ? requestedTypes : contextType === 'company-knowledge' ? ['company'] : contextType === 'target-customer-profile' ? ['target_customer_profile'] : [...knowledgeCenter.types];
+  const keys = (Array.isArray(options.knowledgeKeys) ? options.knowledgeKeys : []).map(String).filter(Boolean).slice(0, 100);
+  const active = knowledgeCenter.active(types, keys);
+  const references = active.map(item => ({ module: 'AI Knowledge Center', table: 'knowledge_items', id: item.id, knowledgeKey: item.knowledge_key, revision: item.revision_no, updatedAt: item.updated_at }));
+  const missing = keys.filter(key => !active.some(item => item.knowledge_key === key));
+  const productIds = (Array.isArray(options.productIds) ? options.productIds : []).map(Number).filter(Boolean).slice(0, 25);
+  const productKnowledgeItems = productIds.map(id => productKnowledge(id)).filter(Boolean).map(product => redactSensitiveProductData(product, user));
+  const context = { companyKnowledge: active.filter(item => item.knowledge_type === 'company'), targetCustomerProfiles: active.filter(item => item.knowledge_type === 'target_customer_profile'), productKnowledge: productKnowledgeItems, pricingGuidance: knowledgePricingGuidance(user, productIds), customerLearning: existingCustomerLearning(options), warnings: [...(missing.length ? [`No Active Knowledge found for: ${missing.join(', ')}`] : []), ...(!active.length ? ['No Active Knowledge is available; Draft and Needs Review revisions were not used.'] : [])] };
+  const contextHash = createHash('sha256').update(JSON.stringify({ revisionIds: active.map(item => item.id), context })).digest('hex');
+  return { contextType, entityType: 'knowledge-center', entityId: String(options.customerId || 'active'), redactionLevel: canViewSensitiveProductData(user) ? 'internal-sensitive' : 'internal-redacted', context, sourceReferences: references, contextHash };
+}
+
 function buildAiContext({ contextType, entityType, entityId, user, options = {} }) {
   const id = Number(entityId);
   const normalizedType = String(contextType || '').toLowerCase().replace(/[_\s-]+/g, '-');
   const sourceReferences = [];
   const base = { contextType: normalizedType, entityType, entityId: String(entityId), redactionLevel: canViewSensitiveProductData(user) ? 'internal-sensitive' : 'internal-redacted', sourceReferences };
+  if (['company-knowledge', 'target-customer-profile', 'knowledge-center'].includes(normalizedType)) return buildKnowledgeContext({ contextType: normalizedType, user, options });
   if (normalizedType === 'product') {
     if (!requires(user, 'products')) throw Object.assign(new Error('Product context access denied.'), { status: 403 });
     const product = productKnowledge(id);
@@ -3243,6 +3282,21 @@ const handlers = {
     const user = currentUser(req);
     if (!requires(user, 'debug-center')) return json(res, user ? 403 : 401, { error: 'Access denied.' });
     return json(res, 200, aiBusinessBrainDebugData());
+  },
+  knowledgeList(req, res, url) {
+    const user = currentUser(req);
+    return json(res, 200, { items: knowledgeCenter.list(user, { type: url.searchParams.get('type') || '', status: url.searchParams.get('status') || '', knowledgeKey: url.searchParams.get('knowledgeKey') || '', limit: url.searchParams.get('limit') || 100 }), types: knowledgeCenter.types, statuses: knowledgeCenter.statuses, capabilities: knowledgeCenter.permissions(user) });
+  },
+  async createKnowledge(req, res) { const user = currentUser(req); return json(res, 201, { item: knowledgeCenter.create(user, await readJson(req)) }); },
+  knowledgeDetail(req, res, id) { const user = currentUser(req); return json(res, 200, { item: knowledgeCenter.get(user, id), capabilities: knowledgeCenter.permissions(user) }); },
+  async updateKnowledge(req, res, id) { const user = currentUser(req); return json(res, 200, { item: knowledgeCenter.update(user, id, await readJson(req)) }); },
+  knowledgeHistory(req, res, id) { const user = currentUser(req); return json(res, 200, { history: knowledgeCenter.history(user, id) }); },
+  async transitionKnowledge(req, res, id, action) { const user = currentUser(req); const body = await readJson(req); const map = { 'submit-review': 'submit', approve: 'approve', 'request-changes': 'request_changes', 'mark-outdated': 'mark_outdated', archive: 'archive' }; return json(res, 200, { item: knowledgeCenter.transition(user, id, map[action], body.review_note) }); },
+  knowledgeContextPreview(req, res, url) {
+    const user = currentUser(req);
+    const split = name => String(url.searchParams.get(name) || '').split(',').map(value => value.trim()).filter(Boolean);
+    const result = buildKnowledgeContext({ contextType: 'knowledge-center', user, options: { knowledgeTypes: split('knowledgeTypes'), knowledgeKeys: split('knowledgeKeys'), productIds: split('productIds'), customerId: url.searchParams.get('customerId'), timeRangeDays: url.searchParams.get('timeRangeDays') } });
+    return json(res, 200, { ...result, cost: { aiCalled: false, estimatedCostUsd: 0 } });
   },
   aiCostSettings(req, res) {
     const user = currentUser(req);
@@ -4893,6 +4947,7 @@ const server = createServer(async (req, res) => {
         opportunityIntelligence: opportunityDebugData(),
         aiBusinessBrain: aiBusinessBrainDebugData(),
         aiCostControl: aiCostDebugData(),
+        knowledgeCenter: knowledgeCenter.debug(),
         salesIntelligence: salesDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
@@ -4937,6 +4992,16 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/ai-cost/confirm') return await handlers.confirmAiCost(req, res);
     if (req.method === 'GET' && url.pathname === '/api/ai-cost/logs') return handlers.aiCostLogs(req, res, url);
     if (req.method === 'GET' && url.pathname === '/api/ai-cost/dashboard') return handlers.aiCostDashboard(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/knowledge-center/context-preview') return handlers.knowledgeContextPreview(req, res, url);
+    if (req.method === 'GET' && url.pathname === '/api/knowledge-center') return handlers.knowledgeList(req, res, url);
+    if (req.method === 'POST' && url.pathname === '/api/knowledge-center') return await handlers.createKnowledge(req, res);
+    const knowledgeHistoryMatch = url.pathname.match(/^\/api\/knowledge-center\/(\d+)\/history$/);
+    if (knowledgeHistoryMatch && req.method === 'GET') return handlers.knowledgeHistory(req, res, Number(knowledgeHistoryMatch[1]));
+    const knowledgeActionMatch = url.pathname.match(/^\/api\/knowledge-center\/(\d+)\/(submit-review|approve|request-changes|mark-outdated|archive)$/);
+    if (knowledgeActionMatch && req.method === 'POST') return await handlers.transitionKnowledge(req, res, Number(knowledgeActionMatch[1]), knowledgeActionMatch[2]);
+    const knowledgeMatch = url.pathname.match(/^\/api\/knowledge-center\/(\d+)$/);
+    if (knowledgeMatch && req.method === 'GET') return handlers.knowledgeDetail(req, res, Number(knowledgeMatch[1]));
+    if (knowledgeMatch && req.method === 'PUT') return await handlers.updateKnowledge(req, res, Number(knowledgeMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/system/ai-image-provider/status') return handlers.aiImageProviderStatus(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity/dashboard') return handlers.opportunityDashboard(req, res);
     if (req.method === 'GET' && url.pathname === '/api/opportunity-queue') return handlers.opportunityQueue(req, res);
