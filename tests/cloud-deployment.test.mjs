@@ -36,6 +36,9 @@ test('cloud deployment files are safe and complete', () => {
   const env = read('.env.example');
   const ignore = read('.gitignore');
   const packageJson = JSON.parse(read('package.json'));
+  const indexHtml = read('public/index.html');
+  const app = read('public/app.js');
+  const server = read('src/server.mjs');
 
   assert.doesNotMatch(migration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS products/);
@@ -161,6 +164,16 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(ignore, /^\.env\.local$/m);
   assert.equal(packageJson.dependencies.pg.startsWith('^8.'), true);
   assert.equal(packageJson.scripts.start, 'node src/server.mjs');
+  assert.match(indexHtml, /\/app\.js\?v=__BUILD_VERSION__/);
+  assert.match(indexHtml, /\/styles\.css\?v=__BUILD_VERSION__/);
+  assert.match(server, /no-cache, no-store, must-revalidate/);
+  assert.match(server, /replaceAll\('__BUILD_VERSION__', buildVersion\)/);
+  assert.match(app, /route: 'knowledge-dashboard'/);
+  assert.match(app, /'knowledge-dashboard': renderKnowledgeDashboard/);
+  assert.match(app, /item\.route === 'knowledge-dashboard'/);
+  assert.match(app, /Company Knowledge/);
+  assert.match(app, /Target Customer Profiles/);
+  assert.match(app, /Save Draft/);
 });
 
 test('health check validates the database and returns the required payload', () => {

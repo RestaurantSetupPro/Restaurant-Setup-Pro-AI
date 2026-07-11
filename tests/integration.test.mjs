@@ -62,6 +62,14 @@ test('health check and application shell are available', async () => {
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
   assert.match(html, /Restaurant Setup Pro/);
   assert.match(html, /id="login-form"/);
+  assert.doesNotMatch(html, /__BUILD_VERSION__/);
+  assert.match(html, /\/app\.js\?v=(startup-|[a-f0-9])/i);
+  for (const asset of ['/app.js', '/styles.css']) {
+    const response = await fetch(`http://127.0.0.1:${port}${asset}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('cache-control') || '', /no-cache/);
+    assert.match(response.headers.get('cache-control') || '', /no-store/);
+  }
 });
 
 test('admin login creates a session with full access', async () => {
@@ -624,6 +632,26 @@ test('Workflow 1A manages approved knowledge revisions with role-safe determinis
   const masterAfter = await request('/api/products', admin); assert.equal(masterAfter.body.products.length, masterBefore.body.products.length);
   const debug = await request('/api/debug/system', admin); assert.equal(debug.body.knowledgeCenter.singleActiveValid, true);
   assert.doesNotMatch(JSON.stringify(debug.body.knowledgeCenter), /supplier_cost|minimum_margin/i);
+});
+
+test('all five roles receive Knowledge Dashboard access with server-enforced Workflow 1A RBAC', async () => {
+  const sessions = Object.fromEntries(await Promise.all(['Admin', 'Owner', 'Sales', 'Designer', 'VA'].map(async role => [role, await login(`${role.toLowerCase()}@rspro.ai`)])));
+  for (const role of Object.keys(sessions)) {
+    const list = await fetch(`http://127.0.0.1:${port}/api/knowledge-center`, { headers: { Cookie: sessions[role].cookie } });
+    assert.equal(list.status, 200, `${role} can open Knowledge Dashboard`);
+    const body = await list.json();
+    assert.equal(body.capabilities.canCreate, ['Admin', 'Owner', 'Sales', 'VA'].includes(role));
+  }
+  for (const role of ['Admin', 'Owner', 'Sales', 'VA']) {
+    const create = await fetch(`http://127.0.0.1:${port}/api/knowledge-center`, { method: 'POST', headers: { Cookie: sessions[role].cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ knowledge_key: `rbac-${role.toLowerCase()}`, knowledge_type: 'target_customer_profile', title: `${role} Draft`, content_json: {} }) });
+    assert.equal(create.status, 201, `${role} can create Draft`);
+  }
+  const designerCreate = await fetch(`http://127.0.0.1:${port}/api/knowledge-center`, { method: 'POST', headers: { Cookie: sessions.Designer.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ knowledge_key: 'rbac-designer', knowledge_type: 'company', title: 'Forbidden' }) });
+  assert.equal(designerCreate.status, 403);
+  const salesItems = await fetch(`http://127.0.0.1:${port}/api/knowledge-center`, { headers: { Cookie: sessions.Sales.cookie } }).then(response => response.json());
+  const salesOwnDraft = salesItems.items.find(item => item.knowledge_key === 'rbac-sales');
+  const salesApprove = await fetch(`http://127.0.0.1:${port}/api/knowledge-center/${salesOwnDraft.id}/approve`, { method: 'POST', headers: { Cookie: sessions.Sales.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(salesApprove.status, 403);
 });
 
 test('Owner and Sales Admin can create and edit Product Library records', async () => {

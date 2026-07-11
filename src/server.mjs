@@ -28,6 +28,7 @@ const databaseRetryDelayMs = Number(process.env.DATABASE_RETRY_DELAY_MS || 30_00
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
 const demoMode = process.env.DEMO_MODE === 'true' || (process.env.DEMO_MODE !== 'false' && process.env.NODE_ENV !== 'production');
+const buildVersion = String(process.env.BUILD_VERSION || process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || `startup-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '-');
 
 let db;
 let aiCostControl;
@@ -4879,17 +4880,19 @@ function serveStatic(req, res, pathname) {
   const requestedPath = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = normalize(join(publicDir, requestedPath));
   if (!filePath.startsWith(publicDir) || !existsSync(filePath)) {
-    const index = readFileSync(join(publicDir, 'index.html'));
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    const index = readFileSync(join(publicDir, 'index.html'), 'utf8').replaceAll('__BUILD_VERSION__', buildVersion);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
     return res.end(index);
   }
   const contentTypes = {
     '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
     '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8'
   };
-  const cache = extname(filePath) === '.html' ? 'no-cache' : 'public, max-age=3600';
+  const noCache = ['.html', '.js', '.css'].includes(extname(filePath));
+  const cache = noCache ? 'no-cache, no-store, must-revalidate' : 'public, max-age=3600';
   res.writeHead(200, { 'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream', 'Cache-Control': cache });
-  res.end(readFileSync(filePath));
+  const content = extname(filePath) === '.html' ? readFileSync(filePath, 'utf8').replaceAll('__BUILD_VERSION__', buildVersion) : readFileSync(filePath);
+  res.end(content);
 }
 
 const server = createServer(async (req, res) => {

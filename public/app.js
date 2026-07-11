@@ -247,7 +247,7 @@ function exitApp() {
 function buildShell() {
   let lastGroup = '';
   const salesRoutes = new Set(['new-inquiry','sales-customers','sales-quotes','sales-orders','sales-tasks']);
-  $('#main-nav').innerHTML = navItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route.startsWith('product-library-'))).map(item => {
+  $('#main-nav').innerHTML = navItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route === 'knowledge-dashboard' || item.route.startsWith('product-library-'))).map(item => {
     const group = item.groupKey !== lastGroup ? `<div class="nav-label">${t(item.groupKey)}</div>` : '';
     lastGroup = item.groupKey;
     return `${group}<a class="nav-item" href="#${item.route}" data-route="${item.route}">${icon(item.icon||item.route)}<span>${t(item.labelKey)}</span>${item.badge ? `<em class="nav-badge">${item.badge}</em>` : ''}</a>`;
