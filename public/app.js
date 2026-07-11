@@ -1,4 +1,5 @@
 import { getLocale, getSupportedLocales, localeForIntl, setLocale, t } from './i18n.js';
+import { uniqueNavigationItems } from './navigation.js';
 
 const state = {
   user: null,
@@ -93,6 +94,8 @@ const navItems = [
   { groupKey: 'common.system', route: 'debug-center', labelKey: 'nav.debugCenter' },
   { groupKey: 'common.system', route: 'settings', labelKey: 'nav.settings' }
 ];
+navItems.forEach(item => { item.id ||= item.route; });
+const uniqueNavItems = Object.freeze(uniqueNavigationItems(navItems));
 
 const roleEmails = {
   Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', 'Sales Admin': 'salesadmin@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
@@ -104,7 +107,7 @@ const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&a
 const money = value => new Intl.NumberFormat(localeForIntl(), { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value || 0));
 const quoteMoney = (value, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency: ['USD','CNY','MYR','THB','EUR','GBP'].includes(currency) ? currency : 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
 const shortMoney = value => Number(value) >= 1_000_000 ? `$${(Number(value) / 1_000_000).toFixed(2)}M` : `$${Math.round(Number(value) / 1000)}K`;
-const titleForRoute = route => t(navItems.find(item => item.route === route)?.labelKey || 'nav.dashboard');
+const titleForRoute = route => t(uniqueNavItems.find(item => item.route === route)?.labelKey || 'nav.dashboard');
 const allowed = route => state.user?.permissions.includes(route);
 const statusClass = status => String(status || '').toLowerCase().replaceAll('_', '-').replaceAll(' ', '-');
 const statusKey = status => ({
@@ -231,7 +234,7 @@ function enterApp() {
   buildShell();
   const requested = location.hash.slice(1);
   const defaultRoute = state.user.role === 'Sales' ? 'new-inquiry' : 'dashboard';
-  navigate(requested && navItems.some(item => item.route === requested) && allowed(requested) ? requested : defaultRoute, true);
+  navigate(requested && uniqueNavItems.some(item => item.route === requested) && allowed(requested) ? requested : defaultRoute, true);
 }
 
 function exitApp() {
@@ -247,7 +250,10 @@ function exitApp() {
 function buildShell() {
   let lastGroup = '';
   const salesRoutes = new Set(['new-inquiry','sales-customers','sales-quotes','sales-orders','sales-tasks']);
-  $('#main-nav').innerHTML = navItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route === 'knowledge-dashboard' || item.route.startsWith('product-library-'))).map(item => {
+  const renderedItems = uniqueNavItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route === 'knowledge-dashboard' || item.route.startsWith('product-library-')));
+  const renderedIds = new Set(renderedItems.map(item => item.id));
+  if (renderedIds.size !== renderedItems.length) throw new Error('Navigation menu IDs must be unique.');
+  $('#main-nav').innerHTML = renderedItems.map(item => {
     const group = item.groupKey !== lastGroup ? `<div class="nav-label">${t(item.groupKey)}</div>` : '';
     lastGroup = item.groupKey;
     return `${group}<a class="nav-item" href="#${item.route}" data-route="${item.route}">${icon(item.icon||item.route)}<span>${t(item.labelKey)}</span>${item.badge ? `<em class="nav-badge">${item.badge}</em>` : ''}</a>`;
@@ -263,7 +269,7 @@ function closeSidebar() {
 }
 
 async function navigate(route, replace = false) {
-  const known = navItems.some(item => item.route === route);
+  const known = uniqueNavItems.some(item => item.route === route);
   route = known ? route : 'dashboard';
   state.route = route;
   if (replace) history.replaceState(null, '', `#${route}`);
@@ -2595,7 +2601,7 @@ function closeSearch() {
 
 function renderSearchResults() {
   const query = $('#command-query').value.trim().toLowerCase();
-  const accessible = navItems.filter(item => allowed(item.route) && (!query || t(item.labelKey).toLowerCase().includes(query)));
+  const accessible = uniqueNavItems.filter(item => allowed(item.route) && (!query || t(item.labelKey).toLowerCase().includes(query)));
   $('#command-results').innerHTML = `<div class="command-group-label">${t('common.pages')}</div>${accessible.map((item, index) => `<div class="command-result ${index === 0 ? 'is-active' : ''}" data-route="${item.route}"><span class="metric-icon">${icon(item.route)}</span><span>${t(item.labelKey)}</span><small>${t(item.groupKey)}</small></div>`).join('') || `<div class="empty-state" style="padding:25px">${t('common.noMatches')}</div>`}`;
 }
 
