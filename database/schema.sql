@@ -546,7 +546,17 @@ CREATE TABLE IF NOT EXISTS customers (
   renovation_probability INTEGER NOT NULL DEFAULT 0, furniture_need_probability INTEGER NOT NULL DEFAULT 0,
   budget_estimate TEXT, style_signal TEXT, ai_summary TEXT, ai_recommendation TEXT, next_action TEXT, next_action_date TEXT,
   assigned_sales_id INTEGER REFERENCES users(id) ON DELETE SET NULL, confidence_score REAL NOT NULL DEFAULT 0,
-  last_ai_run_at TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  last_ai_run_at TEXT,
+  customer_type TEXT, industry TEXT,
+  customer_value_score INTEGER NOT NULL DEFAULT 0, customer_value_grade TEXT NOT NULL DEFAULT 'D',
+  customer_value_explanation TEXT, buying_opportunity_score INTEGER NOT NULL DEFAULT 0,
+  buying_opportunity_grade TEXT NOT NULL DEFAULT 'D', buying_opportunity_explanation TEXT,
+  purchase_timing TEXT NOT NULL DEFAULT 'Unknown', purchase_timing_confidence TEXT NOT NULL DEFAULT 'Low',
+  sales_priority_score INTEGER NOT NULL DEFAULT 0, sales_priority_explanation TEXT,
+  project_information TEXT, customer_comments TEXT, expected_purchase_timing TEXT, opportunity_notes TEXT,
+  customer_source TEXT NOT NULL DEFAULT 'Manual Import', is_test_data INTEGER NOT NULL DEFAULT 0,
+  recommended_product_reason TEXT,
+  last_customer_intelligence_run_at TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -595,6 +605,86 @@ CREATE TABLE IF NOT EXISTS customer_activity_log (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS customer_intelligence_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  customer_type TEXT, industry TEXT NOT NULL DEFAULT 'Hospitality Furniture',
+  customer_value_score INTEGER NOT NULL DEFAULT 0, customer_value_grade TEXT NOT NULL DEFAULT 'D',
+  customer_value_explanation TEXT, buying_opportunity_score INTEGER NOT NULL DEFAULT 0,
+  buying_opportunity_grade TEXT NOT NULL DEFAULT 'D', buying_opportunity_explanation TEXT,
+  purchase_timing TEXT NOT NULL DEFAULT 'Unknown', purchase_timing_confidence TEXT NOT NULL DEFAULT 'Low',
+  sales_priority_score INTEGER NOT NULL DEFAULT 0, sales_priority_explanation TEXT, ai_recommendation TEXT,
+  review_status TEXT NOT NULL DEFAULT 'draft', input_snapshot TEXT NOT NULL DEFAULT '{}', output_snapshot TEXT NOT NULL DEFAULT '{}',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_intelligence_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  feedback_type TEXT NOT NULL, feedback_note TEXT, sales_result_reference_type TEXT, sales_result_reference_id INTEGER,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_score_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  score_type TEXT NOT NULL, previous_score INTEGER, new_score INTEGER NOT NULL, reason TEXT,
+  source TEXT NOT NULL DEFAULT 'rules', created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_type_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_type TEXT NOT NULL UNIQUE,
+  industry TEXT NOT NULL DEFAULT 'Hospitality Furniture', description TEXT,
+  active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_type_score_dimensions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_type_profile_id INTEGER NOT NULL REFERENCES customer_type_profiles(id) ON DELETE CASCADE,
+  dimension_name TEXT NOT NULL, weight_percent INTEGER NOT NULL DEFAULT 0, description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_discovery_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, raw_request TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'planned',
+  target_customer_type TEXT, industry TEXT, region TEXT, country TEXT,
+  search_plan TEXT NOT NULL DEFAULT '{}', guidance TEXT NOT NULL DEFAULT '{}', scoring_profile TEXT NOT NULL DEFAULT '{}',
+  ai_execution_log_id INTEGER, cost_log_id INTEGER, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_discovery_request_id INTEGER REFERENCES customer_discovery_requests(id) ON DELETE SET NULL,
+  task_name TEXT NOT NULL, target_customer TEXT, customer_type TEXT, industry TEXT, location TEXT, company_size TEXT,
+  search_objective TEXT, keywords TEXT NOT NULL DEFAULT '[]', filters TEXT NOT NULL DEFAULT '[]',
+  target_quantity INTEGER NOT NULL DEFAULT 0, priority TEXT NOT NULL DEFAULT 'Medium',
+  required_data_fields TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'Draft',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS customer_intelligence_updates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  update_reason TEXT NOT NULL, original_input TEXT NOT NULL, reference_note TEXT, ai_summary TEXT NOT NULL,
+  latest_customer_situation TEXT, important_changes TEXT, opportunity_impact TEXT, recommended_next_action TEXT,
+  ai_execution_log_id INTEGER REFERENCES ai_execution_logs(id) ON DELETE SET NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, search_task_id INTEGER NOT NULL REFERENCES search_tasks(id) ON DELETE CASCADE,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL, company_name TEXT NOT NULL,
+  customer_type TEXT, industry TEXT NOT NULL DEFAULT 'Hospitality Furniture', country TEXT, city TEXT, website TEXT,
+  contact_person TEXT, email TEXT, phone TEXT, linkedin TEXT, instagram TEXT, company_size TEXT, business_type TEXT,
+  purchase_potential TEXT, opportunity_score INTEGER NOT NULL DEFAULT 0, qualification_reason TEXT,
+  opportunity_summary TEXT, why_customer_matters TEXT, recommended_next_action TEXT,
+  source_type TEXT NOT NULL DEFAULT 'Manual', source_reference TEXT, status TEXT NOT NULL DEFAULT 'new',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS ai_cost_settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   daily_budget_usd REAL NOT NULL DEFAULT 2, monthly_budget_usd REAL NOT NULL DEFAULT 50,
@@ -621,11 +711,69 @@ CREATE TABLE IF NOT EXISTS ai_cache_records (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS ai_prompt_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  prompt_key TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  module_name TEXT NOT NULL,
+  action_name TEXT NOT NULL,
+  variables TEXT NOT NULL DEFAULT '[]',
+  output_format TEXT NOT NULL DEFAULT 'json',
+  template_text TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(prompt_key, version)
+);
+
+CREATE TABLE IF NOT EXISTS ai_context_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  context_type TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  redaction_level TEXT NOT NULL DEFAULT 'internal',
+  context_hash TEXT NOT NULL,
+  context_json TEXT NOT NULL DEFAULT '{}',
+  source_references TEXT NOT NULL DEFAULT '[]',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ai_execution_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_name TEXT NOT NULL,
+  action_name TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  provider TEXT NOT NULL DEFAULT 'mock',
+  model TEXT,
+  prompt_template_key TEXT,
+  prompt_version INTEGER,
+  context_snapshot_id INTEGER REFERENCES ai_context_snapshots(id) ON DELETE SET NULL,
+  input_hash TEXT,
+  output_snapshot TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'blocked', 'cached')),
+  estimated_cost_usd REAL NOT NULL DEFAULT 0,
+  actual_cost_usd REAL NOT NULL DEFAULT 0,
+  cost_log_id INTEGER REFERENCES ai_cost_logs(id) ON DELETE SET NULL,
+  error_message TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT INTO ai_cost_settings
   (daily_budget_usd, monthly_budget_usd, text_budget_usd, image_budget_usd, default_provider,
    allow_paid_provider, require_confirmation_over_usd, cache_ttl_days)
 SELECT 2, 50, 20, 30, 'mock', 0, 0.01, 7
 WHERE NOT EXISTS (SELECT 1 FROM ai_cost_settings);
+
+INSERT INTO ai_prompt_templates(prompt_key, version, module_name, action_name, variables, output_format, template_text, active)
+SELECT 'v53.foundation.mock.v1', 1, 'ai-business-brain', 'foundation-check', '["context_type","entity_type","entity_id"]', 'json',
+       'Return a structured internal AI foundation response using only the provided business context. Do not modify source-of-truth business records.', 1
+WHERE NOT EXISTS (SELECT 1 FROM ai_prompt_templates WHERE prompt_key = 'v53.foundation.mock.v1' AND version = 1);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
@@ -663,9 +811,28 @@ CREATE INDEX IF NOT EXISTS idx_customer_ai_runs_customer ON customer_ai_analysis
 CREATE INDEX IF NOT EXISTS idx_customer_recommendations ON customer_product_recommendations(customer_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_outreach_status ON customer_outreach_drafts(customer_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_activity ON customer_activity_log(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_intelligence_profiles_customer ON customer_intelligence_profiles(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_intelligence_profiles_priority ON customer_intelligence_profiles(sales_priority_score DESC, review_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_intelligence_feedback_customer ON customer_intelligence_feedback(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_score_history_customer ON customer_score_history(customer_id, score_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_type_profiles_active ON customer_type_profiles(active, sort_order, customer_type);
+CREATE INDEX IF NOT EXISTS idx_customer_type_score_dimensions_profile ON customer_type_score_dimensions(customer_type_profile_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_customer_discovery_requests_created ON customer_discovery_requests(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_tasks_status_created ON search_tasks(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_tasks_discovery_request ON search_tasks(customer_discovery_request_id);
+CREATE INDEX IF NOT EXISTS idx_customer_intelligence_updates_customer ON customer_intelligence_updates(customer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_results_task_status ON search_results(search_task_id, status, opportunity_score DESC);
+CREATE INDEX IF NOT EXISTS idx_search_results_company_country ON search_results(company_name, country);
+CREATE INDEX IF NOT EXISTS idx_search_results_customer_id ON search_results(customer_id);
+CREATE INDEX IF NOT EXISTS idx_customers_customer_source ON customers(customer_source, opportunity_grade, sales_priority_score DESC);
+CREATE INDEX IF NOT EXISTS idx_customers_test_data ON customers(is_test_data, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_created ON ai_cost_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_module ON ai_cost_logs(module_name, action_name, status);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_cache_records(module_name, action_name, entity_type, entity_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_ai_prompt_templates_lookup ON ai_prompt_templates(prompt_key, active, version DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_context_snapshots_lookup ON ai_context_snapshots(context_type, entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_execution_logs_lookup ON ai_execution_logs(module_name, action_name, entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_execution_logs_status ON ai_execution_logs(status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS sales_inquiries (
   id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
