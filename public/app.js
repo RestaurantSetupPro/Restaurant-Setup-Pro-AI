@@ -421,8 +421,9 @@ function knowledgeScoreBadge(score) {
 }
 
 async function renderKnowledgeDashboard() {
-  const data = state.knowledgeDashboard || await api('/api/knowledge/dashboard');
+  const [data, center] = await Promise.all([state.knowledgeDashboard || api('/api/knowledge/dashboard'), api('/api/knowledge-center')]);
   state.knowledgeDashboard = data;
+  state.knowledgeCenter = center;
   const metric = data.metrics;
   const knowledgeRow = product => `<tr><td class="primary-cell"><strong>${esc(product.name)}</strong><small>${esc(product.sku)} · ${esc(product.category)}</small></td><td>${knowledgeScoreBadge(product.knowledge_score)}</td><td>${product.media_count}</td><td>${product.case_count}</td><td>${product.related_count}</td><td><button class="button button--compact" data-action="view-product" data-id="${product.id}">${t('knowledge.open')}</button></td></tr>`;
   $('#page').innerHTML = `
@@ -437,8 +438,30 @@ async function renderKnowledgeDashboard() {
     <section class="split-grid section-gap knowledge-lists">
       <article class="panel">${panelHeader(t('knowledge.top100'), t('knowledge.top100Sub'))}<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('fields.product')}</th><th>${t('knowledge.score')}</th><th>${t('knowledge.media')}</th><th>${t('knowledge.cases')}</th><th>${t('knowledge.related')}</th><th></th></tr></thead><tbody>${data.top.map(knowledgeRow).join('')}</tbody></table></div></article>
       <article class="panel">${panelHeader(t('knowledge.incomplete'), t('knowledge.incompleteSub'))}<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('fields.product')}</th><th>${t('knowledge.score')}</th><th>${t('knowledge.media')}</th><th>${t('knowledge.cases')}</th><th>${t('knowledge.related')}</th><th></th></tr></thead><tbody>${data.incomplete.map(knowledgeRow).join('')}</tbody></table></div></article>
+    </section>
+    <section class="panel section-gap knowledge-center-workspace">
+      <div class="panel-header"><div><h2>AI Knowledge Center</h2><p>Approved business knowledge for safe AI context.</p></div><button class="button" data-action="knowledge-context-preview">Context Preview</button></div>
+      <div class="knowledge-tabs"><button class="is-active" data-knowledge-filter="">All</button><button data-knowledge-filter="company">Company Knowledge</button><button data-knowledge-filter="target_customer_profile">Target Customer Profiles</button></div>
+      ${center.capabilities.canCreate ? `<form id="knowledge-create-form" class="form-grid section-gap">
+        <label class="field"><span>Knowledge Type</span><select name="knowledge_type"><option value="company">Company Knowledge</option><option value="target_customer_profile">Target Customer Profile</option></select></label>
+        <label class="field"><span>Knowledge Key</span><input name="knowledge_key" required placeholder="company-core or restaurant-chain-us"></label>
+        <label class="field"><span>Title</span><input name="title" required></label>
+        <label class="field field--wide"><span>Summary</span><textarea name="summary" rows="2"></textarea></label>
+        <label class="field field--wide"><span>Introduction / Profile Description</span><textarea name="description" rows="3"></textarea></label>
+        <label class="field"><span>Target Countries</span><input name="target_countries" placeholder="United States, Canada"></label>
+        <label class="field"><span>Categories / Customer Types</span><input name="categories" placeholder="Dining Chairs, Restaurant Chains"></label>
+        <label class="field field--wide"><span>Strengths / Business Signals</span><textarea name="signals" rows="2"></textarea></label>
+        <label class="field field--wide"><span>Limits, exclusions, or prohibited promises</span><textarea name="limits" rows="2"></textarea></label>
+        <button class="button button--primary">Save Draft</button>
+      </form>` : ''}
+      <div class="table-scroll section-gap"><table class="data-table"><thead><tr><th>Knowledge</th><th>Type</th><th>Revision</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody id="knowledge-center-rows">${center.items.map(item => `<tr data-knowledge-type="${esc(item.knowledge_type)}"><td class="primary-cell"><strong>${esc(item.title)}</strong><small>${esc(item.knowledge_key)} · ${esc(item.summary || '')}</small></td><td>${esc(item.knowledge_type === 'company' ? 'Company' : 'Target Customer')}</td><td>v${item.revision_no}</td><td>${badge(item.status)}</td><td>${formatDateTime(item.updated_at)}</td><td><div class="row-actions">${item.status === 'Draft' ? `<button class="button button--compact" data-action="knowledge-submit" data-id="${item.id}">Submit Review</button>` : ''}${item.status === 'Needs Review' && center.capabilities.canApprove ? `<button class="button button--compact" data-action="knowledge-approve" data-id="${item.id}">Approve</button><button class="button button--compact" data-action="knowledge-request-changes" data-id="${item.id}">Request Changes</button>` : ''}${item.status === 'Active' ? `<button class="button button--compact" data-action="knowledge-new-revision" data-id="${item.id}">New Revision</button>${center.capabilities.canApprove ? `<button class="button button--compact" data-action="knowledge-outdated" data-id="${item.id}">Mark Outdated</button>` : ''}` : ''}${item.status === 'Outdated' && center.capabilities.canApprove ? `<button class="button button--compact" data-action="knowledge-archive" data-id="${item.id}">Archive</button>` : ''}<button class="icon-button" data-action="knowledge-history" data-id="${item.id}" title="History">${icon('clock')}</button></div></td></tr>`).join('') || '<tr><td colspan="6"><div class="empty-state">No knowledge records yet.</div></td></tr>'}</tbody></table></div>
     </section>`;
+  document.querySelectorAll('[data-knowledge-filter]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-knowledge-filter]').forEach(item => item.classList.toggle('is-active', item === button)); document.querySelectorAll('#knowledge-center-rows tr[data-knowledge-type]').forEach(row => row.hidden = Boolean(button.dataset.knowledgeFilter) && row.dataset.knowledgeType !== button.dataset.knowledgeFilter); }));
+  $('#knowledge-create-form')?.addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const list = name => String(form.get(name) || '').split(',').map(value => value.trim()).filter(Boolean); const type = String(form.get('knowledge_type')); const content = type === 'company' ? { company_introduction: form.get('description'), target_countries: list('target_countries'), main_product_categories: list('categories'), company_strengths: form.get('signals'), prohibited_sales_promises: form.get('limits') } : { profile_name: form.get('title'), target_countries: list('target_countries'), customer_types: list('categories'), target_business_signals: form.get('signals'), exclusions: form.get('limits') }; await api('/api/knowledge-center', { method: 'POST', body: JSON.stringify({ knowledge_type: type, knowledge_key: form.get('knowledge_key'), title: form.get('title'), summary: form.get('summary'), content_json: content, tags_json: [] }) }); toast('Knowledge Draft saved'); await renderKnowledgeDashboard(); });
 }
+
+async function knowledgeAction(id, action, reviewNote = '') { await api(`/api/knowledge-center/${id}/${action}`, { method: 'POST', body: JSON.stringify({ review_note: reviewNote }) }); toast('Knowledge status updated'); await renderKnowledgeDashboard(); }
+async function knowledgeContextPreview() { const data = await api('/api/knowledge-center/context-preview'); document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="knowledge-preview"><div class="modal-card"><div class="panel-header"><div><h2>Knowledge Context Preview</h2><p>Deterministic preview · $0 AI cost</p></div><button class="icon-button" data-action="close-knowledge-preview">${icon('close')}</button></div><div class="stack"><p><strong>Company Knowledge:</strong> ${data.context.companyKnowledge.length}</p><p><strong>Target Profiles:</strong> ${data.context.targetCustomerProfiles.length}</p><p><strong>Redaction:</strong> ${esc(data.redactionLevel)}</p>${data.context.warnings.map(value => `<p class="form-error">${esc(value)}</p>`).join('')}<div class="debug-table-list">${data.sourceReferences.map(ref => `<code>${esc(ref.knowledgeKey)} · v${ref.revision}</code>`).join('')}</div></div></div></div>`); }
 
 async function renderProducts() {
   const data = state.products || await api('/api/products');
@@ -2157,6 +2180,10 @@ async function renderDebugCenter() {
       ${data.aiCostControl.lastBlockedRun ? `<div class="debug-error section-gap"><strong>Last Blocked Run</strong><pre>${esc(data.aiCostControl.lastBlockedRun.blocked_reason)}</pre></div>` : ''}
     </article>
     <article class="panel section-gap">
+      ${panelHeader('AI Knowledge Center', `Single Active constraint: ${data.knowledgeCenter?.singleActiveValid ? 'healthy' : 'error'}`)}
+      <div class="metrics-grid compact-metrics">${metricCard('Active', data.knowledgeCenter?.active || 0, 'Approved revisions', 'check', 'green', true)}${metricCard('Needs Review', data.knowledgeCenter?.needsReview || 0, 'Human approval required', 'clock', data.knowledgeCenter?.needsReview ? 'gold' : 'green', true)}${metricCard('Outdated', data.knowledgeCenter?.outdated || 0, 'Historical revisions', 'document', '', true)}${metricCard('Missing Active', data.knowledgeCenter?.missingActive?.length || 0, 'Draft-only knowledge keys', 'warning', data.knowledgeCenter?.missingActive?.length ? 'gold' : 'green', true)}</div>
+    </article>
+    <article class="panel section-gap">
       ${panelHeader('Sales Intelligence Part 1', esc(data.salesIntelligence.workflow))}
       <div class="metrics-grid compact-metrics">${[['inquiries','Inquiries'],['analyses','AI Analyses'],['quotes','Quotes'],['orders','Orders'],['openTasks','Open Tasks']].map(([k,l])=>metricCard(l,data.salesIntelligence[k]||0,'Module 07 Part 1','briefcase','green',true)).join('')}</div>
     </article>
@@ -2316,6 +2343,24 @@ async function handleAction(action, node) {
     state.debugCenter = null;
     await renderDebugCenter();
     toast(t('debug.refreshed'));
+  } else if (action === 'knowledge-submit') {
+    await knowledgeAction(node.dataset.id, 'submit-review');
+  } else if (action === 'knowledge-approve') {
+    await knowledgeAction(node.dataset.id, 'approve');
+  } else if (action === 'knowledge-request-changes') {
+    await knowledgeAction(node.dataset.id, 'request-changes', prompt('Review note') || 'Changes requested');
+  } else if (action === 'knowledge-outdated') {
+    await knowledgeAction(node.dataset.id, 'mark-outdated');
+  } else if (action === 'knowledge-archive') {
+    await knowledgeAction(node.dataset.id, 'archive');
+  } else if (action === 'knowledge-new-revision') {
+    const detail = await api(`/api/knowledge-center/${node.dataset.id}`); await api(`/api/knowledge-center/${node.dataset.id}`, { method: 'PUT', body: JSON.stringify(detail.item) }); toast('New Draft revision created'); await renderKnowledgeDashboard();
+  } else if (action === 'knowledge-history') {
+    const data = await api(`/api/knowledge-center/${node.dataset.id}/history`); alert(data.history.map(item => `v${item.revision_no} · ${item.status} · ${item.updated_at}`).join('\n'));
+  } else if (action === 'knowledge-context-preview') {
+    await knowledgeContextPreview();
+  } else if (action === 'close-knowledge-preview') {
+    $('#knowledge-preview')?.remove();
   } else if (action === 'opportunity-tab') {
     state.opportunityView = node.dataset.tab;
     await renderOpportunityIntelligence();
