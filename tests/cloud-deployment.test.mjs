@@ -31,6 +31,7 @@ test('cloud deployment files are safe and complete', () => {
   const customerIntelligenceUpdateMigration = read('database/migrations/022_v53_customer_intelligence_update_history.sql');
   const searchResultStorageMigration = read('database/migrations/023_v53_search_result_storage.sql');
   const customerSourceMigration = read('database/migrations/024_v53_customer_source.sql');
+  const knowledgeCenterMigration = read('database/migrations/025_v53_ai_knowledge_center_foundation.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -144,6 +145,13 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(customerSourceMigration, /google_maps_url/);
   assert.match(customerSourceMigration, /google\.com\/maps|google%maps/);
   assert.doesNotMatch(customerSourceMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(knowledgeCenterMigration, /'025_v53_ai_knowledge_center_foundation'/);
+  assert.match(knowledgeCenterMigration, /CREATE TABLE IF NOT EXISTS knowledge_items/);
+  assert.match(knowledgeCenterMigration, /knowledge_type IN \('company', 'target_customer_profile'\)/);
+  assert.match(knowledgeCenterMigration, /status IN \('Draft', 'Active', 'Needs Review', 'Outdated', 'Archived'\)/);
+  assert.match(knowledgeCenterMigration, /UNIQUE \(knowledge_key, revision_no\)/);
+  assert.match(knowledgeCenterMigration, /WHERE status = 'Active'/);
+  assert.doesNotMatch(knowledgeCenterMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.doesNotMatch(globalPiMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);

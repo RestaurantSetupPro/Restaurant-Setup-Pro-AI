@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '024_v53_customer_source');
+  assert.equal(database.migrationVersion, '025_v53_ai_knowledge_center_foundation');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -590,6 +590,40 @@ test('Module 06A imports, scores, matches, drafts, hands off, and enforces role 
   assert.ok(debug.opportunityIntelligence.customers_count >= 3);
   assert.ok(debug.opportunityIntelligence.contacts_count >= 1);
   assert.equal(debug.opportunityIntelligence.product_matching_status, 'product-intelligence-connected');
+});
+
+test('Workflow 1A manages approved knowledge revisions with role-safe deterministic context', async () => {
+  const [admin, sales, designer, va] = await Promise.all(['admin@rspro.ai', 'sales@rspro.ai', 'designer@rspro.ai', 'va@rspro.ai'].map(login));
+  const request = async (path, session, method = 'GET', body) => {
+    const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { Cookie: session.cookie, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { response, body: await response.json() };
+  };
+  const costBefore = await request('/api/ai-cost/logs', admin);
+  const masterBefore = await request('/api/products', admin);
+  const created = await request('/api/knowledge-center', sales, 'POST', { knowledge_key: 'company-core', knowledge_type: 'company', title: 'Company Core', summary: 'Approved facts only', content_json: { company_introduction: 'Restaurant furniture partner', prohibited_sales_promises: 'No guaranteed delivery without confirmation' }, tags_json: ['company'] });
+  assert.equal(created.response.status, 201); assert.equal(created.body.item.status, 'Draft');
+  const id = created.body.item.id;
+  assert.equal((await request(`/api/knowledge-center/${id}/submit-review`, sales, 'POST', {})).body.item.status, 'Needs Review');
+  assert.equal((await request(`/api/knowledge-center/${id}/approve`, sales, 'POST', {})).response.status, 403);
+  assert.equal((await request(`/api/knowledge-center/${id}/approve`, admin, 'POST', { review_note: 'Approved' })).body.item.status, 'Active');
+  const revision = await request(`/api/knowledge-center/${id}`, sales, 'PUT', { title: 'Company Core Updated', summary: 'Draft update', content_json: { company_introduction: 'Unapproved revision' }, tags_json: [] });
+  assert.equal(revision.body.item.revision_no, 2); assert.equal(revision.body.item.status, 'Draft');
+  const previewDuringReview = await request('/api/knowledge-center/context-preview?knowledgeKeys=company-core', sales);
+  assert.equal(previewDuringReview.body.context.companyKnowledge[0].revision_no, 1);
+  assert.equal(previewDuringReview.body.cost.aiCalled, false); assert.equal(previewDuringReview.body.cost.estimatedCostUsd, 0);
+  assert.doesNotMatch(JSON.stringify(previewDuringReview.body), /supplier_cost|converted_cost|minimum_margin|supplier_name/i);
+  await request(`/api/knowledge-center/${revision.body.item.id}/submit-review`, sales, 'POST', {});
+  await request(`/api/knowledge-center/${revision.body.item.id}/approve`, admin, 'POST', {});
+  const history = await request(`/api/knowledge-center/${revision.body.item.id}/history`, admin);
+  assert.deepEqual(history.body.history.map(item => item.status), ['Active', 'Outdated']);
+  const salesList = await request('/api/knowledge-center', sales); assert.ok(salesList.body.items.every(item => item.status === 'Active' || item.created_by === sales.body.user.id));
+  const designerCreate = await request('/api/knowledge-center', designer, 'POST', { knowledge_key: 'forbidden', knowledge_type: 'company', title: 'Forbidden' }); assert.equal(designerCreate.response.status, 403);
+  const vaList = await request('/api/knowledge-center/context-preview', va); assert.doesNotMatch(JSON.stringify(vaList.body), /supplier_cost|converted_cost|minimum_margin|supplier_name/i);
+  const missing = await request('/api/knowledge-center/context-preview?knowledgeKeys=missing-key', sales); assert.match(missing.body.context.warnings.join(' '), /No Active Knowledge/);
+  const costAfter = await request('/api/ai-cost/logs', admin); assert.equal(costAfter.body.logs.length, costBefore.body.logs.length);
+  const masterAfter = await request('/api/products', admin); assert.equal(masterAfter.body.products.length, masterBefore.body.products.length);
+  const debug = await request('/api/debug/system', admin); assert.equal(debug.body.knowledgeCenter.singleActiveValid, true);
+  assert.doesNotMatch(JSON.stringify(debug.body.knowledgeCenter), /supplier_cost|minimum_margin/i);
 });
 
 test('Owner and Sales Admin can create and edit Product Library records', async () => {
