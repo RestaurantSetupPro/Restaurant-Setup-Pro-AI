@@ -2545,13 +2545,37 @@ function buildGeneratedSearchPlan(plan, guidance) {
   };
 }
 
-function strategyDataFromDiscovery(strategy) {
+function strategyTextValues(value) {
+  if (Array.isArray(value)) return value.flatMap(strategyTextValues);
+  return String(value || '').split(/\r?\n|[,;]+/).map(item => item.trim()).filter(item => item && item !== 'Needs Clarification');
+}
+
+function uniqueStrategyValues(...groups) {
+  return [...new Set(groups.flatMap(strategyTextValues))];
+}
+
+function strategyDataFromContext(strategy, context = {}) {
   const request = strategy.customer_discovery_request_id ? db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(strategy.customer_discovery_request_id) : null;
   const plan = parseJsonValue(request?.search_plan, {}), guidance = parseJsonValue(request?.guidance, {});
   const generated = buildGeneratedSearchPlan(plan, guidance);
   const location = String(generated.location || '').split(',').map(value => value.trim()).filter(Boolean);
   const expected = Math.max(0, Number(String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || 50));
-  return { ...blankSearchStrategyData(strategy.objective || generated.search_objective), targetMarket: { countries: request?.country ? [request.country] : location.slice(-1), cities: request?.region ? [request.region] : location.slice(0, -1), regions: [] }, targetCustomerProfile: { customerTypes: [generated.customer_type || plan.target_customer_type].filter(Boolean), companySize: { description: generated.company_size_detail || generated.company_size || '' }, businessAge: {}, locationCount: {}, expectedOrderRange: {} }, searchObjective: strategy.objective || generated.search_objective || `Find qualified ${plan.target_customer_type || 'restaurant furniture'} buyers`, productCategories: ['Restaurant Furniture'], searchKeywords: generated.search_keywords || plan.recommended_keywords || [], negativeKeywords: ['jobs', 'residential only'], platforms: ['Google Maps', 'Company Websites'], sourcePriority: ['Company Websites', 'Google Maps'], positiveSignals: { buyingSignals: ['New furniture requirement', 'Commercial project'], renovationSignals: ['Renovation announcement'], expansionSignals: ['New location', 'Multi-location growth'] }, exclusionRules: generated.recommended_filters || [], resultTarget: { expectedCount: expected, minimumQualifiedCount: Math.max(1, Math.floor(expected * 0.2)) }, stopConditions: ['Stop when the approved planning budget is reached', 'Stop when the expected result count is reached'], reasoning: ['Built from approved Knowledge Center context and the linked discovery request.'], warnings: guidance.needs_more_information ? ['Discovery request needs more information.'] : [], confidence: guidance.needs_more_information ? 0.55 : 0.8 };
+  const companies = Array.isArray(context.companyKnowledge) ? context.companyKnowledge : [], profiles = Array.isArray(context.targetCustomerProfiles) ? context.targetCustomerProfiles : [];
+  const companyContent = companies.map(item => parseJsonValue(item.content_json, {})), profileContent = profiles.map(item => parseJsonValue(item.content_json, {}));
+  const knowledgeCountries = uniqueStrategyValues(profileContent.map(item => item.target_countries || item.countries || []), companyContent.map(item => item.target_countries || item.countries || []));
+  const discoveryCountries = uniqueStrategyValues(request?.country, location.slice(-1));
+  const countries = knowledgeCountries.length ? knowledgeCountries : discoveryCountries;
+  const customerTypes = uniqueStrategyValues(profileContent.map(item => item.customer_types || item.target_customer_types || []), generated.customer_type, plan.target_customer_type);
+  const productCategories = uniqueStrategyValues(profileContent.map(item => item.product_categories || item.product_directions || []), companyContent.map(item => item.main_product_categories || item.product_categories || []), 'Restaurant Furniture');
+  const businessSignals = uniqueStrategyValues(profileContent.map(item => item.target_business_signals || item.business_signals || item.buying_signals || []));
+  const exclusions = uniqueStrategyValues(profileContent.map(item => item.exclusions || item.exclusion_rules || []), generated.exclude || plan.excluded_customers || []);
+  const knowledgeKeywords = customerTypes.flatMap(type => productCategories.map(category => `${type} ${category}`));
+  const searchKeywords = uniqueStrategyValues(generated.search_keywords || plan.recommended_keywords || [], knowledgeKeywords, customerTypes, productCategories.map(category => `${category} supplier`));
+  const warnings = [];
+  if (!countries.length) warnings.push('Target country is missing from Active Knowledge and the Discovery Request.');
+  if (!customerTypes.length) warnings.push('Target customer type is missing from Active Knowledge and the Discovery Request.');
+  if (!searchKeywords.length) warnings.push('Search keywords require a target customer type or product category.');
+  return { ...blankSearchStrategyData(strategy.objective || generated.search_objective), targetMarket: { countries, cities: uniqueStrategyValues(request?.region, location.slice(0, -1)), regions: [] }, targetCustomerProfile: { customerTypes, companySize: { description: strategyTextValues(generated.company_size_detail || generated.company_size)[0] || '' }, businessAge: {}, locationCount: {}, expectedOrderRange: {} }, searchObjective: strategy.objective || (customerTypes.length ? `Find qualified ${customerTypes.join(', ')} in ${countries.join(', ') || 'the approved target market'}` : generated.search_objective) || 'Find qualified restaurant furniture buyers', productCategories, searchKeywords, negativeKeywords: uniqueStrategyValues(exclusions, 'jobs', 'residential only'), platforms: ['Google Maps', 'Company Websites'], sourcePriority: ['Company Websites', 'Google Maps'], positiveSignals: { buyingSignals: businessSignals.length ? businessSignals : ['New furniture requirement', 'Commercial project'], renovationSignals: businessSignals.filter(value => /renovat|remodel|refurbish/i.test(value)), expansionSignals: businessSignals.filter(value => /expan|new location|multi-location|growth/i.test(value)) }, exclusionRules: uniqueStrategyValues(exclusions, generated.recommended_filters || []), resultTarget: { expectedCount: expected, minimumQualifiedCount: Math.max(1, Math.floor(expected * 0.2)) }, stopConditions: ['Stop when the approved planning budget is reached', 'Stop when the expected result count is reached'], reasoning: ['Built from approved Active Knowledge and the linked Discovery Request.'], warnings, confidence: warnings.length ? 0.65 : 0.85 };
 }
 
 function searchPlanningEstimate(data) {
@@ -4132,9 +4156,9 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     try {
       const result = await aiBusinessBrain.runAiAction({ moduleName: 'search-strategy', actionName: 'generate-draft', entityType: 'search_strategies', entityId: id, contextType: 'search-strategy', promptTemplateKey: 'v53.foundation.mock.v1', userId: user.id, user, options: { provider: body.provider || 'rules', productIds: Array.isArray(body.product_ids) ? body.product_ids : [], timeRangeDays: body.time_range_days || 365 } });
       if (result.status !== 'completed') return json(res, 409, { error: 'AI generation was blocked by Cost Control.', ai: result });
-      const data = strategyDataFromDiscovery(strategy); validateSearchStrategyData(data);
       const snapshot = db.prepare('SELECT * FROM ai_context_snapshots WHERE id = ?').get(result.contextSnapshotId);
       const snapshotContext = parseJsonValue(snapshot?.context_json, {}), sources = parseJsonValue(snapshot?.source_references, []);
+      const data = strategyDataFromContext(strategy, snapshotContext); validateSearchStrategyData(data);
       const references = sources.map(source => ({ sourceType: source.table || source.module, sourceRecordId: source.id || source.product_id || null, revision: source.revision || null, updatedAt: source.updatedAt || null }));
       const generated = searchStrategyService.setGenerated(id, { data, knowledgeReferences: references, evidenceReferences: references.map(source => ({ ...source, supportedStrategyField: 'searchObjective', confidence: data.confidence })), generationMetadata: { provider: result.provider, model: result.model, promptVersion: `${result.prompt.key}:v${result.prompt.version}`, generatedAt: new Date().toISOString(), contextType: 'search-strategy', contextHash: snapshotContext.contextHash || snapshot?.context_hash, schemaVersion: 'workflow-1b-v1', warnings: data.warnings, redactionLevel: snapshot?.redaction_level }, aiCostEstimate: result.cost?.estimate?.estimated_cost_usd || 0, contextSnapshotId: result.contextSnapshotId, executionLogId: result.executionLogId, costLogId: result.cost?.executedCostLogId || result.cost?.estimate?.id });
       audit(user.id, 'ai_generate_search_strategy', 'search_strategies', String(id), { executionLogId: result.executionLogId, contextSnapshotId: result.contextSnapshotId, costStatus: 'executed' });

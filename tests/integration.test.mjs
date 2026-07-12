@@ -657,7 +657,7 @@ test('all five roles receive Knowledge Dashboard access with server-enforced Wor
 test('Workflow 1B enforces structured Search Strategy approval, revision, cost, RBAC, and Search Task gates', async () => {
   const [admin, owner, sales, va, designer] = await Promise.all(['admin@rspro.ai','owner@rspro.ai','sales@rspro.ai','va@rspro.ai','designer@rspro.ai'].map(login));
   const call = async (path, session, method='GET', body) => { const response=await fetch(`http://127.0.0.1:${port}${path}`,{method,headers:{Cookie:session.cookie,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {response,body:await response.json()}; };
-  const target=await call('/api/knowledge-center',admin,'POST',{knowledge_key:'workflow-1b-target',knowledge_type:'target_customer_profile',title:'Restaurant Growth Buyers',content_json:{customer_types:['Restaurant Group'],countries:['USA']}});
+  const target=await call('/api/knowledge-center',admin,'POST',{knowledge_key:'workflow-1b-target',knowledge_type:'target_customer_profile',title:'Restaurant Growth Buyers',content_json:{target_countries:['United States'],customer_types:['Restaurant Furniture Dealers','Hospitality Furniture Distributors','Commercial Furniture Importers'],target_business_signals:'Restaurant renovation, New location expansion, Multi-location growth',product_directions:['Restaurant Chairs','Commercial Tables'],exclusions:'Residential-only stores, Job listings'}});
   await call(`/api/knowledge-center/${target.body.item.id}/submit-review`,admin,'POST',{});
   await call(`/api/knowledge-center/${target.body.item.id}/approve`,owner,'POST',{});
   const created=await call('/api/search-strategies',sales,'POST',{title:'AI Restaurant Growth Search',objective:'Find restaurant groups planning expansion'});
@@ -665,6 +665,12 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   const id=created.body.strategy.id;
   const generated=await call(`/api/search-strategies/${id}/generate`,sales,'POST',{provider:'rules'});
   assert.equal(generated.response.status,200,generated.body.error);assert.equal(generated.body.strategy.status,'Draft');
+  assert.deepEqual(generated.body.strategy.strategy_data_json.targetMarket.countries,['United States']);
+  assert.deepEqual(generated.body.strategy.strategy_data_json.targetCustomerProfile.customerTypes,['Restaurant Furniture Dealers','Hospitality Furniture Distributors','Commercial Furniture Importers']);
+  assert.ok(generated.body.strategy.strategy_data_json.searchKeywords.some(keyword=>/Restaurant Furniture Dealers Restaurant Chairs/i.test(keyword)));
+  assert.ok(generated.body.strategy.strategy_data_json.positiveSignals.buyingSignals.includes('Restaurant renovation'));
+  assert.ok(generated.body.strategy.strategy_data_json.exclusionRules.includes('Residential-only stores'));
+  assert.doesNotMatch(JSON.stringify(generated.body.strategy.strategy_data_json),/Needs Clarification/);
   assert.equal(generated.body.strategy.generation_metadata_json.provider,'rules');assert.ok(generated.body.strategy.context_snapshot_id);
   assert.ok(generated.body.strategy.knowledge_references_json.some(reference=>reference.revision));
   assert.doesNotMatch(JSON.stringify(generated.body),/supplier_cost|minimum_margin|providerConfiguration|api[_-]?key/i);
