@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '025_v53_ai_knowledge_center_foundation');
+  assert.equal(database.migrationVersion, '026_v53_search_strategy_human_approval');
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -654,6 +654,47 @@ test('all five roles receive Knowledge Dashboard access with server-enforced Wor
   assert.equal(salesApprove.status, 403);
 });
 
+test('Workflow 1B enforces structured Search Strategy approval, revision, cost, RBAC, and Search Task gates', async () => {
+  const [admin, owner, sales, va, designer] = await Promise.all(['admin@rspro.ai','owner@rspro.ai','sales@rspro.ai','va@rspro.ai','designer@rspro.ai'].map(login));
+  const call = async (path, session, method='GET', body) => { const response=await fetch(`http://127.0.0.1:${port}${path}`,{method,headers:{Cookie:session.cookie,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {response,body:await response.json()}; };
+  const target=await call('/api/knowledge-center',admin,'POST',{knowledge_key:'workflow-1b-target',knowledge_type:'target_customer_profile',title:'Restaurant Growth Buyers',content_json:{customer_types:['Restaurant Group'],countries:['USA']}});
+  await call(`/api/knowledge-center/${target.body.item.id}/submit-review`,admin,'POST',{});
+  await call(`/api/knowledge-center/${target.body.item.id}/approve`,owner,'POST',{});
+  const created=await call('/api/search-strategies',sales,'POST',{title:'AI Restaurant Growth Search',objective:'Find restaurant groups planning expansion'});
+  assert.equal(created.response.status,201);assert.equal(created.body.strategy.status,'Draft');
+  const id=created.body.strategy.id;
+  const generated=await call(`/api/search-strategies/${id}/generate`,sales,'POST',{provider:'rules'});
+  assert.equal(generated.response.status,200,generated.body.error);assert.equal(generated.body.strategy.status,'Draft');
+  assert.equal(generated.body.strategy.generation_metadata_json.provider,'rules');assert.ok(generated.body.strategy.context_snapshot_id);
+  assert.ok(generated.body.strategy.knowledge_references_json.some(reference=>reference.revision));
+  assert.doesNotMatch(JSON.stringify(generated.body),/supplier_cost|minimum_margin|providerConfiguration|api[_-]?key/i);
+  const estimate=await call(`/api/search-strategies/${id}/estimate-search-cost`,sales,'POST',{});
+  assert.equal(estimate.body.estimate.estimateType,'planning');assert.match(estimate.body.estimate.assumptions.join(' '),/No connector call/);
+  assert.equal((await call(`/api/search-strategies/${id}/submit-review`,sales,'POST',{})).body.strategy.status,'Needs Review');
+  assert.equal((await call(`/api/search-strategies/${id}/approve`,sales,'POST',{})).response.status,403);
+  assert.equal((await call(`/api/search-strategies/${id}/approve`,va,'POST',{})).response.status,403);
+  const changes=await call(`/api/search-strategies/${id}/request-changes`,owner,'POST',{review_note:'Narrow the target market'});
+  assert.equal(changes.body.strategy.status,'Draft');assert.equal(changes.body.strategy.review_note,'Narrow the target market');
+  await call(`/api/search-strategies/${id}/submit-review`,sales,'POST',{});
+  const approved=await call(`/api/search-strategies/${id}/approve`,owner,'POST',{review_note:'Approved for planning'});
+  assert.equal(approved.body.strategy.status,'Approved');
+  assert.equal((await call(`/api/search-strategies/${id}/create-search-task`,sales,'POST',{})).response.status,403);
+  const task=await call(`/api/search-strategies/${id}/create-search-task`,owner,'POST',{});
+  assert.equal(task.response.status,201,task.body.error);assert.equal(task.body.task.status,'Draft');
+  const ready=await call(`/api/search-tasks/${task.body.task.id}/ready`,sales,'POST',{});assert.equal(ready.response.status,200,ready.body.error);
+  const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
+  assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
+  assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
+  await call(`/api/search-strategies/${revision.body.strategy.id}/submit-review`,sales,'POST',{});
+  await call(`/api/search-strategies/${revision.body.strategy.id}/approve`,owner,'POST',{});
+  const history=await call(`/api/search-strategies/${revision.body.strategy.id}/history`,owner);
+  assert.deepEqual(history.body.history.map(item=>item.status),['Approved','Superseded']);
+  assert.equal((await call('/api/search-strategies',designer)).response.status,403);
+  const debug=await call('/api/debug/system',admin);assert.ok(debug.body.opportunityIntelligence.search_strategies_count>=2);assert.equal(typeof debug.body.opportunityIntelligence.blocked_strategy_task_attempts,'number');
+  const logs=await call('/api/ai-cost/logs',admin);assert.ok(logs.body.logs.some(log=>log.module_name==='search-strategy'&&log.status==='executed'));
+  const detail=await call(`/api/search-tasks/${task.body.task.id}`,owner);assert.equal(detail.body.task.search_results.length,0);
+});
+
 test('Owner and Sales Admin can create and edit Product Library records', async () => {
   const owner = await login('owner@rspro.ai');
   const salesAdmin = await login('salesadmin@rspro.ai');
@@ -1131,27 +1172,42 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.equal(sized.generated_search_plan.company_size_detail, '5-50 employees');
   assert.match(sized.generated_search_plan.target_customer, /Small company/);
 
-  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks`, {
+  const directTaskResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks`, {
     method: 'POST',
     headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
     body: JSON.stringify({ customer_discovery_request_id: sized.request.id, generated_search_plan: sized.generated_search_plan })
   });
+  assert.equal(directTaskResponse.status, 409);
+  const strategyData = {
+    targetMarket: { countries: ['USA'], cities: ['California'], regions: [] },
+    targetCustomerProfile: { customerTypes: ['Restaurant Furniture Distributor'], companySize: { description: '5-50 employees' }, businessAge: {}, locationCount: {}, expectedOrderRange: {} },
+    searchObjective: sized.generated_search_plan.search_objective, productCategories: ['Restaurant Furniture'],
+    searchKeywords: sized.generated_search_plan.search_keywords, negativeKeywords: [], platforms: ['Company Websites'], sourcePriority: ['Company Websites'],
+    positiveSignals: { buyingSignals: [], renovationSignals: [], expansionSignals: [] }, exclusionRules: sized.generated_search_plan.recommended_filters,
+    resultTarget: { expectedCount: 100, minimumQualifiedCount: 20 }, stopConditions: [], reasoning: [], warnings: [], confidence: 0.8
+  };
+  const strategyResponse = await fetch(`http://127.0.0.1:${port}/api/search-strategies`, { method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ customer_discovery_request_id: sized.request.id, title: 'Distributor Search Strategy', objective: strategyData.searchObjective, strategy_data_json: strategyData }) });
+  const strategy = await strategyResponse.json(); assert.equal(strategyResponse.status, 201, strategy.error);
+  await fetch(`http://127.0.0.1:${port}/api/search-strategies/${strategy.strategy.id}/submit-review`, { method: 'POST', headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  const approveResponse = await fetch(`http://127.0.0.1:${port}/api/search-strategies/${strategy.strategy.id}/approve`, { method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(approveResponse.status, 200);
+  const createTaskResponse = await fetch(`http://127.0.0.1:${port}/api/search-strategies/${strategy.strategy.id}/create-search-task`, { method: 'POST', headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' }, body: '{}' });
   const createdTask = await createTaskResponse.json();
   assert.equal(createTaskResponse.status, 201, createdTask.error);
   assert.match(createdTask.task.task_name, /Search Task #/);
   assert.equal(createdTask.task.customer_discovery_request_id, sized.request.id);
-  assert.equal(createdTask.task.target_customer, sized.generated_search_plan.target_customer);
+  assert.equal(createdTask.task.target_customer, 'Restaurant Furniture Distributor');
   assert.equal(createdTask.task.customer_type, 'Restaurant Furniture Distributor');
   assert.equal(createdTask.task.industry, 'Hospitality Furniture');
   assert.equal(createdTask.task.location, 'California, USA');
   assert.equal(createdTask.task.company_size, '5-50 employees');
   assert.equal(createdTask.task.target_quantity, 100);
-  assert.equal(createdTask.task.priority, 'High');
+  assert.equal(createdTask.task.priority, 'Medium');
   assert.equal(createdTask.task.status, 'Draft');
   assert.ok(createdTask.task.keywords.includes('restaurant furniture supplier'));
   assert.ok(createdTask.task.filters.includes('Purchase Potential'));
-  assert.ok(createdTask.task.required_data_fields.includes('Phone'));
-  assert.ok(createdTask.task.required_data_fields.includes('Business Type'));
+  assert.ok(createdTask.task.required_data_fields.includes('Company Name'));
+  assert.ok(createdTask.task.required_data_fields.includes('Source URL'));
 
   const tasks = await fetch(`http://127.0.0.1:${port}/api/search-tasks`, { headers: { Cookie: sales.cookie } }).then(response => response.json());
   assert.ok(tasks.tasks.some(task => task.id === createdTask.task.id && task.status === 'Draft'));

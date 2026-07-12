@@ -32,6 +32,7 @@ test('cloud deployment files are safe and complete', () => {
   const searchResultStorageMigration = read('database/migrations/023_v53_search_result_storage.sql');
   const customerSourceMigration = read('database/migrations/024_v53_customer_source.sql');
   const knowledgeCenterMigration = read('database/migrations/025_v53_ai_knowledge_center_foundation.sql');
+  const searchStrategyMigration = read('database/migrations/026_v53_search_strategy_human_approval.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -155,6 +156,11 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(knowledgeCenterMigration, /UNIQUE \(knowledge_key, revision_no\)/);
   assert.match(knowledgeCenterMigration, /WHERE status = 'Active'/);
   assert.doesNotMatch(knowledgeCenterMigration, /\b(DROP|TRUNCATE)\b/i);
+  assert.match(searchStrategyMigration, /'026_v53_search_strategy_human_approval'/);
+  assert.match(searchStrategyMigration, /CREATE TABLE IF NOT EXISTS search_strategies/);
+  assert.match(searchStrategyMigration, /UNIQUE\(strategy_key, revision_no\)/);
+  assert.match(searchStrategyMigration, /WHERE status='Approved'/);
+  assert.doesNotMatch(searchStrategyMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.doesNotMatch(globalPiMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(render, /buildCommand: npm install/);
   assert.match(render, /startCommand: npm start/);
@@ -174,6 +180,9 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(app, /Company Knowledge/);
   assert.match(app, /Target Customer Profiles/);
   assert.match(app, /Save Draft/);
+  assert.match(app, /Search Strategies/);
+  assert.match(app, /Create Strategy Draft/);
+  assert.match(server, /026_v53_search_strategy_human_approval/);
 });
 
 test('health check validates the database and returns the required payload', () => {
