@@ -2554,6 +2554,42 @@ function uniqueStrategyValues(...groups) {
   return [...new Set(groups.flatMap(strategyTextValues))];
 }
 
+function strategyManualValues(strategy, field, generatedMetadataField) {
+  const data = parseJsonValue(strategy.strategy_data_json, {}), metadata = parseJsonValue(strategy.generation_metadata_json, {});
+  const current = field === 'countries' ? strategyTextValues(data.targetMarket?.countries) : strategyTextValues(data.targetCustomerProfile?.customerTypes);
+  const previousGenerated = strategyTextValues(metadata[generatedMetadataField]);
+  if (!strategy.ai_execution_log_id) return current;
+  if (previousGenerated.length && JSON.stringify(current) !== JSON.stringify(previousGenerated)) return current;
+  return [];
+}
+
+function cleanSearchKeywords(values, customerTypes, limit = 20) {
+  const targetTokens = customerTypes.map(value => value.toLowerCase().replace(/\b(dealers|distributors|importers|wholesalers|owners)\b/g, match => match.slice(0, -1)));
+  const candidates = [
+    ...targetTokens,
+    'restaurant seating distributor',
+    'restaurant tables and chairs supplier',
+    'restaurant booth seating supplier',
+    'commercial restaurant furniture wholesaler',
+    'hospitality furniture importer',
+    'restaurant furniture supplier',
+    'commercial dining furniture distributor',
+    ...strategyTextValues(values)
+  ];
+  const result = [], seen = new Set();
+  for (const candidate of candidates) {
+    const normalized = String(candidate || '').trim().replace(/\s+/g, ' ');
+    if (!normalized) continue;
+    const words = normalized.toLowerCase().split(' '), half = words.length / 2;
+    if (Number.isInteger(half) && words.slice(0, half).join(' ') === words.slice(half).join(' ')) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key); result.push(key);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 function strategyDataFromContext(strategy, context = {}) {
   const request = strategy.customer_discovery_request_id ? db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(strategy.customer_discovery_request_id) : null;
   const plan = parseJsonValue(request?.search_plan, {}), guidance = parseJsonValue(request?.guidance, {});
@@ -2562,15 +2598,17 @@ function strategyDataFromContext(strategy, context = {}) {
   const expected = Math.max(0, Number(String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || 50));
   const companies = Array.isArray(context.companyKnowledge) ? context.companyKnowledge : [], profiles = Array.isArray(context.targetCustomerProfiles) ? context.targetCustomerProfiles : [];
   const companyContent = companies.map(item => parseJsonValue(item.content_json, {})), profileContent = profiles.map(item => parseJsonValue(item.content_json, {}));
-  const knowledgeCountries = uniqueStrategyValues(profileContent.map(item => item.target_countries || item.countries || []), companyContent.map(item => item.target_countries || item.countries || []));
+  const profileCountries = uniqueStrategyValues(profileContent.map(item => item.target_countries || item.countries || []));
   const discoveryCountries = uniqueStrategyValues(request?.country, location.slice(-1));
-  const countries = knowledgeCountries.length ? knowledgeCountries : discoveryCountries;
-  const customerTypes = uniqueStrategyValues(profileContent.map(item => item.customer_types || item.target_customer_types || []), generated.customer_type, plan.target_customer_type);
+  const manualCountries = strategyManualValues(strategy, 'countries', 'generatedTargetCountries');
+  const countries = manualCountries.length ? manualCountries : profileCountries.length ? profileCountries : discoveryCountries;
+  const profileCustomerTypes = uniqueStrategyValues(profileContent.map(item => item.customer_types || item.target_customer_types || []));
+  const manualCustomerTypes = strategyManualValues(strategy, 'customerTypes', 'generatedCustomerTypes');
+  const customerTypes = manualCustomerTypes.length ? manualCustomerTypes : profileCustomerTypes.length ? profileCustomerTypes : uniqueStrategyValues(generated.customer_type, plan.target_customer_type);
   const productCategories = uniqueStrategyValues(profileContent.map(item => item.product_categories || item.product_directions || []), companyContent.map(item => item.main_product_categories || item.product_categories || []), 'Restaurant Furniture');
   const businessSignals = uniqueStrategyValues(profileContent.map(item => item.target_business_signals || item.business_signals || item.buying_signals || []));
   const exclusions = uniqueStrategyValues(profileContent.map(item => item.exclusions || item.exclusion_rules || []), generated.exclude || plan.excluded_customers || []);
-  const knowledgeKeywords = customerTypes.flatMap(type => productCategories.map(category => `${type} ${category}`));
-  const searchKeywords = uniqueStrategyValues(generated.search_keywords || plan.recommended_keywords || [], knowledgeKeywords, customerTypes, productCategories.map(category => `${category} supplier`));
+  const searchKeywords = cleanSearchKeywords(profileCustomerTypes.length ? [] : generated.search_keywords || plan.recommended_keywords || [], customerTypes);
   const warnings = [];
   if (!countries.length) warnings.push('Target country is missing from Active Knowledge and the Discovery Request.');
   if (!customerTypes.length) warnings.push('Target customer type is missing from Active Knowledge and the Discovery Request.');
@@ -4160,7 +4198,7 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       const snapshotContext = parseJsonValue(snapshot?.context_json, {}), sources = parseJsonValue(snapshot?.source_references, []);
       const data = strategyDataFromContext(strategy, snapshotContext); validateSearchStrategyData(data);
       const references = sources.map(source => ({ sourceType: source.table || source.module, sourceRecordId: source.id || source.product_id || null, revision: source.revision || null, updatedAt: source.updatedAt || null }));
-      const generated = searchStrategyService.setGenerated(id, { data, knowledgeReferences: references, evidenceReferences: references.map(source => ({ ...source, supportedStrategyField: 'searchObjective', confidence: data.confidence })), generationMetadata: { provider: result.provider, model: result.model, promptVersion: `${result.prompt.key}:v${result.prompt.version}`, generatedAt: new Date().toISOString(), contextType: 'search-strategy', contextHash: snapshotContext.contextHash || snapshot?.context_hash, schemaVersion: 'workflow-1b-v1', warnings: data.warnings, redactionLevel: snapshot?.redaction_level }, aiCostEstimate: result.cost?.estimate?.estimated_cost_usd || 0, contextSnapshotId: result.contextSnapshotId, executionLogId: result.executionLogId, costLogId: result.cost?.executedCostLogId || result.cost?.estimate?.id });
+      const generated = searchStrategyService.setGenerated(id, { data, knowledgeReferences: references, evidenceReferences: references.map(source => ({ ...source, supportedStrategyField: 'searchObjective', confidence: data.confidence })), generationMetadata: { provider: result.provider, model: result.model, promptVersion: `${result.prompt.key}:v${result.prompt.version}`, generatedAt: new Date().toISOString(), contextType: 'search-strategy', contextHash: snapshotContext.contextHash || snapshot?.context_hash, schemaVersion: 'workflow-1b-v1', warnings: data.warnings, redactionLevel: snapshot?.redaction_level, generatedTargetCountries: data.targetMarket.countries, generatedCustomerTypes: data.targetCustomerProfile.customerTypes }, aiCostEstimate: result.cost?.estimate?.estimated_cost_usd || 0, contextSnapshotId: result.contextSnapshotId, executionLogId: result.executionLogId, costLogId: result.cost?.executedCostLogId || result.cost?.estimate?.id });
       audit(user.id, 'ai_generate_search_strategy', 'search_strategies', String(id), { executionLogId: result.executionLogId, contextSnapshotId: result.contextSnapshotId, costStatus: 'executed' });
       return json(res, 200, { strategy: safeStrategy(generated, user), ai: { status: result.status, provider: result.provider, model: result.model, cost: result.cost } });
     } catch (error) { audit(user.id, 'ai_generate_search_strategy_failed', 'search_strategies', String(id), { error: String(error.message).slice(0, 200), executionLogId: error.executionLogId || null }); throw error; }
