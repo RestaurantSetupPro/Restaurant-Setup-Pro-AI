@@ -17,6 +17,7 @@ const state = {
   debugCenter: null,
   opportunityIntelligence: null,
   opportunityView: 'dashboard',
+  showArchivedStrategies: false,
   customerDetail: null
   ,salesWorkspace: null, salesInquiry: null, salesQuote: null
 };
@@ -1336,13 +1337,15 @@ function renderSearchTasksPane(data) {
 }
 
 function strategyCsv(value) { return esc((Array.isArray(value) ? value : []).join(', ')); }
+function strategyLines(value) { return esc((Array.isArray(value) ? value : []).join('\n')); }
+function strategyBadge(status) { return `<span class="stage stage--${statusClass(status)}">${esc(status)}</span>`; }
+function strategyKeywordTags(values) { return `<div class="strategy-keyword-tags">${(values || []).map(value => `<span>${esc(value)}</span>`).join('') || '<small>No keywords defined</small>'}</div>`; }
 function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = false) {
   const data = strategy.strategy_data_json || {}, draft = strategy.status === 'Draft';
-  const ownActions = `${draft && capabilities.canGenerate ? `<button class="button" data-action="strategy-generate" data-id="${strategy.id}">AI Generate</button>` : ''}${draft ? `<button class="button" data-action="strategy-estimate" data-id="${strategy.id}">Planning Estimate</button><button class="button button--primary" data-action="strategy-submit" data-id="${strategy.id}">Submit Review</button>` : ''}`;
-  const reviewActions = strategy.status === 'Needs Review' && capabilities.canApprove ? `<button class="button" data-action="strategy-request-changes" data-id="${strategy.id}">Request Changes</button><button class="button button--primary" data-action="strategy-approve" data-id="${strategy.id}">Approve</button>` : '';
-  const taskAction = strategy.status === 'Approved' && capabilities.canCreateSearchTask && !strategy.linked_search_task_id ? `<button class="button button--primary" data-action="strategy-create-task" data-id="${strategy.id}">Create Draft Search Task</button>` : '';
-  const archiveAction = strategy.status === 'Approved' && capabilities.canApprove ? strategy.linked_search_task_id ? `<button class="button" disabled title="Unlink or complete Search Task #${strategy.linked_search_task_id} before archiving">Archive unavailable</button>` : `<button class="button" data-action="strategy-archive" data-id="${strategy.id}">Archive</button>` : '';
-  return `<article class="panel"><div class="panel-header"><div class="panel-title"><h2>${esc(strategy.title)}</h2><p>${badge(strategy.status)} Revision ${strategy.revision_no}${contextOutdated ? ' · Context updated since generation' : ''}</p></div><div class="row-actions"><button class="button" data-action="strategy-back">Back</button>${ownActions}${reviewActions}${taskAction}${archiveAction}<button class="button" data-action="strategy-history" data-id="${strategy.id}">History</button></div></div>
+  const primaryAction = draft ? `<button class="button button--primary" data-action="strategy-submit" data-id="${strategy.id}">Submit Review</button>` : strategy.status === 'Needs Review' && capabilities.canApprove ? `<button class="button button--primary" data-action="strategy-approve" data-id="${strategy.id}">Approve</button>` : strategy.status === 'Approved' && capabilities.canCreateSearchTask && !strategy.linked_search_task_id ? `<button class="button button--primary" data-action="strategy-create-task" data-id="${strategy.id}">Create Draft Search Task</button>` : '';
+  const secondaryActions = `${draft && capabilities.canGenerate ? `<button class="button button--soft" data-action="strategy-generate" data-id="${strategy.id}">AI Generate</button>` : ''}${draft ? `<button class="button" data-action="strategy-estimate" data-id="${strategy.id}">Planning Estimate</button>` : ''}${strategy.status === 'Needs Review' && capabilities.canApprove ? `<button class="button" data-action="strategy-request-changes" data-id="${strategy.id}">Request Changes</button>` : ''}`;
+  const archiveAction = strategy.status === 'Approved' && capabilities.canApprove ? strategy.linked_search_task_id ? `<span class="strategy-disabled-action"><button class="button button--risk" disabled>Archive</button><small>Unavailable while Search Task #${strategy.linked_search_task_id} is active</small></span>` : `<button class="button button--risk" data-action="strategy-archive" data-id="${strategy.id}">Archive</button>` : '';
+  return `<article class="panel strategy-detail"><div class="panel-header strategy-detail-header"><div class="panel-title"><h2>${esc(strategy.title)}</h2><p>${strategyBadge(strategy.status)} <span>Revision ${strategy.revision_no}${contextOutdated ? ' · Context updated since generation' : ''}</span></p></div><div class="row-actions strategy-actions"><button class="button" data-action="strategy-back">Back</button>${primaryAction}${secondaryActions}<button class="button" data-action="strategy-history" data-id="${strategy.id}">History</button>${archiveAction}</div></div>
     <form id="search-strategy-form" class="foundation-form" data-id="${strategy.id}">
       <label class="field"><span>Title</span><input name="title" value="${esc(strategy.title)}" ${draft ? '' : 'disabled'} required></label>
       <label class="field field--full"><span>Search Objective</span><textarea name="searchObjective" ${draft ? '' : 'disabled'} required>${esc(data.searchObjective || strategy.objective || '')}</textarea></label>
@@ -1350,7 +1353,7 @@ function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = fa
       <label class="field"><span>Cities</span><input name="cities" value="${strategyCsv(data.targetMarket?.cities)}" ${draft ? '' : 'disabled'}></label>
       <label class="field"><span>Customer Types</span><input name="customerTypes" value="${strategyCsv(data.targetCustomerProfile?.customerTypes)}" ${draft ? '' : 'disabled'}></label>
       <label class="field"><span>Platforms</span><input name="platforms" value="${strategyCsv(data.platforms)}" ${draft ? '' : 'disabled'}></label>
-      <label class="field field--full"><span>Search Keywords</span><textarea name="searchKeywords" ${draft ? '' : 'disabled'}>${strategyCsv(data.searchKeywords)}</textarea></label>
+      <label class="field field--full"><span>Search Keywords</span>${draft ? `<textarea name="searchKeywords" rows="6" placeholder="One keyword per line">${strategyLines(data.searchKeywords)}</textarea><small class="field-help">Use one focused search phrase per line.</small>` : strategyKeywordTags(data.searchKeywords)}</label>
       <label class="field"><span>Expected Results</span><input name="expectedCount" type="number" min="0" value="${Number(data.resultTarget?.expectedCount || 0)}" ${draft ? '' : 'disabled'}></label>
       <label class="field"><span>Minimum Qualified</span><input name="minimumQualifiedCount" type="number" min="0" value="${Number(data.resultTarget?.minimumQualifiedCount || 0)}" ${draft ? '' : 'disabled'}></label>
       ${draft ? '<button class="button button--primary" type="submit">Save Draft</button>' : ''}
@@ -1360,8 +1363,9 @@ function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = fa
 
 function renderSearchStrategiesPane(data) {
   if (state.searchStrategyDetail) return renderSearchStrategyDetail(state.searchStrategyDetail, data.strategyCapabilities, state.searchStrategyContextOutdated);
-  const rows=(data.searchStrategies||[]).map(item=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.strategy_key)}</small></td><td>${item.revision_no}</td><td>${badge(item.status)}</td><td>USD ${Number(item.search_cost_estimate||0).toFixed(4)}</td><td>${esc(item.updated_at)}</td><td><button class="button button--compact" data-action="strategy-view" data-id="${item.id}">Open</button></td></tr>`).join('');
-  return `<section class="detail-grid"><form id="search-strategy-create" class="panel foundation-form"><h2>Create Blank Draft</h2><label class="field"><span>Title</span><input name="title" required></label><label class="field field--full"><span>Objective</span><textarea name="objective" required></textarea></label><button class="button button--primary" type="submit">Create Draft</button></form><article class="panel"><h2>Human Approval Boundary</h2><p>AI creates Drafts only. Admin or Owner approval is required before a Draft Search Task can be created.</p></article></section><article class="panel section-gap"><div class="table-scroll"><table class="data-table"><thead><tr><th>Strategy</th><th>Revision</th><th>Status</th><th>Planning Estimate</th><th>Updated</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="6"><div class="empty-state">No Search Strategies yet.</div></td></tr>'}</tbody></table></div></article>`;
+  const all=data.searchStrategies||[], archivedCount=all.filter(item=>item.status==='Archived').length, visible=all.filter(item=>state.showArchivedStrategies?item.status==='Archived':item.status!=='Archived');
+  const rows=visible.map(item=>`<tr><td class="primary-cell strategy-name-cell"><strong title="${esc(item.title)}">${esc(item.title)}</strong><small title="${esc(item.strategy_key)}">${esc(item.strategy_key)}</small></td><td>v${item.revision_no}</td><td>${strategyBadge(item.status)}</td><td>USD ${Number(item.search_cost_estimate||0).toFixed(4)}</td><td>${formatDateTime(item.updated_at)}</td><td class="strategy-table-action"><button class="button button--compact" data-action="strategy-view" data-id="${item.id}">Open</button></td></tr>`).join('');
+  return `<section class="detail-grid strategy-intro-grid"><form id="search-strategy-create" class="panel foundation-form"><h2>Create Blank Draft</h2><label class="field"><span>Title</span><input name="title" required></label><label class="field field--full"><span>Objective</span><textarea name="objective" rows="4" required></textarea></label><button class="button button--primary" type="submit">Create Draft</button></form><article class="panel strategy-boundary"><h2>Human Approval Boundary</h2><p>AI creates Drafts only. Admin or Owner approval is required before a Draft Search Task can be created.</p></article></section><article class="panel section-gap strategy-list-panel"><div class="panel-header"><div class="panel-title"><h2>Search Strategies</h2><p>Archived records remain available without crowding the active workflow.</p></div><div class="strategy-list-filter"><button class="button button--compact ${state.showArchivedStrategies?'':'button--soft'}" data-action="strategy-filter" data-filter="current">Current (${all.length-archivedCount})</button><button class="button button--compact ${state.showArchivedStrategies?'button--soft':''}" data-action="strategy-filter" data-filter="archived">Archived (${archivedCount})</button></div></div><div class="table-scroll"><table class="data-table strategy-table"><thead><tr><th>Strategy</th><th>Revision</th><th>Status</th><th>Planning Estimate</th><th>Updated</th><th>Actions</th></tr></thead><tbody>${rows||`<tr><td colspan="6"><div class="empty-state">No ${state.showArchivedStrategies?'archived':'current'} Search Strategies.</div></td></tr>`}</tbody></table></div></article>`;
 }
 
 function renderOpportunityPane(data) {
@@ -1479,11 +1483,12 @@ async function createSearchStrategyFromPlan() {
   await renderOpportunityIntelligence();
 }
 
-const strategyList=value=>String(value||'').split(',').map(item=>item.trim()).filter(Boolean);
+const strategyList=value=>String(value||'').split(/\r?\n|,/).map(item=>item.trim()).filter(Boolean);
 async function createBlankSearchStrategy(event){event.preventDefault();const body=Object.fromEntries(new FormData(event.currentTarget));const result=await api('/api/search-strategies',{method:'POST',body:JSON.stringify(body)});state.searchStrategyDetail=result.strategy;await renderOpportunityIntelligence()}
 async function viewSearchStrategy(id){const result=await api(`/api/search-strategies/${id}`);state.searchStrategyDetail=result.strategy;state.searchStrategyContextOutdated=result.context_outdated;await renderOpportunityIntelligence()}
 async function saveSearchStrategy(event){event.preventDefault();const strategy=state.searchStrategyDetail,current=strategy.strategy_data_json||{},form=Object.fromEntries(new FormData(event.currentTarget));const expected=Number(form.expectedCount||0),minimum=Number(form.minimumQualifiedCount||0);const data={...current,targetMarket:{...(current.targetMarket||{}),countries:strategyList(form.countries),cities:strategyList(form.cities),regions:current.targetMarket?.regions||[]},targetCustomerProfile:{...(current.targetCustomerProfile||{}),customerTypes:strategyList(form.customerTypes)},searchObjective:form.searchObjective,searchKeywords:strategyList(form.searchKeywords),platforms:strategyList(form.platforms),resultTarget:{expectedCount:expected,minimumQualifiedCount:Math.min(minimum,expected)}};const result=await api(`/api/search-strategies/${strategy.id}`,{method:'PUT',body:JSON.stringify({title:form.title,objective:form.searchObjective,strategy_data_json:data})});state.searchStrategyDetail=result.strategy;toast('Strategy Draft saved.');await renderOpportunityIntelligence()}
 async function searchStrategyAction(id,action,body={}){const result=await api(`/api/search-strategies/${id}/${action}`,{method:'POST',body:JSON.stringify(body)});if(result.strategy)state.searchStrategyDetail=result.strategy;if(result.task){state.searchTaskDetail=result.task;state.searchStrategyDetail=null;state.opportunityView='search-tasks'}toast(action.replaceAll('-',' '));await renderOpportunityIntelligence()}
+function openStrategyArchiveConfirmation(id){const modal=document.createElement('div');modal.className='modal-backdrop';modal.id='strategy-archive-modal';modal.innerHTML=`<div class="command-modal strategy-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="strategy-archive-title"><div class="strategy-confirm-body"><span class="strategy-risk-mark">${icon('document')}</span><div><h2 id="strategy-archive-title">Archive Search Strategy?</h2><p>This action will not delete the record. It will archive the Strategy and preserve its complete history.</p></div></div><div class="strategy-confirm-actions"><button class="button" data-action="strategy-archive-cancel">Cancel</button><button class="button button--risk" data-action="strategy-archive-confirm" data-id="${id}">Archive Strategy</button></div></div>`;document.body.append(modal)}
 
 async function viewSearchTask(id) {
   const result = await api(`/api/search-tasks/${id}`);
@@ -2420,6 +2425,8 @@ async function handleAction(action, node) {
     await viewSearchStrategy(node.dataset.id);
   } else if (action === 'strategy-back') {
     state.searchStrategyDetail=null; state.searchStrategyContextOutdated=false; await renderOpportunityIntelligence();
+  } else if (action === 'strategy-filter') {
+    state.showArchivedStrategies=node.dataset.filter==='archived'; await renderOpportunityIntelligence();
   } else if (action === 'strategy-generate') {
     await searchStrategyAction(node.dataset.id,'generate',{provider:'rules'});
   } else if (action === 'strategy-estimate') {
@@ -2431,7 +2438,11 @@ async function handleAction(action, node) {
   } else if (action === 'strategy-request-changes') {
     await searchStrategyAction(node.dataset.id,'request-changes',{review_note:prompt('Review note')||'Changes requested'});
   } else if (action === 'strategy-archive') {
-    if (confirm('Archive this Approved Search Strategy? The record and history will be preserved.')) await searchStrategyAction(node.dataset.id,'archive');
+    openStrategyArchiveConfirmation(node.dataset.id);
+  } else if (action === 'strategy-archive-cancel') {
+    $('#strategy-archive-modal')?.remove();
+  } else if (action === 'strategy-archive-confirm') {
+    $('#strategy-archive-modal')?.remove(); await searchStrategyAction(node.dataset.id,'archive');
   } else if (action === 'strategy-create-task') {
     await searchStrategyAction(node.dataset.id,'create-search-task');
   } else if (action === 'strategy-history') {

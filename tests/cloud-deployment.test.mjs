@@ -183,8 +183,12 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(app, /Search Strategies/);
   assert.match(app, /Create Strategy Draft/);
   assert.match(app, /data-action="strategy-archive"/);
-  assert.match(app, /Archive this Approved Search Strategy\?/);
-  assert.match(app, /Archive unavailable/);
+  assert.match(app, /Archive Search Strategy\?/);
+  assert.match(app, /will not delete the record/);
+  assert.match(app, /button--risk/);
+  assert.match(app, /Unavailable while Search Task/);
+  assert.match(app, /Archived \(\$\{archivedCount\}\)/);
+  assert.match(app, /strategyKeywordTags/);
   assert.match(server, /026_v53_search_strategy_human_approval/);
 });
 
