@@ -182,6 +182,9 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(app, /Save Draft/);
   assert.match(app, /Search Strategies/);
   assert.match(app, /Create Strategy Draft/);
+  assert.match(app, /data-action="strategy-archive"/);
+  assert.match(app, /Archive this Approved Search Strategy\?/);
+  assert.match(app, /Archive unavailable/);
   assert.match(server, /026_v53_search_strategy_human_approval/);
 });
 

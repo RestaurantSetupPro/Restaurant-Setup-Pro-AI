@@ -1341,7 +1341,8 @@ function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = fa
   const ownActions = `${draft && capabilities.canGenerate ? `<button class="button" data-action="strategy-generate" data-id="${strategy.id}">AI Generate</button>` : ''}${draft ? `<button class="button" data-action="strategy-estimate" data-id="${strategy.id}">Planning Estimate</button><button class="button button--primary" data-action="strategy-submit" data-id="${strategy.id}">Submit Review</button>` : ''}`;
   const reviewActions = strategy.status === 'Needs Review' && capabilities.canApprove ? `<button class="button" data-action="strategy-request-changes" data-id="${strategy.id}">Request Changes</button><button class="button button--primary" data-action="strategy-approve" data-id="${strategy.id}">Approve</button>` : '';
   const taskAction = strategy.status === 'Approved' && capabilities.canCreateSearchTask && !strategy.linked_search_task_id ? `<button class="button button--primary" data-action="strategy-create-task" data-id="${strategy.id}">Create Draft Search Task</button>` : '';
-  return `<article class="panel"><div class="panel-header"><div class="panel-title"><h2>${esc(strategy.title)}</h2><p>${badge(strategy.status)} Revision ${strategy.revision_no}${contextOutdated ? ' · Context updated since generation' : ''}</p></div><div class="row-actions"><button class="button" data-action="strategy-back">Back</button>${ownActions}${reviewActions}${taskAction}<button class="button" data-action="strategy-history" data-id="${strategy.id}">History</button></div></div>
+  const archiveAction = strategy.status === 'Approved' && capabilities.canApprove ? strategy.linked_search_task_id ? `<button class="button" disabled title="Unlink or complete Search Task #${strategy.linked_search_task_id} before archiving">Archive unavailable</button>` : `<button class="button" data-action="strategy-archive" data-id="${strategy.id}">Archive</button>` : '';
+  return `<article class="panel"><div class="panel-header"><div class="panel-title"><h2>${esc(strategy.title)}</h2><p>${badge(strategy.status)} Revision ${strategy.revision_no}${contextOutdated ? ' · Context updated since generation' : ''}</p></div><div class="row-actions"><button class="button" data-action="strategy-back">Back</button>${ownActions}${reviewActions}${taskAction}${archiveAction}<button class="button" data-action="strategy-history" data-id="${strategy.id}">History</button></div></div>
     <form id="search-strategy-form" class="foundation-form" data-id="${strategy.id}">
       <label class="field"><span>Title</span><input name="title" value="${esc(strategy.title)}" ${draft ? '' : 'disabled'} required></label>
       <label class="field field--full"><span>Search Objective</span><textarea name="searchObjective" ${draft ? '' : 'disabled'} required>${esc(data.searchObjective || strategy.objective || '')}</textarea></label>
@@ -2429,6 +2430,8 @@ async function handleAction(action, node) {
     await searchStrategyAction(node.dataset.id,'approve');
   } else if (action === 'strategy-request-changes') {
     await searchStrategyAction(node.dataset.id,'request-changes',{review_note:prompt('Review note')||'Changes requested'});
+  } else if (action === 'strategy-archive') {
+    if (confirm('Archive this Approved Search Strategy? The record and history will be preserved.')) await searchStrategyAction(node.dataset.id,'archive');
   } else if (action === 'strategy-create-task') {
     await searchStrategyAction(node.dataset.id,'create-search-task');
   } else if (action === 'strategy-history') {

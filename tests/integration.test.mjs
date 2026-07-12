@@ -700,6 +700,9 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   assert.equal((await call(`/api/search-strategies/${id}/create-search-task`,sales,'POST',{})).response.status,403);
   const task=await call(`/api/search-strategies/${id}/create-search-task`,owner,'POST',{});
   assert.equal(task.response.status,201,task.body.error);assert.equal(task.body.task.status,'Draft');
+  const linkedArchive=await call(`/api/search-strategies/${id}/archive`,owner,'POST',{});
+  assert.equal(linkedArchive.response.status,409);assert.match(linkedArchive.body.error,/Search Task #\d+ is Draft/);
+  assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
   const ready=await call(`/api/search-tasks/${task.body.task.id}/ready`,sales,'POST',{});assert.equal(ready.response.status,200,ready.body.error);
   const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
   assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
@@ -708,6 +711,11 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   await call(`/api/search-strategies/${revision.body.strategy.id}/approve`,owner,'POST',{});
   const history=await call(`/api/search-strategies/${revision.body.strategy.id}/history`,owner);
   assert.deepEqual(history.body.history.map(item=>item.status),['Approved','Superseded']);
+  assert.equal((await call(`/api/search-strategies/${revision.body.strategy.id}/archive`,sales,'POST',{})).response.status,403);
+  const archived=await call(`/api/search-strategies/${revision.body.strategy.id}/archive`,owner,'POST',{});
+  assert.equal(archived.response.status,200,archived.body.error);assert.equal(archived.body.strategy.status,'Archived');
+  assert.ok((await call('/api/search-strategies',owner)).body.strategies.some(item=>item.id===revision.body.strategy.id&&item.status==='Archived'));
+  assert.equal((await call(`/api/search-tasks/${task.body.task.id}`,owner)).body.task.id,task.body.task.id);
   assert.equal((await call('/api/search-strategies',designer)).response.status,403);
   const debug=await call('/api/debug/system',admin);assert.ok(debug.body.opportunityIntelligence.search_strategies_count>=2);assert.equal(typeof debug.body.opportunityIntelligence.blocked_strategy_task_attempts,'number');
   const logs=await call('/api/ai-cost/logs',admin);assert.ok(logs.body.logs.some(log=>log.module_name==='search-strategy'&&log.status==='executed'));
