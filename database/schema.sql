@@ -780,6 +780,26 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
   UNIQUE (knowledge_key, revision_no)
 );
 
+CREATE TABLE IF NOT EXISTS search_strategies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy_key TEXT NOT NULL CHECK (LENGTH(TRIM(strategy_key)) > 0), revision_no INTEGER NOT NULL DEFAULT 1 CHECK (revision_no >= 1),
+  supersedes_id INTEGER REFERENCES search_strategies(id) ON DELETE SET NULL,
+  customer_discovery_request_id INTEGER REFERENCES customer_discovery_requests(id) ON DELETE SET NULL,
+  linked_search_task_id INTEGER REFERENCES search_tasks(id) ON DELETE SET NULL,
+  title TEXT NOT NULL, objective TEXT NOT NULL DEFAULT '', strategy_data_json TEXT NOT NULL DEFAULT '{}',
+  knowledge_references_json TEXT NOT NULL DEFAULT '[]', evidence_references_json TEXT NOT NULL DEFAULT '[]', generation_metadata_json TEXT NOT NULL DEFAULT '{}',
+  ai_cost_estimate REAL NOT NULL DEFAULT 0 CHECK (ai_cost_estimate >= 0), search_cost_estimate REAL NOT NULL DEFAULT 0 CHECK (search_cost_estimate >= 0),
+  total_budget_limit REAL CHECK (total_budget_limit IS NULL OR total_budget_limit >= 0),
+  context_snapshot_id INTEGER REFERENCES ai_context_snapshots(id) ON DELETE SET NULL,
+  ai_execution_log_id INTEGER REFERENCES ai_execution_logs(id) ON DELETE SET NULL, ai_cost_log_id INTEGER REFERENCES ai_cost_logs(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft','Needs Review','Approved','Superseded','Archived')),
+  review_note TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  submitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL, submitted_at TEXT,
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL, approved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(strategy_key, revision_no)
+);
+
 INSERT INTO ai_cost_settings
   (daily_budget_usd, monthly_budget_usd, text_budget_usd, image_budget_usd, default_provider,
    allow_paid_provider, require_confirmation_over_usd, cache_ttl_days)
@@ -852,6 +872,11 @@ CREATE INDEX IF NOT EXISTS idx_ai_execution_logs_status ON ai_execution_logs(sta
 CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_items_single_active ON knowledge_items(knowledge_key) WHERE status = 'Active';
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(knowledge_type, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_key_revision ON knowledge_items(knowledge_key, revision_no DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_search_strategies_single_approved ON search_strategies(strategy_key) WHERE status='Approved';
+CREATE INDEX IF NOT EXISTS idx_search_strategies_status_updated ON search_strategies(status,updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_strategies_key_revision ON search_strategies(strategy_key,revision_no DESC);
+CREATE INDEX IF NOT EXISTS idx_search_strategies_discovery ON search_strategies(customer_discovery_request_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_search_strategies_linked_task ON search_strategies(linked_search_task_id) WHERE linked_search_task_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sales_inquiries (
   id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
