@@ -10,6 +10,7 @@ import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
 import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
 import { createKnowledgeCenter } from './services/knowledge-center.mjs';
+import { blankSearchStrategyData, createSearchStrategyService, validateSearchStrategyData } from './services/search-strategy.mjs';
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
@@ -34,6 +35,7 @@ let db;
 let aiCostControl;
 let aiBusinessBrain;
 let knowledgeCenter;
+let searchStrategyService;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -112,14 +114,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('025_v53_ai_knowledge_center_foundation');
-      databaseDiagnostics.migration = migration?.version === '025_v53_ai_knowledge_center_foundation';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('026_v53_search_strategy_human_approval');
+      databaseDiagnostics.migration = migration?.version === '026_v53_search_strategy_human_approval';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 025_v53_ai_knowledge_center_foundation was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 026_v53_search_strategy_human_approval was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -133,12 +135,13 @@ function initializeDatabase() {
       ensureQuoteBuilderColumns();
       ensureCustomerIntelligenceColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '025_v53_ai_knowledge_center_foundation';
+      databaseDiagnostics.migrationVersion = '026_v53_search_strategy_human_approval';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     seedCustomerDiscoveryProfiles();
     aiCostControl = createAiCostControl(db);
     knowledgeCenter = createKnowledgeCenter({ db, audit });
+    searchStrategyService = createSearchStrategyService({ db, audit });
     aiBusinessBrain = createAiBusinessBrain({ db, aiCostControl, buildContext: buildAiContext });
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
@@ -2070,7 +2073,7 @@ function buildKnowledgeContext({ contextType, user, options = {} }) {
   const types = requestedTypes.length ? requestedTypes : contextType === 'company-knowledge' ? ['company'] : contextType === 'target-customer-profile' ? ['target_customer_profile'] : [...knowledgeCenter.types];
   const keys = (Array.isArray(options.knowledgeKeys) ? options.knowledgeKeys : []).map(String).filter(Boolean).slice(0, 100);
   const active = knowledgeCenter.active(types, keys);
-  const references = active.map(item => ({ module: 'AI Knowledge Center', table: 'knowledge_items', id: item.id, knowledgeKey: item.knowledge_key, revision: item.revision_no, updatedAt: item.updated_at }));
+  const references = active.map(item => ({ module: 'AI Knowledge Center', table: 'knowledge_items', id: item.id, knowledgeKey: item.knowledge_key, revision: item.revision_no, approvedAt: item.approved_at, updatedAt: item.updated_at }));
   const missing = keys.filter(key => !active.some(item => item.knowledge_key === key));
   const productIds = (Array.isArray(options.productIds) ? options.productIds : []).map(Number).filter(Boolean).slice(0, 25);
   const productKnowledgeItems = productIds.map(id => productKnowledge(id)).filter(Boolean).map(product => redactSensitiveProductData(product, user));
@@ -2085,6 +2088,14 @@ function buildAiContext({ contextType, entityType, entityId, user, options = {} 
   const sourceReferences = [];
   const base = { contextType: normalizedType, entityType, entityId: String(entityId), redactionLevel: canViewSensitiveProductData(user) ? 'internal-sensitive' : 'internal-redacted', sourceReferences };
   if (['company-knowledge', 'target-customer-profile', 'knowledge-center'].includes(normalizedType)) return buildKnowledgeContext({ contextType: normalizedType, user, options });
+  if (normalizedType === 'search-strategy') {
+    if (!searchStrategyService?.permissions(user).canView) throw Object.assign(new Error('Search Strategy context access denied.'), { status: 403 });
+    const strategy = searchStrategyService.get(user, id);
+    const knowledge = buildKnowledgeContext({ contextType: 'knowledge-center', user, options });
+    const discovery = strategy.customer_discovery_request_id ? db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(strategy.customer_discovery_request_id) : null;
+    if (!knowledge.context.companyKnowledge.length || !knowledge.context.targetCustomerProfiles.length) throw Object.assign(new Error('Active Company Knowledge and Target Customer Profile are required for AI generation.'), { status: 409 });
+    return { ...knowledge, contextType: 'search-strategy', entityType: 'search_strategies', entityId: String(id), context: { discoveryRequest: discovery ? { ...discovery, search_plan: parseJsonValue(discovery.search_plan), guidance: parseJsonValue(discovery.guidance), scoring_profile: parseJsonValue(discovery.scoring_profile) } : null, ...knowledge.context, constraints: { advisoryOnly: true, humanApprovalRequired: true, externalSearchAllowed: false }, contextHash: knowledge.contextHash }, sourceReferences: [...knowledge.sourceReferences, ...(discovery ? [{ module: 'Opportunity Intelligence', table: 'customer_discovery_requests', id: discovery.id }] : [])] };
+  }
   if (normalizedType === 'product') {
     if (!requires(user, 'products')) throw Object.assign(new Error('Product context access denied.'), { status: 403 });
     const product = productKnowledge(id);
@@ -2213,6 +2224,8 @@ function opportunityDebugData() {
   const lastRun = db.prepare("SELECT MAX(completed_at) AS value FROM customer_ai_analysis_runs WHERE status = 'completed'").get().value;
   const lastCustomerIntelligenceRun = db.prepare("SELECT MAX(created_at) AS value FROM customer_intelligence_profiles").get()?.value || null;
   const lastError = db.prepare("SELECT error_message FROM customer_ai_analysis_runs WHERE status = 'failed' ORDER BY created_at DESC LIMIT 1").get()?.error_message || null;
+  const strategyStatuses = db.prepare('SELECT status, COUNT(*) AS count FROM search_strategies GROUP BY status').all();
+  const strategyCount = status => Number(strategyStatuses.find(row => row.status === status)?.count || 0);
   return {
     customers_count: count('customers'), contacts_count: count('customer_contacts'), gaps_open: openGaps,
     outreach_drafts_count: count('customer_outreach_drafts'), opportunity_queue_count: queue, last_ai_run_at: lastRun,
@@ -2221,6 +2234,13 @@ function opportunityDebugData() {
     score_history_count: count('customer_score_history'),
     discovery_requests_count: count('customer_discovery_requests'),
     search_tasks_count: count('search_tasks'),
+    search_strategies_count: count('search_strategies'), search_strategy_statuses: strategyStatuses,
+    search_strategies_needs_review: strategyCount('Needs Review'), search_strategies_approved: strategyCount('Approved'),
+    search_strategies_superseded: strategyCount('Superseded'),
+    approved_strategies_without_task: Number(db.prepare("SELECT COUNT(*) AS count FROM search_strategies WHERE status='Approved' AND linked_search_task_id IS NULL").get().count),
+    search_strategy_ai_cost: db.prepare("SELECT COALESCE(SUM(estimated_cost_usd),0) AS estimated,COALESCE(SUM(actual_cost_usd),0) AS actual FROM ai_execution_logs WHERE module_name='search-strategy'").get(),
+    search_planning_estimate_total: Number(db.prepare('SELECT COALESCE(SUM(search_cost_estimate),0) AS value FROM search_strategies').get().value),
+    blocked_strategy_task_attempts: Number(db.prepare("SELECT COUNT(*) AS count FROM audit_log WHERE action IN ('blocked_unapproved_strategy_task_creation','blocked_search_task_ready_without_approved_strategy')").get().count),
     customer_type_profiles_count: count('customer_type_profiles'),
     last_customer_intelligence_run_at: lastCustomerIntelligenceRun,
     scoring_engine_status: 'rules-ready', product_matching_status: 'product-intelligence-connected',
@@ -2523,6 +2543,28 @@ function buildGeneratedSearchPlan(plan, guidance) {
     recommended_data_fields: ['Company Name', 'Website', 'City', 'Country', 'Contact Person', 'Email', 'Phone', 'LinkedIn', 'Instagram', 'Company Size', 'Business Type'],
     exclude: plan?.excluded_customers || []
   };
+}
+
+function strategyDataFromDiscovery(strategy) {
+  const request = strategy.customer_discovery_request_id ? db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(strategy.customer_discovery_request_id) : null;
+  const plan = parseJsonValue(request?.search_plan, {}), guidance = parseJsonValue(request?.guidance, {});
+  const generated = buildGeneratedSearchPlan(plan, guidance);
+  const location = String(generated.location || '').split(',').map(value => value.trim()).filter(Boolean);
+  const expected = Math.max(0, Number(String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || 50));
+  return { ...blankSearchStrategyData(strategy.objective || generated.search_objective), targetMarket: { countries: request?.country ? [request.country] : location.slice(-1), cities: request?.region ? [request.region] : location.slice(0, -1), regions: [] }, targetCustomerProfile: { customerTypes: [generated.customer_type || plan.target_customer_type].filter(Boolean), companySize: { description: generated.company_size_detail || generated.company_size || '' }, businessAge: {}, locationCount: {}, expectedOrderRange: {} }, searchObjective: strategy.objective || generated.search_objective || `Find qualified ${plan.target_customer_type || 'restaurant furniture'} buyers`, productCategories: ['Restaurant Furniture'], searchKeywords: generated.search_keywords || plan.recommended_keywords || [], negativeKeywords: ['jobs', 'residential only'], platforms: ['Google Maps', 'Company Websites'], sourcePriority: ['Company Websites', 'Google Maps'], positiveSignals: { buyingSignals: ['New furniture requirement', 'Commercial project'], renovationSignals: ['Renovation announcement'], expansionSignals: ['New location', 'Multi-location growth'] }, exclusionRules: generated.recommended_filters || [], resultTarget: { expectedCount: expected, minimumQualifiedCount: Math.max(1, Math.floor(expected * 0.2)) }, stopConditions: ['Stop when the approved planning budget is reached', 'Stop when the expected result count is reached'], reasoning: ['Built from approved Knowledge Center context and the linked discovery request.'], warnings: guidance.needs_more_information ? ['Discovery request needs more information.'] : [], confidence: guidance.needs_more_information ? 0.55 : 0.8 };
+}
+
+function searchPlanningEstimate(data) {
+  const platforms = data.platforms.length || 1, locations = Math.max(1, data.targetMarket.countries.length + data.targetMarket.cities.length), keywords = Math.max(1, data.searchKeywords.length), results = Number(data.resultTarget.expectedCount || 0);
+  const expected = Math.round((platforms * locations * keywords * 0.004 + results * 0.002) * 1e6) / 1e6;
+  return { currency: 'USD', low: Math.round(expected * 0.75 * 1e6) / 1e6, expected, high: Math.round(expected * 1.25 * 1e6) / 1e6, assumptions: [`${platforms} planned platforms`, `${locations} target locations`, `${keywords} keyword groups`, `${results} expected results`, 'No connector call or real charge was made.'], pricingVersion: 'workflow-1b-planning-v1', estimatedAt: new Date().toISOString(), estimateType: 'planning' };
+}
+
+function safeStrategy(strategy, user) {
+  if (!strategy || ['Admin', 'Owner'].includes(user?.role)) return strategy;
+  const metadata = { ...(strategy.generation_metadata_json || {}) };
+  delete metadata.requestedProvider; delete metadata.providerConfiguration;
+  return { ...strategy, generation_metadata_json: metadata, total_budget_limit: null };
 }
 
 function normalizeSearchTask(row) {
@@ -4049,6 +4091,80 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
 
   deleteProduct(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const product=db.prepare('SELECT * FROM products WHERE id=?').get(id);if(!product)return json(res,404,{error:'Product not found.'});const historical=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE product_id=?').get(id).count)+Number(db.prepare('SELECT COUNT(*) AS count FROM sales_order_items WHERE product_id=?').get(id).count);if(historical){db.prepare("UPDATE products SET library_status='Hidden',visibility='Hidden',status='archived',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);return json(res,200,{deleted:false,archived:true,message:'Product hidden to preserve historical Quote, PI, and Order records.'})}db.prepare('DELETE FROM products WHERE id=?').run(id);return json(res,200,{deleted:true,archived:false})},
 
+  searchStrategies(req, res) {
+    const user = currentUser(req);
+    const strategies = searchStrategyService.list(user).map(item => safeStrategy(item, user));
+    return json(res, 200, { strategies, statuses: searchStrategyService.statuses, capabilities: searchStrategyService.permissions(user) });
+  },
+
+  searchStrategyDetail(req, res, id) {
+    const user = currentUser(req), strategy = searchStrategyService.get(user, id);
+    const active = buildKnowledgeContext({ contextType: 'knowledge-center', user, options: {} });
+    const storedHash = strategy.generation_metadata_json?.contextHash || null;
+    return json(res, 200, { strategy: safeStrategy(strategy, user), context_outdated: Boolean(storedHash && storedHash !== active.contextHash), capabilities: searchStrategyService.permissions(user) });
+  },
+
+  async createSearchStrategy(req, res) {
+    const user = currentUser(req), body = await readJson(req);
+    return json(res, 201, { strategy: safeStrategy(searchStrategyService.create(user, body), user) });
+  },
+
+  async updateSearchStrategy(req, res, id) {
+    const user = currentUser(req), body = await readJson(req);
+    return json(res, 200, { strategy: safeStrategy(searchStrategyService.update(user, id, body), user) });
+  },
+
+  searchStrategyHistory(req, res, id) {
+    const user = currentUser(req);
+    return json(res, 200, { history: searchStrategyService.history(user, id).map(item => safeStrategy(item, user)) });
+  },
+
+  searchStrategyContextPreview(req, res, id) {
+    const user = currentUser(req), strategy = searchStrategyService.get(user, id);
+    const context = buildAiContext({ contextType: 'search-strategy', entityType: 'search_strategies', entityId: strategy.id, user, options: {} });
+    return json(res, 200, { context: context.context, sourceReferences: context.sourceReferences, contextHash: context.contextHash || context.context.contextHash, warnings: context.context.warnings || [] });
+  },
+
+  async generateSearchStrategy(req, res, id) {
+    const user = currentUser(req), strategy = searchStrategyService.get(user, id);
+    if (!searchStrategyService.permissions(user).canGenerate || !searchStrategyService.canEdit(user, searchStrategyService.raw(id))) return json(res, 403, { error: 'AI generation is only allowed for an owned Draft.' });
+    const body = await readJson(req);
+    try {
+      const result = await aiBusinessBrain.runAiAction({ moduleName: 'search-strategy', actionName: 'generate-draft', entityType: 'search_strategies', entityId: id, contextType: 'search-strategy', promptTemplateKey: 'v53.foundation.mock.v1', userId: user.id, user, options: { provider: body.provider || 'rules', productIds: Array.isArray(body.product_ids) ? body.product_ids : [], timeRangeDays: body.time_range_days || 365 } });
+      if (result.status !== 'completed') return json(res, 409, { error: 'AI generation was blocked by Cost Control.', ai: result });
+      const data = strategyDataFromDiscovery(strategy); validateSearchStrategyData(data);
+      const snapshot = db.prepare('SELECT * FROM ai_context_snapshots WHERE id = ?').get(result.contextSnapshotId);
+      const snapshotContext = parseJsonValue(snapshot?.context_json, {}), sources = parseJsonValue(snapshot?.source_references, []);
+      const references = sources.map(source => ({ sourceType: source.table || source.module, sourceRecordId: source.id || source.product_id || null, revision: source.revision || null, updatedAt: source.updatedAt || null }));
+      const generated = searchStrategyService.setGenerated(id, { data, knowledgeReferences: references, evidenceReferences: references.map(source => ({ ...source, supportedStrategyField: 'searchObjective', confidence: data.confidence })), generationMetadata: { provider: result.provider, model: result.model, promptVersion: `${result.prompt.key}:v${result.prompt.version}`, generatedAt: new Date().toISOString(), contextType: 'search-strategy', contextHash: snapshotContext.contextHash || snapshot?.context_hash, schemaVersion: 'workflow-1b-v1', warnings: data.warnings, redactionLevel: snapshot?.redaction_level }, aiCostEstimate: result.cost?.estimate?.estimated_cost_usd || 0, contextSnapshotId: result.contextSnapshotId, executionLogId: result.executionLogId, costLogId: result.cost?.executedCostLogId || result.cost?.estimate?.id });
+      audit(user.id, 'ai_generate_search_strategy', 'search_strategies', String(id), { executionLogId: result.executionLogId, contextSnapshotId: result.contextSnapshotId, costStatus: 'executed' });
+      return json(res, 200, { strategy: safeStrategy(generated, user), ai: { status: result.status, provider: result.provider, model: result.model, cost: result.cost } });
+    } catch (error) { audit(user.id, 'ai_generate_search_strategy_failed', 'search_strategies', String(id), { error: String(error.message).slice(0, 200), executionLogId: error.executionLogId || null }); throw error; }
+  },
+
+  async estimateSearchStrategy(req, res, id) {
+    const user = currentUser(req), strategy = searchStrategyService.get(user, id);
+    if (!searchStrategyService.canEdit(user, searchStrategyService.raw(id))) return json(res, 403, { error: 'Only an owned Draft can be estimated.' });
+    const estimate = searchPlanningEstimate(validateSearchStrategyData(strategy.strategy_data_json));
+    const updated = searchStrategyService.setSearchEstimate(id, estimate);
+    audit(user.id, 'estimate_search_strategy_execution', 'search_strategies', String(id), { estimateType: 'planning', expected: estimate.expected });
+    return json(res, 200, { strategy: safeStrategy(updated, user), estimate });
+  },
+
+  async transitionSearchStrategy(req, res, id, action) {
+    const user = currentUser(req), body = await readJson(req);
+    if (['approve', 'request-changes', 'archive'].includes(action) && !searchStrategyService.permissions(user).canApprove) return json(res, user ? 403 : 401, { error: 'Only Admin or Owner can perform this Search Strategy action.' });
+    return json(res, 200, { strategy: safeStrategy(searchStrategyService.transition(user, id, action, body.review_note), user) });
+  },
+
+  async createTaskFromStrategy(req, res, id) {
+    const user = currentUser(req), strategy = searchStrategyService.get(user, id);
+    if (!searchStrategyService.permissions(user).canCreateSearchTask) return json(res, 403, { error: 'Only Admin or Owner can create a Search Task from an Approved Strategy.' });
+    if (strategy.status !== 'Approved') { audit(user.id, 'blocked_unapproved_strategy_task_creation', 'search_strategies', String(id), { status: strategy.status }); return json(res, 409, { error: 'Only the current Approved Strategy can create a Search Task.' }); }
+    const body = await readJson(req);
+    return handlers.createSearchTask(req, res, { ...body, search_strategy_id: id }, user);
+  },
+
   customerDiscoveryConfig(req, res) {
     const user = currentUser(req);
     const capabilities = opportunityCapabilities(user);
@@ -4136,20 +4252,23 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     return json(res, 200, { task: { ...task, search_results: results, search_result_summary: searchResultSummary(results) }, statuses: searchTaskStatuses, searchResultStatuses });
   },
 
-  async createSearchTask(req, res) {
-    const user = currentUser(req);
+  async createSearchTask(req, res, bodyOverride = null, userOverride = null) {
+    const user = userOverride || currentUser(req);
     const capabilities = opportunityCapabilities(user);
     if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Search task creation is not allowed for this role.' });
-    const body = await readJson(req);
-    const discoveryId = Number(body.customer_discovery_request_id || body.discovery_request_id);
-    const request = db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(discoveryId);
-    if (!request) return json(res, 404, { error: 'Customer discovery request not found.' });
-    const plan = parseJsonValue(request.search_plan, {});
-    const guidance = parseJsonValue(request.guidance, {});
-    const generated = body.generated_search_plan && typeof body.generated_search_plan === 'object'
-      ? body.generated_search_plan
-      : buildGeneratedSearchPlan(plan, guidance);
+    const body = bodyOverride || await readJson(req);
+    const strategyId = Number(body.search_strategy_id);
+    const strategy = strategyId ? db.prepare("SELECT * FROM search_strategies WHERE id = ? AND status = 'Approved'").get(strategyId) : null;
+    if (!strategy) { audit(user.id, 'blocked_unapproved_strategy_task_creation', 'search_tasks', null, { strategyId: strategyId || null }); return json(res, 409, { error: 'An Approved Search Strategy is required to create a Search Task.' }); }
+    if (!searchStrategyService.permissions(user).canCreateSearchTask) return json(res, 403, { error: 'Only Admin or Owner can create a Search Task.' });
+    if (strategy.linked_search_task_id) return json(res, 409, { error: 'This Approved Strategy is already linked to a Search Task.' });
+    const discoveryId = Number(strategy.customer_discovery_request_id) || null;
+    const request = discoveryId ? db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(discoveryId) : null;
+    const plan = parseJsonValue(request?.search_plan, {}), guidance = parseJsonValue(request?.guidance, {}), data = parseJsonValue(strategy.strategy_data_json, {});
+    const generated = { target_customer: data.targetCustomerProfile?.customerTypes?.join(', '), customer_type: data.targetCustomerProfile?.customerTypes?.[0], industry: 'Hospitality Furniture', location: [...(data.targetMarket?.cities || []), ...(data.targetMarket?.countries || [])].join(', '), company_size_detail: data.targetCustomerProfile?.companySize?.description || '', search_objective: data.searchObjective, search_keywords: data.searchKeywords, recommended_filters: data.exclusionRules, recommended_search_volume: data.resultTarget?.expectedCount, priority: 'Medium', required_data_fields: ['Company Name', 'Website', 'Country', 'City', 'Source URL'] };
     const targetQuantity = Number(String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || body.target_quantity || 0);
+    db.exec('BEGIN');
+    try {
     const row = db.prepare(`INSERT INTO search_tasks
       (customer_discovery_request_id, task_name, target_customer, customer_type, industry, location, company_size,
        search_objective, keywords, filters, target_quantity, priority, required_data_fields, status, created_by)
@@ -4169,9 +4288,11 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       JSON.stringify(generated.required_data_fields || generated.recommended_data_fields || []),
       user.id
     );
+    db.prepare('UPDATE search_strategies SET linked_search_task_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id, strategy.id);
     const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(row.id));
-    audit(user.id, 'create_search_task', 'search_tasks', String(row.id), { discoveryId, targetQuantity, priority: task.priority });
-    return json(res, 201, { task });
+    audit(user.id, 'create_search_task', 'search_tasks', String(row.id), { discoveryId, strategyId, targetQuantity, priority: task.priority });
+    db.exec('COMMIT'); return json(res, 201, { task, search_strategy_id: strategy.id });
+    } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
   },
 
   updateSearchTaskStatus(req, res, id, action) {
@@ -4181,6 +4302,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     if (!task) return json(res, 404, { error: 'Search task not found.' });
     if (action !== 'ready') return json(res, 400, { error: 'Only Draft to Ready is supported in this MVP.' });
     if (task.status !== 'Draft') return json(res, 409, { error: 'Only Draft tasks can be marked Ready.' });
+    const strategy = db.prepare("SELECT * FROM search_strategies WHERE linked_search_task_id = ? AND status = 'Approved'").get(id);
+    if (!strategy) { audit(user.id, 'blocked_search_task_ready_without_approved_strategy', 'search_tasks', String(id)); return json(res, 409, { error: 'Search Task requires a currently Approved Search Strategy before it can be marked Ready.' }); }
     db.prepare("UPDATE search_tasks SET status = 'Ready', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
     audit(user.id, 'mark_search_task_ready', 'search_tasks', String(id));
     const updatedTask = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(id));
@@ -5013,6 +5136,19 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/customer-discovery/requests') return handlers.customerDiscoveryRequests(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customer-discovery/analyze') return await handlers.analyzeCustomerDiscovery(req, res, 'analyze-requirement');
     if (req.method === 'POST' && url.pathname === '/api/customer-discovery/generate-plan') return await handlers.analyzeCustomerDiscovery(req, res, 'generate-search-plan');
+    if (req.method === 'GET' && url.pathname === '/api/search-strategies') return handlers.searchStrategies(req, res);
+    if (req.method === 'POST' && url.pathname === '/api/search-strategies') return await handlers.createSearchStrategy(req, res);
+    const strategyHistoryMatch = url.pathname.match(/^\/api\/search-strategies\/(\d+)\/history$/);
+    if (strategyHistoryMatch && req.method === 'GET') return handlers.searchStrategyHistory(req, res, Number(strategyHistoryMatch[1]));
+    const strategyActionMatch = url.pathname.match(/^\/api\/search-strategies\/(\d+)\/(context-preview|generate|estimate-search-cost|submit-review|approve|request-changes|archive|create-search-task)$/);
+    if (strategyActionMatch && req.method === 'GET' && strategyActionMatch[2] === 'context-preview') return handlers.searchStrategyContextPreview(req, res, Number(strategyActionMatch[1]));
+    if (strategyActionMatch && req.method === 'POST' && strategyActionMatch[2] === 'generate') return await handlers.generateSearchStrategy(req, res, Number(strategyActionMatch[1]));
+    if (strategyActionMatch && req.method === 'POST' && strategyActionMatch[2] === 'estimate-search-cost') return await handlers.estimateSearchStrategy(req, res, Number(strategyActionMatch[1]));
+    if (strategyActionMatch && req.method === 'POST' && strategyActionMatch[2] === 'create-search-task') return await handlers.createTaskFromStrategy(req, res, Number(strategyActionMatch[1]));
+    if (strategyActionMatch && req.method === 'POST') return await handlers.transitionSearchStrategy(req, res, Number(strategyActionMatch[1]), strategyActionMatch[2]);
+    const strategyMatch = url.pathname.match(/^\/api\/search-strategies\/(\d+)$/);
+    if (strategyMatch && req.method === 'GET') return handlers.searchStrategyDetail(req, res, Number(strategyMatch[1]));
+    if (strategyMatch && req.method === 'PUT') return await handlers.updateSearchStrategy(req, res, Number(strategyMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/search-tasks') return handlers.searchTasks(req, res);
     if (req.method === 'POST' && url.pathname === '/api/search-tasks') return await handlers.createSearchTask(req, res);
     const searchTaskResultsMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/results$/);
