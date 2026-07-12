@@ -1115,7 +1115,7 @@ async function renderProductLibraryAttributes(){const [data,categoryData]=await 
 
 function opportunityTabs(active, counts = {}) {
   const tabs = [
-    ['dashboard', 'Opportunity Dashboard'], ['discovery', 'AI Discovery'], ['search-tasks', `Search Tasks (${counts.searchTasks || 0})`], ['lead-pool', `Lead Pool (${counts.leads || 0})`],
+    ['dashboard', 'Opportunity Dashboard'], ['discovery', 'AI Discovery'], ['search-strategies', `Search Strategies (${counts.searchStrategies || 0})`], ['search-tasks', `Search Tasks (${counts.searchTasks || 0})`], ['lead-pool', `Lead Pool (${counts.leads || 0})`],
     ['customers', `Customers (${counts.customers || 0})`], ['priority', `Priority View (${counts.priority || 0})`]
   ];
   return `<nav class="knowledge-tabs opportunity-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" class="${active === key ? 'is-active' : ''}" data-action="opportunity-tab" data-tab="${key}" role="tab">${label}</button>`).join('')}</nav>`;
@@ -1240,7 +1240,7 @@ function discoveryPlanResult(result) {
 
 function generatedSearchPlanSection(plan) {
   const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
-  const createAction = state.discoveryPlan?.request?.id ? '<button class="button button--primary" data-action="create-search-task">Create Search Task</button>' : '';
+  const createAction = state.discoveryPlan?.request?.id ? '<button class="button button--primary" data-action="create-search-strategy-from-plan">Create Strategy Draft</button>' : '';
   return `<article class="panel generated-search-plan"><div class="panel-header"><div class="panel-title"><h2>Generated Search Plan</h2><p>Review this draft before any future customer discovery execution.</p></div><div class="row-actions">${badge(plan.status || 'Draft Search Plan')}${createAction}</div></div>
     <div class="debug-list discovery-fields">
       <div><span>Target Customer</span><strong>${esc(plan.target_customer || 'Needs Clarification')}</strong></div>
@@ -1335,9 +1335,37 @@ function renderSearchTasksPane(data) {
     <div class="table-scroll"><table class="data-table"><thead><tr><th>Task</th><th>Customer Type</th><th>Location</th><th>Company Size</th><th>Volume</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${searchTaskRows(data.searchTasks || []) || '<tr><td colspan="9"><div class="empty-state">No search tasks yet. Generate a Search Plan, then click Create Search Task.</div></td></tr>'}</tbody></table></div></article>`;
 }
 
+function strategyCsv(value) { return esc((Array.isArray(value) ? value : []).join(', ')); }
+function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = false) {
+  const data = strategy.strategy_data_json || {}, draft = strategy.status === 'Draft';
+  const ownActions = `${draft && capabilities.canGenerate ? `<button class="button" data-action="strategy-generate" data-id="${strategy.id}">AI Generate</button>` : ''}${draft ? `<button class="button" data-action="strategy-estimate" data-id="${strategy.id}">Planning Estimate</button><button class="button button--primary" data-action="strategy-submit" data-id="${strategy.id}">Submit Review</button>` : ''}`;
+  const reviewActions = strategy.status === 'Needs Review' && capabilities.canApprove ? `<button class="button" data-action="strategy-request-changes" data-id="${strategy.id}">Request Changes</button><button class="button button--primary" data-action="strategy-approve" data-id="${strategy.id}">Approve</button>` : '';
+  const taskAction = strategy.status === 'Approved' && capabilities.canCreateSearchTask && !strategy.linked_search_task_id ? `<button class="button button--primary" data-action="strategy-create-task" data-id="${strategy.id}">Create Draft Search Task</button>` : '';
+  return `<article class="panel"><div class="panel-header"><div class="panel-title"><h2>${esc(strategy.title)}</h2><p>${badge(strategy.status)} Revision ${strategy.revision_no}${contextOutdated ? ' · Context updated since generation' : ''}</p></div><div class="row-actions"><button class="button" data-action="strategy-back">Back</button>${ownActions}${reviewActions}${taskAction}<button class="button" data-action="strategy-history" data-id="${strategy.id}">History</button></div></div>
+    <form id="search-strategy-form" class="foundation-form" data-id="${strategy.id}">
+      <label class="field"><span>Title</span><input name="title" value="${esc(strategy.title)}" ${draft ? '' : 'disabled'} required></label>
+      <label class="field field--full"><span>Search Objective</span><textarea name="searchObjective" ${draft ? '' : 'disabled'} required>${esc(data.searchObjective || strategy.objective || '')}</textarea></label>
+      <label class="field"><span>Countries</span><input name="countries" value="${strategyCsv(data.targetMarket?.countries)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field"><span>Cities</span><input name="cities" value="${strategyCsv(data.targetMarket?.cities)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field"><span>Customer Types</span><input name="customerTypes" value="${strategyCsv(data.targetCustomerProfile?.customerTypes)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field"><span>Platforms</span><input name="platforms" value="${strategyCsv(data.platforms)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field field--full"><span>Search Keywords</span><textarea name="searchKeywords" ${draft ? '' : 'disabled'}>${strategyCsv(data.searchKeywords)}</textarea></label>
+      <label class="field"><span>Expected Results</span><input name="expectedCount" type="number" min="0" value="${Number(data.resultTarget?.expectedCount || 0)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field"><span>Minimum Qualified</span><input name="minimumQualifiedCount" type="number" min="0" value="${Number(data.resultTarget?.minimumQualifiedCount || 0)}" ${draft ? '' : 'disabled'}></label>
+      ${draft ? '<button class="button button--primary" type="submit">Save Draft</button>' : ''}
+    </form>
+    <section class="detail-grid section-gap"><article><h3>Knowledge & Context</h3><p>${strategy.knowledge_references_json?.length || 0} fixed references</p><small>Snapshot ${esc(strategy.context_snapshot_id || 'Not generated')} · ${contextOutdated ? 'Updated context available' : 'Current at last check'}</small></article><article><h3>AI Cost</h3><p>USD ${Number(strategy.ai_cost_estimate || 0).toFixed(6)}</p><small>All AI calls pass Cost Control</small></article><article><h3>Search Planning Estimate</h3><p>USD ${Number(strategy.search_cost_estimate || 0).toFixed(6)}</p><small>Planning only. No connector or actual charge.</small></article><article><h3>Review</h3><p>${esc(strategy.review_note || 'No review note')}</p><small>${strategy.linked_search_task_id ? `Linked Search Task #${strategy.linked_search_task_id}` : 'No linked Search Task'}</small></article></section></article>`;
+}
+
+function renderSearchStrategiesPane(data) {
+  if (state.searchStrategyDetail) return renderSearchStrategyDetail(state.searchStrategyDetail, data.strategyCapabilities, state.searchStrategyContextOutdated);
+  const rows=(data.searchStrategies||[]).map(item=>`<tr><td><strong>${esc(item.title)}</strong><small>${esc(item.strategy_key)}</small></td><td>${item.revision_no}</td><td>${badge(item.status)}</td><td>USD ${Number(item.search_cost_estimate||0).toFixed(4)}</td><td>${esc(item.updated_at)}</td><td><button class="button button--compact" data-action="strategy-view" data-id="${item.id}">Open</button></td></tr>`).join('');
+  return `<section class="detail-grid"><form id="search-strategy-create" class="panel foundation-form"><h2>Create Blank Draft</h2><label class="field"><span>Title</span><input name="title" required></label><label class="field field--full"><span>Objective</span><textarea name="objective" required></textarea></label><button class="button button--primary" type="submit">Create Draft</button></form><article class="panel"><h2>Human Approval Boundary</h2><p>AI creates Drafts only. Admin or Owner approval is required before a Draft Search Task can be created.</p></article></section><article class="panel section-gap"><div class="table-scroll"><table class="data-table"><thead><tr><th>Strategy</th><th>Revision</th><th>Status</th><th>Planning Estimate</th><th>Updated</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="6"><div class="empty-state">No Search Strategies yet.</div></td></tr>'}</tbody></table></div></article>`;
+}
+
 function renderOpportunityPane(data) {
   const view = state.opportunityView || 'dashboard';
-  const counts = { customers: data.customers.length, priority: data.priority.length, queue: data.queue.length, handoff: data.handoff.length, searchTasks: data.searchTasks?.length || 0 };
+  const counts = { customers: data.customers.length, priority: data.priority.length, queue: data.queue.length, handoff: data.handoff.length, searchTasks: data.searchTasks?.length || 0, searchStrategies: data.searchStrategies?.length || 0 };
   const capabilities = data.capabilities;
   const sourceOptions = data.sources.map(source => `<option>${esc(source)}</option>`).join('');
   const customerFilterOptions = field => [...new Set(data.customers.map(customer => customer[field]).filter(Boolean))].sort().map(value => `<option>${esc(value)}</option>`).join('');
@@ -1346,6 +1374,7 @@ function renderOpportunityPane(data) {
     <article class="panel"><div class="panel-header"><div class="panel-title"><h2>AI Pipeline Status</h2><p>Rule provider is active; external AI remains optional.</p></div>${badge(data.debug.scoring_engine_status)}</div>
       <div class="debug-list"><div><span>Product Matching</span><strong>${esc(data.debug.product_matching_status)}</strong></div><div><span>Duplicate Check</span><strong>${esc(data.debug.duplicate_check_status)}</strong></div><div><span>Open Data Gaps</span><strong>${data.debug.gaps_open}</strong></div><div><span>Last AI Run</span><strong>${esc(data.debug.last_ai_run_at || 'Not run')}</strong></div></div></article></section>`;
   if (view === 'discovery') return renderCustomerDiscoveryPane(data);
+  if (view === 'search-strategies') return renderSearchStrategiesPane(data);
   if (view === 'search-tasks') return renderSearchTasksPane(data);
   if (view === 'lead-pool') return state.searchResultEdit && state.searchTaskDetail
     ? renderSearchTaskDetail(state.searchTaskDetail)
@@ -1379,9 +1408,9 @@ function renderOpportunityPane(data) {
 }
 
 async function renderOpportunityIntelligence() {
-  const [dashboard, customersData, priorityData, queueData, handoffData, discoveryConfig, discoveryHistory, searchTasksData] = await Promise.all([
+  const [dashboard, customersData, priorityData, queueData, handoffData, discoveryConfig, discoveryHistory, searchTasksData, strategyData] = await Promise.all([
     api('/api/opportunity/dashboard'), api('/api/customers'), api('/api/customer-intelligence/priority'), api('/api/opportunity-queue'), api('/api/customers/sales-handoff'),
-    api('/api/customer-discovery/config'), api('/api/customer-discovery/requests'), api('/api/search-tasks')
+    api('/api/customer-discovery/config'), api('/api/customer-discovery/requests'), api('/api/search-tasks'), api('/api/search-strategies')
   ]);
   const searchTaskDetails = await Promise.all((searchTasksData.tasks || []).slice(0, 50).map(task => api(`/api/search-tasks/${task.id}`)));
   const leads = searchTaskDetails.flatMap(detail => (detail.task.search_results || []).map(result => ({
@@ -1393,16 +1422,19 @@ async function renderOpportunityIntelligence() {
   state.opportunityIntelligence = {
     metrics: dashboard.metrics, debug: dashboard.debug, capabilities: dashboard.capabilities,
     customers: customersData.customers, priority: priorityData.customers, sources: customersData.sources, statuses: customersData.statuses,
-    queue: queueData.customers, handoff: handoffData.customers, discoveryConfig, discoveryRequests: discoveryHistory.requests, searchTasks: searchTasksData.tasks, leads
+    queue: queueData.customers, handoff: handoffData.customers, discoveryConfig, discoveryRequests: discoveryHistory.requests, searchTasks: searchTasksData.tasks, leads,
+    searchStrategies: strategyData.strategies, strategyCapabilities: strategyData.capabilities
   };
   $('#page').innerHTML = `${pageHeader('Opportunity Intelligence', 'Turn sourced customer data into clean, scored, product-matched, human-approved sales opportunities.',
     dashboard.capabilities.canImport ? '<button class="button button--primary" data-action="opportunity-tab" data-tab="import">Import Customers</button>' : '')}
-    ${opportunityTabs(state.opportunityView, { leads: leads.length, customers: customersData.customers.length, priority: priorityData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length, searchTasks: searchTasksData.tasks.length })}
+    ${opportunityTabs(state.opportunityView, { leads: leads.length, customers: customersData.customers.length, priority: priorityData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length, searchTasks: searchTasksData.tasks.length, searchStrategies: strategyData.strategies.length })}
     <div class="opportunity-pane">${renderOpportunityPane(state.opportunityIntelligence)}</div>`;
   $('#customer-manual-form')?.addEventListener('submit', submitManualCustomer);
   $('#customer-csv-form')?.addEventListener('submit', event => submitCustomerImport(event, 'csv'));
   $('#customer-text-form')?.addEventListener('submit', event => submitCustomerImport(event, 'text'));
   $('#search-result-form')?.addEventListener('submit', submitSearchResult);
+  $('#search-strategy-create')?.addEventListener('submit', createBlankSearchStrategy);
+  $('#search-strategy-form')?.addEventListener('submit', saveSearchStrategy);
   ['customer-search-filter','customer-source-filter','customer-type-filter','customer-grade-filter','customer-priority-filter','customer-status-filter']
     .forEach(id => $(`#${id}`)?.addEventListener(id === 'customer-search-filter' ? 'input' : 'change', applyCustomerListFilters));
 }
@@ -1432,18 +1464,25 @@ async function runCustomerDiscovery(action) {
   await renderOpportunityIntelligence();
 }
 
-async function createSearchTaskFromPlan() {
+async function createSearchStrategyFromPlan() {
   const discoveryId = state.discoveryPlan?.request?.id;
   if (!discoveryId) return toast('Generate a Search Plan first.');
-  const result = await api('/api/search-tasks', {
+  const plan=state.discoveryPlan.generated_search_plan||{};
+  const result = await api('/api/search-strategies', {
     method: 'POST',
-    body: JSON.stringify({ customer_discovery_request_id: discoveryId, generated_search_plan: state.discoveryPlan.generated_search_plan })
+    body: JSON.stringify({ customer_discovery_request_id: discoveryId, title: `Search Strategy - ${plan.target_customer||'Target Market'}`, objective: plan.search_objective||'Build an approved search strategy' })
   });
-  state.searchTaskDetail = result.task;
-  state.opportunityView = 'search-tasks';
-  toast('Search Task created.');
+  state.searchStrategyDetail = result.strategy;
+  state.opportunityView = 'search-strategies';
+  toast('Strategy Draft created.');
   await renderOpportunityIntelligence();
 }
+
+const strategyList=value=>String(value||'').split(',').map(item=>item.trim()).filter(Boolean);
+async function createBlankSearchStrategy(event){event.preventDefault();const body=Object.fromEntries(new FormData(event.currentTarget));const result=await api('/api/search-strategies',{method:'POST',body:JSON.stringify(body)});state.searchStrategyDetail=result.strategy;await renderOpportunityIntelligence()}
+async function viewSearchStrategy(id){const result=await api(`/api/search-strategies/${id}`);state.searchStrategyDetail=result.strategy;state.searchStrategyContextOutdated=result.context_outdated;await renderOpportunityIntelligence()}
+async function saveSearchStrategy(event){event.preventDefault();const strategy=state.searchStrategyDetail,current=strategy.strategy_data_json||{},form=Object.fromEntries(new FormData(event.currentTarget));const expected=Number(form.expectedCount||0),minimum=Number(form.minimumQualifiedCount||0);const data={...current,targetMarket:{...(current.targetMarket||{}),countries:strategyList(form.countries),cities:strategyList(form.cities),regions:current.targetMarket?.regions||[]},targetCustomerProfile:{...(current.targetCustomerProfile||{}),customerTypes:strategyList(form.customerTypes)},searchObjective:form.searchObjective,searchKeywords:strategyList(form.searchKeywords),platforms:strategyList(form.platforms),resultTarget:{expectedCount:expected,minimumQualifiedCount:Math.min(minimum,expected)}};const result=await api(`/api/search-strategies/${strategy.id}`,{method:'PUT',body:JSON.stringify({title:form.title,objective:form.searchObjective,strategy_data_json:data})});state.searchStrategyDetail=result.strategy;toast('Strategy Draft saved.');await renderOpportunityIntelligence()}
+async function searchStrategyAction(id,action,body={}){const result=await api(`/api/search-strategies/${id}/${action}`,{method:'POST',body:JSON.stringify(body)});if(result.strategy)state.searchStrategyDetail=result.strategy;if(result.task){state.searchTaskDetail=result.task;state.searchStrategyDetail=null;state.opportunityView='search-tasks'}toast(action.replaceAll('-',' '));await renderOpportunityIntelligence()}
 
 async function viewSearchTask(id) {
   const result = await api(`/api/search-tasks/${id}`);
@@ -2374,8 +2413,26 @@ async function handleAction(action, node) {
     await runCustomerDiscovery('analyze');
   } else if (action === 'generate-discovery-plan') {
     await runCustomerDiscovery('generate');
-  } else if (action === 'create-search-task') {
-    await createSearchTaskFromPlan();
+  } else if (action === 'create-search-strategy-from-plan') {
+    await createSearchStrategyFromPlan();
+  } else if (action === 'strategy-view') {
+    await viewSearchStrategy(node.dataset.id);
+  } else if (action === 'strategy-back') {
+    state.searchStrategyDetail=null; state.searchStrategyContextOutdated=false; await renderOpportunityIntelligence();
+  } else if (action === 'strategy-generate') {
+    await searchStrategyAction(node.dataset.id,'generate',{provider:'rules'});
+  } else if (action === 'strategy-estimate') {
+    await searchStrategyAction(node.dataset.id,'estimate-search-cost');
+  } else if (action === 'strategy-submit') {
+    await searchStrategyAction(node.dataset.id,'submit-review');
+  } else if (action === 'strategy-approve') {
+    await searchStrategyAction(node.dataset.id,'approve');
+  } else if (action === 'strategy-request-changes') {
+    await searchStrategyAction(node.dataset.id,'request-changes',{review_note:prompt('Review note')||'Changes requested'});
+  } else if (action === 'strategy-create-task') {
+    await searchStrategyAction(node.dataset.id,'create-search-task');
+  } else if (action === 'strategy-history') {
+    const result=await api(`/api/search-strategies/${node.dataset.id}/history`);alert(result.history.map(item=>`v${item.revision_no} · ${item.status} · ${item.updated_at}`).join('\n'));
   } else if (action === 'view-search-task') {
     await viewSearchTask(node.dataset.id);
   } else if (action === 'start-search-task') {
