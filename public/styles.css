@@ -159,11 +159,11 @@ svg { display: block; }
 .sidebar-close { display: none; margin-left: auto; color: #fff; }
 .main-nav { margin-top: 25px; display: grid; gap: 3px; overflow-y: auto; scrollbar-width: none; }
 .nav-label { margin: 13px 13px 5px; color: #5f8d82; font: 700 8px/1 "Manrope", sans-serif; letter-spacing: 1.5px; text-transform: uppercase; }
-.nav-item { height: 40px; padding: 0 12px; display: flex; align-items: center; gap: 11px; color: #a7c0ba; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; transition: .15s ease; }
+.nav-item { min-height: 40px; padding: 8px 12px; display: flex; align-items: center; gap: 11px; color: #a7c0ba; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; transition: .15s ease; }
 .nav-item:hover { color: #fff; background: rgba(255,255,255,.055); }
 .nav-item.is-active { color: #fff; background: rgba(255,255,255,.1); box-shadow: inset 2px 0 #77b4a5; }
 .nav-item svg { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
-.nav-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item span { min-width: 0; line-height: 1.25; overflow-wrap: anywhere; }
 .nav-item .nav-badge { min-width: 20px; height: 18px; margin-left: auto; padding: 0 5px; display: grid; place-items: center; color: #aed2c9; border-radius: 9px; background: rgba(255,255,255,.08); font-size: 9px; }
 .sidebar-support { margin: auto 4px 13px; padding: 12px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(255,255,255,.035); cursor: pointer; }
 .support-icon { width: 27px; height: 27px; display: grid; place-items: center; color: #c7ded9; border-radius: 7px; background: rgba(255,255,255,.07); }
@@ -597,6 +597,7 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
 .opportunity-tabs { position: relative; z-index: 2; overflow-x: auto; margin-bottom: 18px; pointer-events: auto; }
 .opportunity-tabs button { white-space: nowrap; }
 .opportunity-pane { position: relative; z-index: 1; }
+.page-title,.panel-title,.metric-card,.detail-grid>*,.foundation-form>*{min-width:0}.page-title h1,.page-title p,.panel-title h2,.panel-title h3,.panel-title p,.button,.empty-state,.activity-item strong,.activity-item p{overflow-wrap:anywhere}.button{height:auto;padding-block:10px;line-height:1.25;text-align:center}.data-table th,.data-table td{overflow-wrap:anywhere}
 .opportunity-metrics { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
 .opportunity-import-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .opportunity-form { align-self: start; }

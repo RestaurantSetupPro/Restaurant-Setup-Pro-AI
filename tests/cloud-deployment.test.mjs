@@ -177,7 +177,7 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(server, /replaceAll\('__BUILD_VERSION__', buildVersion\)/);
   assert.match(app, /route: 'knowledge-dashboard'/);
   assert.match(app, /'knowledge-dashboard': renderKnowledgeDashboard/);
-  assert.match(app, /item\.route === 'knowledge-dashboard'/);
+  assert.match(app, /navigationItemsForRole\(uniqueNavItems, state\.user\.role/);
   assert.match(app, /Company Knowledge/);
   assert.match(app, /Target Customer Profiles/);
   assert.match(app, /Save Draft/);

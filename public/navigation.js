@@ -20,3 +20,12 @@ export function activateOpportunityTab(state, tab) {
   state.searchResultEdit = null;
   return state;
 }
+
+export function navigationItemsForRole(items, role, permissions = []) {
+  const granted = new Set(permissions);
+  return items
+    .filter(item => item.featureAvailability === 'available')
+    .filter(item => item.allowedRoles?.includes(role))
+    .filter(item => !item.requiredPermission || granted.has(item.requiredPermission))
+    .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+}

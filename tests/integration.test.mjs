@@ -1506,7 +1506,9 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.ok(logs.logs.some(log => log.module_name === 'opportunity-intelligence' && log.action_name === 'search-result-qualification' && log.status === 'executed'));
 
   const appJs = await fetch(`http://127.0.0.1:${port}/app.js`).then(response => response.text());
-  assert.match(appJs, /AI Discovery/);
+  const englishLocale = await fetch(`http://127.0.0.1:${port}/locales/en.js`).then(response => response.text());
+  assert.match(appJs, /salesOs\.tabs\.discovery/);
+  assert.match(englishLocale, /AI Discovery/);
   assert.match(appJs, /Describe your ideal customer/);
   assert.match(appJs, /Customer Discovery Plan/);
   assert.match(appJs, /Generated Search Plan/);
@@ -1514,10 +1516,12 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Search Tasks/);
   assert.match(appJs, /Mark Ready/);
   assert.match(appJs, /Estimate Execution/);
-  assert.match(appJs, /AI Qualification Pending/);
+  assert.match(appJs, /salesOs\.status\.aiPending/);
+  assert.match(englishLocale, /AI Qualification Pending/);
   assert.match(appJs, /run-ai-qualification/);
   assert.doesNotMatch(appJs, /api\(`\/api\/search-results\/\$\{id\}`,[^{]*\{ method: 'PUT'/);
-  assert.match(appJs, /aiStatus==='Qualified'\?'AI Qualified'/);
+  assert.match(appJs, /aiStatus==='Qualified'\?t\('salesOs\.status\.aiQualified'\)/);
+  assert.match(englishLocale, /AI Qualified/);
   assert.match(appJs, /Source & Evidence/);
   assert.match(appJs, /Connector Version/);
   assert.match(appJs, /Normalization Version/);
@@ -1530,8 +1534,9 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Future Attachment/);
   assert.match(appJs, /Search Results/);
   assert.match(appJs, /Lead Pool/);
-  assert.match(appJs, /Lead Detail/);
-  assert.match(appJs, /Customers CRM/);
+  assert.match(appJs, /salesOs\.terms\.leadDetail/);
+  assert.match(englishLocale, /Lead Detail/);
+  assert.match(englishLocale, /Customers CRM/);
   assert.match(appJs, /Add Search Result/);
   assert.match(appJs, /Save Search Result/);
   const stylesCss=await fetch(`http://127.0.0.1:${port}/styles.css`).then(response=>response.text());

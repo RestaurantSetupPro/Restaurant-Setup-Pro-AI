@@ -1,5 +1,5 @@
-import { getLocale, getSupportedLocales, localeForIntl, setLocale, t } from './i18n.js';
-import { activateOpportunityTab, uniqueNavigationItems } from './navigation.js';
+import { formatLocalDate, formatLocalDateTime, formatLocalMoney, formatLocalQuantity, getLocale, getSupportedLocales, localizeDom, localeForIntl, setLocale, t } from './i18n.js';
+import { activateOpportunityTab, navigationItemsForRole, uniqueNavigationItems } from './navigation.js';
 
 const state = {
   user: null,
@@ -69,43 +69,44 @@ function icon(name, className = '') {
   return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.dashboard}</svg>`;
 }
 
+const ALL_ROLES = Object.freeze(['Admin', 'Owner', 'Sales', 'Designer', 'VA']);
+const BUSINESS_ADMINS = Object.freeze(['Admin', 'Owner']);
 const navItems = [
-  { groupKey: 'common.workspace', route: 'new-inquiry', labelKey: 'nav.newInquiry' },
-  { groupKey: 'common.workspace', route: 'sales-customers', labelKey: 'nav.salesCustomers' },
-  { groupKey: 'common.workspace', route: 'sales-quotes', labelKey: 'nav.salesQuotes' },
-  { groupKey: 'common.workspace', route: 'sales-orders', labelKey: 'nav.salesOrders' },
-  { groupKey: 'common.workspace', route: 'sales-tasks', labelKey: 'nav.salesTasks' },
-  { groupKey: 'common.workspace', route: 'dashboard', labelKey: 'nav.dashboard' },
-  { groupKey: 'common.workspace', route: 'products', labelKey: 'nav.products', hidden: true },
-  { groupKey: 'common.productLibrary', route: 'product-library-products', labelKey: 'nav.libraryProducts', icon: 'products' },
-  { groupKey: 'common.productLibrary', route: 'product-library-categories', labelKey: 'nav.libraryCategories', icon: 'briefcase' },
-  { groupKey: 'common.productLibrary', route: 'product-library-tags', labelKey: 'nav.libraryTags', icon: 'tag' },
-  { groupKey: 'common.productLibrary', route: 'product-library-attributes', labelKey: 'nav.libraryAttributes', icon: 'filter' },
-  { groupKey: 'common.productLibrary', route: 'product-library-variants', labelKey: 'nav.libraryVariants', icon: 'palette' },
-  { groupKey: 'common.workspace', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard' },
-  { groupKey: 'common.growth', route: 'opportunity-intelligence', labelKey: 'nav.opportunityIntelligence' },
-  { groupKey: 'common.workspace', route: 'imports', labelKey: 'nav.imports' },
-  { groupKey: 'common.workspace', route: 'images', labelKey: 'nav.images' },
-  { groupKey: 'common.workspace', route: 'proposals', labelKey: 'nav.proposals', badge: '3' },
-  { groupKey: 'common.workspace', route: 'cases', labelKey: 'nav.cases' },
-  { groupKey: 'common.growth', route: 'crm', labelKey: 'nav.crm', badge: '12' },
-  { groupKey: 'common.growth', route: 'sales-ai', labelKey: 'nav.salesAi' },
-  { groupKey: 'common.growth', route: 'content-ai', labelKey: 'nav.contentAi' },
-  { groupKey: 'common.system', route: 'core-foundation', labelKey: 'nav.coreFoundation' },
-  { groupKey: 'common.system', route: 'debug-center', labelKey: 'nav.debugCenter' },
-  { groupKey: 'common.system', route: 'settings', labelKey: 'nav.settings' }
-];
+  { groupKey: 'salesOs.groups.workspace', route: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', allowedRoles: ALL_ROLES, order: 10 },
+  { groupKey: 'salesOs.groups.workspace', route: 'new-inquiry', labelKey: 'nav.newInquiry', icon: 'plus', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 20 },
+  { groupKey: 'salesOs.groups.workspace', route: 'sales-tasks', labelKey: 'nav.salesTasks', icon: 'check', allowedRoles: ALL_ROLES, order: 30 },
+  { groupKey: 'salesOs.groups.opportunities', route: 'opportunity-intelligence', labelKey: 'nav.opportunityIntelligence', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'VA'], order: 110 },
+  { groupKey: 'salesOs.groups.opportunities', route: 'sales-customers', labelKey: 'nav.salesCustomers', icon: 'users', allowedRoles: ALL_ROLES, order: 120 },
+  { groupKey: 'salesOs.groups.opportunities', route: 'crm', labelKey: 'nav.crm', icon: 'crm', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 130 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-products', labelKey: 'nav.libraryProducts', icon: 'products', allowedRoles: ALL_ROLES, order: 210 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-categories', labelKey: 'nav.libraryCategories', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 220 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-tags', labelKey: 'nav.libraryTags', icon: 'tag', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 230 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-attributes', labelKey: 'nav.libraryAttributes', icon: 'filter', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 240 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-variants', labelKey: 'nav.libraryVariants', icon: 'palette', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 250 },
+  { groupKey: 'salesOs.groups.products', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard', icon: 'document', allowedRoles: ALL_ROLES, order: 260 },
+  { groupKey: 'salesOs.groups.products', route: 'imports', labelKey: 'nav.imports', icon: 'imports', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 270 },
+  { groupKey: 'salesOs.groups.commercial', route: 'images', labelKey: 'nav.images', icon: 'images', allowedRoles: [...BUSINESS_ADMINS, 'Designer'], order: 310 },
+  { groupKey: 'salesOs.groups.commercial', route: 'proposals', labelKey: 'nav.proposals', icon: 'proposals', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'Designer'], order: 320 },
+  { groupKey: 'salesOs.groups.commercial', route: 'sales-quotes', labelKey: 'nav.salesQuotes', icon: 'document', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 330 },
+  { groupKey: 'salesOs.groups.commercial', route: 'sales-orders', labelKey: 'nav.salesOrders', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 340 },
+  { groupKey: 'salesOs.groups.commercial', route: 'cases', labelKey: 'nav.cases', icon: 'cases', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'Designer'], order: 350 },
+  { groupKey: 'salesOs.groups.commercial', route: 'sales-ai', labelKey: 'nav.salesAi', icon: 'sales-ai', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 360 },
+  { groupKey: 'salesOs.groups.commercial', route: 'content-ai', labelKey: 'nav.contentAi', icon: 'content-ai', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 370 },
+  { groupKey: 'salesOs.groups.system', route: 'core-foundation', labelKey: 'nav.coreFoundation', icon: 'settings', allowedRoles: ['Admin'], order: 410 },
+  { groupKey: 'salesOs.groups.system', route: 'debug-center', labelKey: 'nav.debugCenter', icon: 'debug-center', allowedRoles: ['Admin'], order: 420 },
+  { groupKey: 'salesOs.groups.system', route: 'settings', labelKey: 'nav.settings', icon: 'settings', allowedRoles: BUSINESS_ADMINS, order: 430 }
+].map(item => ({ ...item, requiredPermission: item.route, featureAvailability: 'available', activeRoutes: [item.route] }));
 const uniqueNavItems = Object.freeze(uniqueNavigationItems(navItems.map(item => ({ ...item, id: item.id || item.route }))).map(item => Object.freeze(item)));
 
 const roleEmails = {
-  Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', 'Sales Admin': 'salesadmin@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
+  Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
 };
 let demoMode = true;
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' })[char]);
 const money = value => new Intl.NumberFormat(localeForIntl(), { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value || 0));
-const quoteMoney = (value, currency = 'USD') => new Intl.NumberFormat('en-US', { style: 'currency', currency: ['USD','CNY','MYR','THB','EUR','GBP'].includes(currency) ? currency : 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
+const quoteMoney = (value, currency = 'USD') => formatLocalMoney(value, currency);
 const shortMoney = value => Number(value) >= 1_000_000 ? `$${(Number(value) / 1_000_000).toFixed(2)}M` : `$${Math.round(Number(value) / 1000)}K`;
 const titleForRoute = route => t(uniqueNavItems.find(item => item.route === route)?.labelKey || 'nav.dashboard');
 const allowed = route => state.user?.permissions.includes(route);
@@ -114,9 +115,14 @@ const statusKey = status => ({
   'new lead': 'newLead', qualified: 'qualified', proposal: 'proposal', negotiation: 'negotiation', won: 'won', lost: 'lost',
   approved: 'approved', review: 'review', draft: 'draft', archived: 'archived', completed: 'completed', failed: 'failed',
   queued: 'queued', validating: 'validating', 'internal review': 'internalReview', sent: 'sent', published: 'published',
-  active: 'active', inactive: 'inactive', invited: 'invited', disabled: 'disabled', idea: 'idea', ready: 'ready', generating: 'generating'
+  active: 'active', inactive: 'inactive', invited: 'invited', disabled: 'disabled', idea: 'idea', ready: 'ready', generating: 'generating',
+  'needs review': 'needsReview', superseded: 'superseded', new: 'new', reviewed: 'reviewed', running: 'running', paused: 'paused',
+  'partially completed': 'partiallyCompleted', interrupted: 'interrupted', blocked: 'blocked', 'ai qualified': 'aiQualified',
+  'ai qualification pending': 'aiPending', 'ai qualification running': 'aiRunning', 'ai qualification failed': 'aiFailed',
+  'ai qualification blocked': 'aiBlocked', complete: 'complete', discarded: 'discarded', 'awaiting approval': 'awaitingApproval'
+  , 'rules-ready': 'rulesReady', 'product-intelligence-connected': 'productConnected'
 })[String(status || '').replaceAll('_', ' ').toLowerCase()];
-const statusLabel = status => statusKey(status) ? t(`status.${statusKey(status)}`) : String(status || '').replaceAll('_', ' ');
+const statusLabel = status => statusKey(status) ? t(`${['needsReview','superseded','new','reviewed','running','paused','partiallyCompleted','interrupted','blocked','aiQualified','aiPending','aiRunning','aiFailed','aiBlocked','complete','discarded','awaitingApproval','rulesReady','productConnected'].includes(statusKey(status)) ? 'salesOs.status' : 'status'}.${statusKey(status)}`) : String(status || '').replaceAll('_', ' ');
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -231,7 +237,10 @@ function setupLogin() {
 function enterApp() {
   $('#login-view').classList.add('is-hidden');
   $('#app-view').classList.remove('is-hidden');
+  const preferredLocale = state.user?.preferred_locale || state.user?.locale;
+  if (preferredLocale) setLocale(preferredLocale);
   buildShell();
+  startLocalizationObserver();
   const requested = location.hash.slice(1);
   const defaultRoute = state.user.role === 'Sales' ? 'new-inquiry' : 'dashboard';
   navigate(requested && uniqueNavItems.some(item => item.route === requested) && allowed(requested) ? requested : defaultRoute, true);
@@ -248,8 +257,7 @@ function exitApp() {
 }
 
 function buildShell() {
-  const salesRoutes = new Set(['new-inquiry','sales-customers','sales-quotes','sales-orders','sales-tasks']);
-  const renderedItems = uniqueNavItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route === 'knowledge-dashboard' || item.route.startsWith('product-library-')));
+  const renderedItems = navigationItemsForRole(uniqueNavItems, state.user.role, state.user.permissions);
   const renderedIds = new Set(renderedItems.map(item => item.id));
   if (renderedIds.size !== renderedItems.length) throw new Error('Navigation menu IDs must be unique.');
   let lastGroup = '';
@@ -278,7 +286,10 @@ async function navigate(route, replace = false) {
   else if (location.hash !== `#${route}`) location.hash = route;
   closeSidebar();
   $('#profile-menu').classList.add('is-hidden');
-  document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('is-active', item.dataset.route === route));
+  document.querySelectorAll('.nav-item').forEach(item => {
+    const config = uniqueNavItems.find(entry => entry.route === item.dataset.route);
+    item.classList.toggle('is-active', config?.activeRoutes.includes(route));
+  });
   $('#breadcrumbs').innerHTML = `<span>${t('common.workspace')}</span>${icon('chevron')}<strong>${esc(titleForRoute(route))}</strong>`;
   document.title = `${titleForRoute(route)} · Restaurant Setup Pro`;
   if (!allowed(route)) return renderRestricted(route);
@@ -309,6 +320,7 @@ async function navigate(route, replace = false) {
   };
   try {
     await renderers[route]();
+    localizeDom($('#page'));
   } catch (error) {
     if (error.status === 401) return exitApp();
     if (error.status === 403) return renderRestricted(route);
@@ -466,6 +478,19 @@ async function renderKnowledgeDashboard() {
     </section>`;
   document.querySelectorAll('[data-knowledge-filter]').forEach(button => button.addEventListener('click', () => { document.querySelectorAll('[data-knowledge-filter]').forEach(item => item.classList.toggle('is-active', item === button)); document.querySelectorAll('#knowledge-center-rows tr[data-knowledge-type]').forEach(row => row.hidden = Boolean(button.dataset.knowledgeFilter) && row.dataset.knowledgeType !== button.dataset.knowledgeFilter); }));
   $('#knowledge-create-form')?.addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const list = name => String(form.get(name) || '').split(',').map(value => value.trim()).filter(Boolean); const type = String(form.get('knowledge_type')); const content = type === 'company' ? { company_introduction: form.get('description'), target_countries: list('target_countries'), main_product_categories: list('categories'), company_strengths: form.get('signals'), prohibited_sales_promises: form.get('limits') } : { profile_name: form.get('title'), target_countries: list('target_countries'), customer_types: list('categories'), target_business_signals: form.get('signals'), exclusions: form.get('limits') }; await api('/api/knowledge-center', { method: 'POST', body: JSON.stringify({ knowledge_type: type, knowledge_key: form.get('knowledge_key'), title: form.get('title'), summary: form.get('summary'), content_json: content, tags_json: [] }) }); toast('Knowledge Draft saved'); await renderKnowledgeDashboard(); });
+}
+
+let localizationObserver;
+function startLocalizationObserver() {
+  if (localizationObserver) return;
+  localizationObserver = new MutationObserver(records => {
+    for (const record of records) for (const node of record.addedNodes) {
+      if (node.nodeType === Node.ELEMENT_NODE) localizeDom(node);
+      else if (node.nodeType === Node.TEXT_NODE) localizeDom(node.parentElement);
+    }
+  });
+  localizationObserver.observe(document.body, { childList: true, subtree: true });
+  localizeDom(document.body);
 }
 
 async function knowledgeAction(id, action, reviewNote = '') { await api(`/api/knowledge-center/${id}/${action}`, { method: 'POST', body: JSON.stringify({ review_note: reviewNote }) }); toast('Knowledge status updated'); await renderKnowledgeDashboard(); }
@@ -984,7 +1009,7 @@ function productPricingStatusBadge(product) {
 function pricingAmount(value, currency = 'USD') {
   if (value == null || value === '') return '—';
   const amount = Number(value);
-  return Number.isFinite(amount) ? `${esc(currency || 'USD')} ${amount.toLocaleString(localeForIntl(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+  return Number.isFinite(amount) ? formatLocalMoney(amount, currency) : '—';
 }
 
 function pricingStatusPill(status) {
@@ -1116,11 +1141,14 @@ function attributeMasterForm(categories){return `<label class="field"><span>Name
 async function renderProductLibraryAttributes(){const [data,categoryData]=await Promise.all([api('/api/product-attributes'),api('/api/product-categories')]);const categoryName=id=>categoryData.categories.find(category=>category.id===Number(id))?.name;$('#page').innerHTML=`${pageHeader('Attributes','Category-specific product and variant attributes.')}<section class="library-management-grid"><article class="panel"><h2>New Attribute</h2><form id="library-attribute-create" class="foundation-form">${attributeMasterForm(categoryData.categories)}<button class="button button--primary">Create Attribute</button></form></article><article class="panel"><h2>Attributes</h2><div class="foundation-manager-list">${data.attributes.map(attribute=>`<article><span><strong>${esc(attribute.name)}</strong><small>${esc(attribute.category_ids.map(categoryName).filter(Boolean).join(', ')||'All Categories')} · ${esc(attribute.data_type)} · ${attribute.active?'Active':'Disabled'}${attribute.options.length?` · ${attribute.options.map(option=>esc(option.option_value)).join(', ')}`:''}</small></span><div><button class="button button--compact" data-action="library-edit-attribute" data-id="${attribute.id}">Edit</button><button class="button button--compact" data-action="library-delete-attribute" data-id="${attribute.id}">Delete</button></div></article>`).join('')||'<p>No attributes.</p>'}</div></article></section>`;$('#library-attribute-create').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,body=Object.fromEntries(new FormData(form));body.category_ids=[...form.category_ids.selectedOptions].map(option=>Number(option.value));body.options=String(body.options||'').split(/\r?\n|,/).map(value=>value.trim()).filter(Boolean);for(const name of ['show_in_library','show_on_website','show_in_quote','show_in_pi','internal_only','active'])body[name]=form.elements[name].checked;await api('/api/product-attributes',{method:'POST',body:JSON.stringify(body)});await renderProductLibraryAttributes()})}
 
 function opportunityTabs(active, counts = {}) {
-  const tabs = [
-    ['dashboard', 'Opportunity Dashboard'], ['discovery', 'AI Discovery'], ['search-strategies', `Search Strategies (${counts.searchStrategies || 0})`], ['search-tasks', `Search Tasks (${counts.searchTasks || 0})`], ['lead-pool', `Lead Pool (${counts.leads || 0})`],
-    ['customers', `Customers (${counts.customers || 0})`], ['priority', `Priority View (${counts.priority || 0})`]
+  const allTabs = [
+    ['dashboard', 'salesOs.tabs.dashboard'], ['discovery', 'salesOs.tabs.discovery'], ['search-strategies', 'salesOs.tabs.strategies', counts.searchStrategies || 0], ['search-tasks', 'salesOs.tabs.tasks', counts.searchTasks || 0], ['lead-pool', 'salesOs.tabs.leads', counts.leads || 0],
+    ['customers', 'salesOs.tabs.customers', counts.customers || 0], ['priority', 'salesOs.tabs.priority', counts.priority || 0]
   ];
-  return `<nav class="knowledge-tabs opportunity-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" class="${active === key ? 'is-active' : ''}" data-action="opportunity-tab" data-tab="${key}" role="tab">${label}</button>`).join('')}</nav>`;
+  const roleTabs = state.user?.role === 'VA' ? new Set(['dashboard', 'discovery', 'lead-pool', 'customers', 'priority']) : null;
+  const tabs = roleTabs ? allTabs.filter(([key]) => roleTabs.has(key)) : allTabs;
+  const countedLabel = (key, count) => count == null ? t(key) : getLocale() === 'zh-CN' ? `${t(key)}（${count}）` : `${t(key)} (${count})`;
+  return `<nav class="knowledge-tabs opportunity-tabs" role="tablist">${tabs.map(([key, labelKey, count]) => `<button type="button" class="${active === key ? 'is-active' : ''}" data-action="opportunity-tab" data-tab="${key}" role="tab">${countedLabel(labelKey, count)}</button>`).join('')}</nav>`;
 }
 
 function opportunityMetricsCards(metrics) {
@@ -1165,32 +1193,34 @@ function leadPoolTable(leads) {
 
 function renderLeadDetail(lead) {
   if (!lead) return '';
+  const taskLabel = /^Search Task #(\d+)$/i.test(String(lead.task_name || '')) ? `${t('salesOs.terms.searchTask')} #${String(lead.task_name).match(/\d+/)?.[0]}` : esc(lead.task_name || t('salesOs.terms.searchResult'));
   const contact = [lead.contact_person, lead.email, lead.phone, lead.linkedin, lead.instagram].filter(Boolean).join(' · ') || 'No contact information yet';
   const evidence=lead.evidence_json||{},aiStatus=lead.ai_qualification_status||'Pending';
   const sourceUrl=lead.source_url||evidence.sourceUrl||'';
   const sourceLink=/^https?:\/\//i.test(String(sourceUrl))?`<a class="evidence-link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">View Source</a>`:'Not provided';
   const websiteLink=/^https?:\/\//i.test(String(lead.website||''))?`<a class="detail-value-link" href="${esc(lead.website)}" target="_blank" rel="noopener noreferrer">${esc(lead.website)}</a>`:esc(lead.website||'Missing');
-  const aiLabel=aiStatus==='Qualified'?'AI Qualified':aiStatus==='Failed'?'AI Qualification Failed':aiStatus==='Blocked'?'AI Qualification Blocked':aiStatus==='Running'?'AI Qualification Running':'AI Qualification Pending';
+  const aiLabel=aiStatus==='Qualified'?t('salesOs.status.aiQualified'):aiStatus==='Failed'?t('salesOs.status.aiFailed'):aiStatus==='Blocked'?t('salesOs.status.aiBlocked'):aiStatus==='Running'?t('salesOs.status.aiRunning'):t('salesOs.status.aiPending');
+  const qualificationSource = lead.qualification_source === 'Formal AI Qualification' ? t('salesOs.leadUi.formalAi') : lead.qualification_source === 'Initial Rules / Manual Data' ? t('salesOs.leadUi.initialRules') : lead.qualification_source || t('salesOs.leadUi.initialRules');
   const history = [
-    ['Lead Created', lead.created_at],
+    [t('salesOs.history.leadCreated'), lead.created_at],
     [aiLabel, lead.ai_qualification_at || lead.created_at]
   ];
-  if(lead.review_audit_id)history.push([`Reviewed by ${lead.reviewed_by||'User'}`,lead.reviewed_at]);
-  else history.push([lead.status==='reviewed'?'Reviewed (legacy status)':`Status: ${lead.status||'new'}`,lead.updated_at||lead.created_at]);
-  if (lead.status === 'converted') history.push(['Converted to Customer', lead.updated_at]);
+  if(lead.review_audit_id)history.push([t('salesOs.history.reviewedBy',{name:lead.reviewed_by||'User'}),lead.reviewed_at]);
+  else history.push([lead.status==='reviewed'?`${statusLabel('reviewed')} · ${t('salesOs.history.legacy')}`:statusLabel(lead.status||'new'),lead.updated_at||lead.created_at]);
+  if (lead.status === 'converted') history.push([t('salesOs.history.converted'), lead.updated_at]);
   return `<article class="panel lead-detail-panel">
-    <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>Lead Detail · ${esc(lead.task_name || 'Search Result')}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">Back to Lead Pool</button></div></div>
+    <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>${t('salesOs.terms.leadDetail')} · ${taskLabel}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">${t('salesOs.leadUi.backPool')}</button></div></div>
     <section class="detail-grid">
-      <article><h3>AI Summary</h3>${badge(aiLabel)}<small class="qualification-source">${esc(lead.qualification_source||'Initial Rules / Manual Data')}${lead.ai_qualification_provider?` · ${esc(lead.ai_qualification_provider)}`:''}</small><p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
+      <article><h3>AI Summary</h3>${badge(aiLabel)}<small class="qualification-source">${esc(qualificationSource)}${lead.ai_qualification_provider?` · ${esc(lead.ai_qualification_provider)}`:''}</small><p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
       <article><h3>Website & Contact</h3><dl class="lead-field-list"><div><dt>Website</dt><dd>${websiteLink}</dd></div><div><dt>Contact</dt><dd>${esc(contact)}</dd></div></dl></article>
       <article><h3>Product Matching</h3><p>${esc(lead.recommended_product_reason || 'Run qualification to prepare product direction.')}</p></article>
     </section>
-    <details class="source-evidence-card section-gap" open><summary>Source & Evidence</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>Connector Version</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||'—')}</dd></div><div><dt>External ID</dt><dd>${esc(lead.external_id||evidence.externalId||'—')}</dd></div><div><dt>Source URL</dt><dd>${sourceLink}</dd></div><div><dt>Captured Time</dt><dd>${esc(lead.captured_at||evidence.capturedTime||'—')}</dd></div><div><dt>Search Execution</dt><dd>${lead.search_execution_id?`#${Number(lead.search_execution_id)}`:'—'}</dd></div><div><dt>Normalization Version</dt><dd>${esc(lead.normalization_version||evidence.normalizationVersion||'—')}</dd></div><div><dt>Duplicate Status</dt><dd>${lead.duplicate_of_search_result_id?`Review candidate · Result #${Number(lead.duplicate_of_search_result_id)}`:'No duplicate detected'}</dd></div><div class="evidence-note-row"><dt>Reference Note</dt><dd>${esc(lead.reference_note||'—')}</dd></div></dl></details>
+    <details class="source-evidence-card section-gap" open><summary>Source & Evidence</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>Connector Version</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||'—')}</dd></div><div><dt>External ID</dt><dd>${esc(lead.external_id||evidence.externalId||'—')}</dd></div><div><dt>Source URL</dt><dd>${sourceLink}</dd></div><div><dt>Captured Time</dt><dd>${formatLocalDateTime(lead.captured_at||evidence.capturedTime)}</dd></div><div><dt>Search Execution</dt><dd>${lead.search_execution_id?`#${Number(lead.search_execution_id)}`:'—'}</dd></div><div><dt>Normalization Version</dt><dd>${esc(lead.normalization_version||evidence.normalizationVersion||'—')}</dd></div><div><dt>Duplicate Status</dt><dd>${lead.duplicate_of_search_result_id?`Review candidate · Result #${Number(lead.duplicate_of_search_result_id)}`:'No duplicate detected'}</dd></div><div class="evidence-note-row"><dt>Reference Note</dt><dd>${esc(lead.reference_note||'—')}</dd></div></dl></details>
     <section class="detail-grid section-gap">
       <article><h3>AI Recommendation</h3><p>${esc(lead.recommended_next_action || 'Review the lead and decide whether to convert.')}</p><h3>Qualification Reason</h3><p>${esc(lead.qualification_reason || 'No qualification reason yet.')}</p></article>
       <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}" ${aiStatus==='Running'?'disabled':''}>${aiStatus==='Running'?'AI Running…':'Run AI'}</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
     </section>
-    <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${esc(date || '')}</p></div></div>`).join('')}</div></article>
+    <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${formatLocalDateTime(date)}</p></div></div>`).join('')}</div></article>
     <div class="row-actions section-gap">${lead.status !== 'converted' ? `${!['reviewed','discarded'].includes(lead.status)?`<button class="button" data-action="review-search-result" data-id="${lead.id}">Mark Reviewed</button>`:''}<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
   </article>`;
 }
@@ -1286,7 +1316,7 @@ function renderCustomerDiscoveryPane(data) {
 function searchTaskRows(tasks) {
   return tasks.map(task => `<tr><td class="primary-cell"><strong>${esc(task.task_name)}</strong><small>Target: ${esc(task.target_customer || task.customer_type || '—')}</small></td>
     <td>${esc(task.customer_type || '—')}</td><td>${esc(task.location || '—')}</td><td>${esc(task.company_size || '—')}</td><td>${Number(task.target_quantity || 0)} companies</td>
-    <td>${badge(task.priority || 'Medium')}</td><td>${badge(task.status || 'Draft')}</td><td>${esc(task.created_at || '')}</td>
+    <td>${badge(task.priority || 'Medium')}</td><td>${badge(task.status || 'Draft')}</td><td>${formatDateTime(task.created_at)}</td>
     <td><div class="row-actions"><button class="button button--compact" data-action="view-search-task" data-id="${task.id}">View</button>${task.status === 'Draft' && ['Admin','Owner'].includes(state.user?.role) ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}<button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">Cancel</button></div></td></tr>`).join('');
 }
 
@@ -1306,17 +1336,17 @@ function renderSearchTaskDetail(task) {
   const executionActions=task.status==='Ready'&&!execution?`<button class="button button--primary" data-action="estimate-execution" data-id="${task.id}">Estimate Execution</button>`:'';
   const lifecycle=execution?`${execution.status==='Awaiting Approval'&&isAdmin?`<button class="button button--primary" data-action="execution-approve" data-id="${execution.id}">Approve</button>`:''}${execution.status==='Approved'&&isAdmin?`<button class="button button--primary" data-action="execution-start" data-id="${execution.id}">Start</button>`:''}${['Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--primary" data-action="execution-resume" data-id="${execution.id}">Resume</button>`:''}${execution.status==='Running'&&isAdmin?`<button class="button" data-action="execution-pause" data-id="${execution.id}">Pause</button>`:''}${['Approved','Running','Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--risk" data-action="execution-stop" data-id="${execution.id}">Stop</button>`:''}`:'';
   const displayPhase=execution?.status==='Completed'?'Complete':execution?.status==='Partially Completed'?'Partial Complete':execution?.phase||'-';
-  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<dl class="execution-stat-grid"><div><dt>Connector</dt><dd>${esc(execution.connector_key)}</dd></div><div><dt>Version</dt><dd>${esc(execution.connector_version)}</dd></div><div><dt>Phase</dt><dd>${esc(displayPhase)}</dd></div><div><dt>Pages</dt><dd>${Number(execution.page_count)}</dd></div><div><dt>Received</dt><dd>${Number(execution.received_count)}</dd></div><div><dt>Normalized</dt><dd>${Number(execution.normalized_count)}</dd></div><div><dt>Inserted</dt><dd>${Number(execution.inserted_count)}</dd></div><div><dt>Duplicates</dt><dd>${Number(execution.duplicate_count)}</dd></div><div><dt>Estimated Cost</dt><dd>$${Number(execution.estimated_cost_usd||0).toFixed(2)}</dd></div><div><dt>Approved Limit</dt><dd>$${Number(execution.approved_cost_limit_usd||0).toFixed(2)}</dd></div></dl><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${esc(execution.heartbeat_at||'-')}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
+  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<dl class="execution-stat-grid"><div><dt>Connector</dt><dd>${esc(execution.connector_key)}</dd></div><div><dt>Version</dt><dd>${esc(execution.connector_version)}</dd></div><div><dt>Phase</dt><dd>${esc(displayPhase)}</dd></div><div><dt>Pages</dt><dd>${Number(execution.page_count)}</dd></div><div><dt>Received</dt><dd>${Number(execution.received_count)}</dd></div><div><dt>Normalized</dt><dd>${Number(execution.normalized_count)}</dd></div><div><dt>Inserted</dt><dd>${Number(execution.inserted_count)}</dd></div><div><dt>Duplicates</dt><dd>${Number(execution.duplicate_count)}</dd></div><div><dt>Estimated Cost</dt><dd>${formatLocalMoney(execution.estimated_cost_usd||0)}</dd></div><div><dt>Approved Limit</dt><dd>${formatLocalMoney(execution.approved_cost_limit_usd||0)}</dd></div></dl><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${formatLocalDateTime(execution.heartbeat_at)}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
   return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}</div></div>
     <section class="detail-grid">
-      <article><h3>Search Criteria</h3><dl class="search-criteria-grid"><div><dt>Customer Type</dt><dd>${esc(task.customer_type || '—')}</dd></div><div><dt>Location</dt><dd>${esc(task.location || '—')}</dd></div><div><dt>Company Size</dt><dd>${esc(task.company_size || '—')}</dd></div><div><dt>Priority</dt><dd>${esc(task.priority || 'Medium')}</dd></div><div><dt>Target Volume</dt><dd>${Number(task.target_quantity || 0)} companies</dd></div></dl></article>
+      <article><h3>${t('salesOs.terms.searchCriteria')}</h3><dl class="search-criteria-grid"><div><dt>${t('salesOs.terms.customerType')}</dt><dd>${esc(task.customer_type || '—')}</dd></div><div><dt>${t('salesOs.terms.location')}</dt><dd>${esc(task.location || '—')}</dd></div><div><dt>${t('salesOs.terms.companySize')}</dt><dd>${esc(task.company_size || '—')}</dd></div><div><dt>${t('salesOs.terms.priority')}</dt><dd>${esc(task.priority || 'Medium')}</dd></div><div><dt>${t('salesOs.terms.targetVolume')}</dt><dd>${formatLocalQuantity(task.target_quantity || 0)}</dd></div></dl></article>
       <article><h3>Keywords</h3><ul class="compact-list">${list(task.keywords)}</ul></article>
       <article><h3>Required Data Fields</h3><ul class="compact-list">${list(task.required_data_fields)}</ul></article>
       <article><h3>Filters</h3><ul class="compact-list">${list(task.filters)}</ul></article>
     </section>
     ${executionPanel}
     <section class="section-gap">${panelHeader('Search Results', 'Store manually discovered leads before they enter the Lead Pool')}
-      <dl class="search-result-stat-grid"><div><dt>Total Results</dt><dd class="search-result-stat-value">${Number(summary.total || 0)}</dd><dd class="search-result-stat-note">Stored candidates</dd></div><div><dt>Converted</dt><dd class="search-result-stat-value">${Number(summary.converted || 0)}</dd><dd class="search-result-stat-note">Moved to Customers CRM</dd></div><div><dt>Lead Pool</dt><dd class="search-result-stat-value">${Number((summary.new || 0) + (summary.reviewed || 0))}</dd><dd class="search-result-stat-note">Open leads</dd></div></dl>
+      <dl class="search-result-stat-grid"><div><dt>${t('salesOs.terms.totalResults')}</dt><dd class="search-result-stat-value">${Number(summary.total || 0)}</dd><dd class="search-result-stat-note">${t('salesOs.terms.storedCandidates')}</dd></div><div><dt>${t('salesOs.terms.converted')}</dt><dd class="search-result-stat-value">${Number(summary.converted || 0)}</dd><dd class="search-result-stat-note">${t('salesOs.terms.movedCustomers')}</dd></div><div><dt>${t('salesOs.tabs.leads')}</dt><dd class="search-result-stat-value">${Number((summary.new || 0) + (summary.reviewed || 0))}</dd><dd class="search-result-stat-note">${t('salesOs.terms.openLeads')}</dd></div></dl>
       ${detail}
       <form id="search-result-form" class="foundation-form section-gap" data-edit-id="${editing?.id || ''}">
         <div class="panel-header"><div class="panel-title"><h3>${editing ? 'Edit Search Result' : 'Add Search Result'}</h3><p>30-second entry. AI Qualification runs after saving; no external search API is connected.</p></div>${editing ? '<button class="button" type="button" data-action="cancel-search-result-edit">Cancel Edit</button>' : ''}</div>
@@ -1391,7 +1421,7 @@ function renderOpportunityPane(data) {
   if (view === 'dashboard') return `${opportunityMetricsCards(data.metrics)}
     <section class="detail-grid section-gap"><article class="panel">${panelHeader('Today’s Priority Queue', 'Highest-value A+/A opportunities ready for human action')}${customerTable(data.queue.slice(0, 5), capabilities, true)}</article>
     <article class="panel"><div class="panel-header"><div class="panel-title"><h2>AI Pipeline Status</h2><p>Rule provider is active; external AI remains optional.</p></div>${badge(data.debug.scoring_engine_status)}</div>
-      <div class="debug-list"><div><span>Product Matching</span><strong>${esc(data.debug.product_matching_status)}</strong></div><div><span>Duplicate Check</span><strong>${esc(data.debug.duplicate_check_status)}</strong></div><div><span>Open Data Gaps</span><strong>${data.debug.gaps_open}</strong></div><div><span>Last AI Run</span><strong>${esc(data.debug.last_ai_run_at || 'Not run')}</strong></div></div></article></section>`;
+      <div class="debug-list"><div><span>Product Matching</span><strong>${esc(statusLabel(data.debug.product_matching_status))}</strong></div><div><span>Duplicate Check</span><strong>${esc(statusLabel(data.debug.duplicate_check_status))}</strong></div><div><span>Open Data Gaps</span><strong>${data.debug.gaps_open}</strong></div><div><span>Last AI Run</span><strong>${data.debug.last_ai_run_at ? formatDateTime(data.debug.last_ai_run_at) : t('salesOs.messages.notRun')}</strong></div></div></article></section>`;
   if (view === 'discovery') return renderCustomerDiscoveryPane(data);
   if (view === 'search-strategies') return renderSearchStrategiesPane(data);
   if (view === 'search-tasks') return renderSearchTasksPane(data);
@@ -1444,8 +1474,8 @@ async function renderOpportunityIntelligence() {
     queue: queueData.customers, handoff: handoffData.customers, discoveryConfig, discoveryRequests: discoveryHistory.requests, searchTasks: searchTasksData.tasks, leads,
     searchStrategies: strategyData.strategies, strategyCapabilities: strategyData.capabilities
   };
-  $('#page').innerHTML = `${pageHeader('Opportunity Intelligence', 'Turn sourced customer data into clean, scored, product-matched, human-approved sales opportunities.',
-    dashboard.capabilities.canImport ? '<button class="button button--primary" data-action="opportunity-tab" data-tab="import">Import Customers</button>' : '')}
+  $('#page').innerHTML = `${pageHeader(t('nav.opportunityIntelligence'), t('salesOs.messages.opportunitySubtitle'),
+    dashboard.capabilities.canImport ? `<button class="button button--primary" data-action="opportunity-tab" data-tab="import">${t('salesOs.actions.importCustomers')}</button>` : '')}
     ${opportunityTabs(state.opportunityView, { leads: leads.length, customers: customersData.customers.length, priority: priorityData.customers.length, queue: queueData.customers.length, handoff: handoffData.customers.length, searchTasks: searchTasksData.tasks.length, searchStrategies: strategyData.strategies.length })}
     <div class="opportunity-pane">${renderOpportunityPane(state.opportunityIntelligence)}</div>`;
   $('#customer-manual-form')?.addEventListener('submit', submitManualCustomer);
@@ -1629,7 +1659,7 @@ async function renderCustomerDetail(id) {
     <section class="detail-grid section-gap"><article class="panel">${panelHeader('Contacts', 'Decision makers and contact confidence')}${customer.contacts.map(contact => `<div class="list-row"><div><strong>${esc(contact.full_name)}</strong><small>${esc(contact.role)} · ${esc(contact.email || contact.whatsapp || 'No direct channel')}</small></div>${contact.is_primary_decision_maker ? badge('Decision Maker') : ''}</div>`).join('') || '<div class="empty-state">No contacts.</div>'}</article>
     <article class="panel">${panelHeader('Missing Data', 'VA workflow for research gaps')}${customer.gaps.map(gap => `<div class="list-row"><div><strong>${esc(gap.gap_type)}</strong><small>${esc(gap.priority)} priority</small></div>${badge(gap.status)}</div>`).join('') || '<div class="empty-state">No open data gaps.</div>'}</article></section>
     <article class="panel section-gap">${panelHeader('Outreach Drafts', 'Editable drafts only—no automatic sending')}${customer.outreach_drafts.map(draft => `<div class="outreach-editor" data-draft="${draft.id}"><div class="panel-header"><div><strong>${esc(draft.channel)} · ${esc(draft.draft_type)}</strong><small>${esc(draft.status)}</small></div></div><input name="subject" value="${esc(draft.subject || '')}" /><textarea name="body" rows="8">${esc(draft.body)}</textarea><div class="row-actions">${data.capabilities.canEditDraft ? `<button class="button" data-action="save-outreach" data-id="${draft.id}">Save Draft</button>` : ''}${data.capabilities.canApproveDraft && draft.status !== 'Approved' ? `<button class="button button--primary" data-action="approve-outreach" data-id="${draft.id}">Approve</button>` : ''}${data.capabilities.canEditDraft ? `<button class="button button--soft" data-action="sent-outreach" data-id="${draft.id}">Mark Sent Manually</button>` : ''}</div></div>`).join('') || '<div class="empty-state">Run AI to generate a personalized first-touch draft.</div>'}</article>
-    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Activity History', 'Immutable workflow events')}${customer.activity.map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.activity_type)}</strong><p>${esc(item.description)}</p><small>${esc(item.created_at)}</small></div></div>`).join('')}</article>
+    <section class="detail-grid section-gap"><article class="panel">${panelHeader('Activity History', 'Immutable workflow events')}${customer.activity.map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.activity_type)}</strong><p>${esc(item.description)}</p><small>${formatDateTime(item.created_at)}</small></div></div>`).join('')}</article>
     <article class="panel">${panelHeader('Sales Handoff', 'A+/A plus at least one contactability signal')}<p>${esc(customer.ai_recommendation || '')}</p>${data.capabilities.canAcceptLead && ['Ready for Sales', 'Contacted', 'In Progress'].includes(customer.opportunity_status) ? `<button class="button button--primary" data-action="accept-lead" data-id="${id}">Accept Lead</button>` : `<p class="empty-state">${['A+', 'A'].includes(customer.opportunity_grade) ? 'Add a contact method to qualify handoff.' : 'Customer must reach grade A or A+.'}</p>`}</article></section>`;
 }
 
@@ -1678,7 +1708,7 @@ renderCustomerDetail = async function renderCustomerDetailPhase2A(id) {
   const customerTypes = ['Hospitality Furniture Distributor','Commercial Furniture Dealer','Hospitality Design Firm','Restaurant Group','Independent Restaurant Owner','Multi-location Restaurant Group','Cafe Owner','Bar Owner','Bubble Tea Shop Owner'];
   const feedbackOptions = ['Interested','Not interested','Wrong customer','Purchased','Future opportunity','No response'];
   const updateReasons = ['New salesperson handoff','Customer follow-up restart','New customer requirement','New information obtained','Manual update'];
-  const updateHistory = (customer.intelligence_updates || []).map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.update_reason)}</strong><p>${esc(item.ai_summary || '')}</p><small>${esc(item.created_at)}${item.created_by_name ? ` · ${esc(item.created_by_name)}` : ''}</small></div></div>`).join('') || '<div class="empty-state">No manual intelligence updates yet.</div>';
+  const updateHistory = (customer.intelligence_updates || []).map(item => `<div class="activity-item"><span></span><div><strong>${esc(item.update_reason)}</strong><p>${esc(item.ai_summary || '')}</p><small>${formatDateTime(item.created_at)}${item.created_by_name ? ` · ${esc(item.created_by_name)}` : ''}</small></div></div>`).join('') || '<div class="empty-state">No manual intelligence updates yet.</div>';
   const evidenceHistory = `<div class="debug-list"><div><span>Original Source</span><strong>${esc(customer.customer_source || customer.source || 'Manual Import')}</strong></div><div><span>Source URL</span><strong>${esc(customer.source_url || customer.website || 'Not provided')}</strong></div></div><div class="section-gap">${(customer.intelligence_updates || []).map(item => `<div class="list-row"><div><strong>${esc(item.update_reason)}</strong><small>Updated by ${esc(item.created_by_name || 'System')} · ${esc(item.created_at || '')}</small><p>${esc(item.original_input || item.ai_summary || '')}</p></div></div>`).join('') || '<div class="empty-state">No evidence updates recorded yet.</div>'}</div>`;
   const actions = `${data.capabilities.canRunCustomerIntelligence ? `<button class="button button--soft" data-action="run-customer-intelligence" data-id="${id}">${icon('sparkles')} Run Customer Intelligence</button>` : ''}${data.capabilities.canRunAi ? `<button class="button button--primary" data-action="run-customer-ai" data-id="${id}">${icon('sparkles')} Run AI</button>` : ''}`;
   $('#page').innerHTML = `${pageHeader(esc(customer.company_name), `${esc(customer.business_type || 'Hospitality')} · ${esc(customer.city || '')} ${esc(customer.country || '')}`, actions, '<button class="button" data-action="back-opportunities">Back</button>')}
@@ -1846,9 +1876,7 @@ function checklistRow(title, description) {
 }
 
 function formatDateTime(value) {
-  if (!value) return '—';
-  const parsed = new Date(String(value).replace(' ', 'T') + (String(value).includes('Z') ? '' : 'Z'));
-  return new Intl.DateTimeFormat(localeForIntl(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(parsed);
+  return formatLocalDateTime(value);
 }
 
 async function renderImages() {
@@ -1999,8 +2027,7 @@ function templateCard(title, description, style = '', kicker) {
 }
 
 function formatDate(value) {
-  if (!value) return '—';
-  return new Intl.DateTimeFormat(localeForIntl(), { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${value}T12:00:00`));
+  return formatLocalDate(value);
 }
 
 async function renderCases() {
