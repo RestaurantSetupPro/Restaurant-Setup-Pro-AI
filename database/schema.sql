@@ -682,7 +682,45 @@ CREATE TABLE IF NOT EXISTS search_results (
   opportunity_summary TEXT, why_customer_matters TEXT, recommended_next_action TEXT,
   source_type TEXT NOT NULL DEFAULT 'Manual', source_reference TEXT, status TEXT NOT NULL DEFAULT 'new',
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  search_execution_id INTEGER REFERENCES search_executions(id) ON DELETE SET NULL,
+  connector_key TEXT, connector_version TEXT, external_id TEXT, canonical_website TEXT, address TEXT, source_category TEXT,
+  captured_at TEXT, raw_payload_id INTEGER REFERENCES search_result_raw_payloads(id) ON DELETE SET NULL,
+  normalization_version TEXT, dedup_key TEXT,
+  duplicate_of_search_result_id INTEGER REFERENCES search_results(id) ON DELETE SET NULL,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_executions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE,
+  search_task_id INTEGER NOT NULL REFERENCES search_tasks(id) ON DELETE CASCADE,
+  search_strategy_id INTEGER NOT NULL REFERENCES search_strategies(id) ON DELETE RESTRICT,
+  connector_key TEXT NOT NULL, connector_version TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft','Awaiting Approval','Approved','Running','Paused','Completed','Partially Completed','Failed','Cancelled','Interrupted')),
+  phase TEXT CHECK (phase IS NULL OR phase IN ('Estimating','Fetching','Normalizing','Deduplicating','Persisting','Finalizing')),
+  request_snapshot_json TEXT NOT NULL DEFAULT '{}', limits_json TEXT NOT NULL DEFAULT '{}', estimate_json TEXT NOT NULL DEFAULT '{}',
+  estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK (estimated_cost_usd >= 0),
+  approved_cost_limit_usd REAL CHECK (approved_cost_limit_usd IS NULL OR approved_cost_limit_usd >= 0),
+  actual_cost_usd REAL NOT NULL DEFAULT 0 CHECK (actual_cost_usd >= 0),
+  approval_status TEXT NOT NULL DEFAULT 'Pending' CHECK (approval_status IN ('Pending','Approved','Rejected','Invalidated')),
+  approved_by INTEGER REFERENCES users(id) ON DELETE SET NULL, approved_at TEXT,
+  checkpoint_json TEXT NOT NULL DEFAULT '{}', provider_request_count INTEGER NOT NULL DEFAULT 0,
+  page_count INTEGER NOT NULL DEFAULT 0, received_count INTEGER NOT NULL DEFAULT 0,
+  normalized_count INTEGER NOT NULL DEFAULT 0, inserted_count INTEGER NOT NULL DEFAULT 0,
+  duplicate_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0,
+  stop_requested_at TEXT, stop_reason TEXT, last_error_code TEXT, last_error_message TEXT,
+  started_at TEXT, heartbeat_at TEXT, completed_at TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS search_result_raw_payloads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  search_execution_id INTEGER NOT NULL REFERENCES search_executions(id) ON DELETE CASCADE,
+  connector_key TEXT NOT NULL, connector_version TEXT NOT NULL, provider_request_id TEXT, external_id TEXT,
+  record_index INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL DEFAULT '{}', payload_hash TEXT NOT NULL,
+  captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, retention_until TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(search_execution_id,payload_hash)
 );
 
 CREATE TABLE IF NOT EXISTS ai_cost_settings (
@@ -860,6 +898,10 @@ CREATE INDEX IF NOT EXISTS idx_customer_intelligence_updates_customer ON custome
 CREATE INDEX IF NOT EXISTS idx_search_results_task_status ON search_results(search_task_id, status, opportunity_score DESC);
 CREATE INDEX IF NOT EXISTS idx_search_results_company_country ON search_results(company_name, country);
 CREATE INDEX IF NOT EXISTS idx_search_results_customer_id ON search_results(customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_search_executions_one_active_task ON search_executions(search_task_id) WHERE status IN ('Awaiting Approval','Approved','Running','Paused','Interrupted');
+CREATE INDEX IF NOT EXISTS idx_search_executions_task_created ON search_executions(search_task_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_executions_status_heartbeat ON search_executions(status,heartbeat_at);
+CREATE INDEX IF NOT EXISTS idx_search_raw_execution ON search_result_raw_payloads(search_execution_id,record_index);
 CREATE INDEX IF NOT EXISTS idx_customers_customer_source ON customers(customer_source, opportunity_grade, sales_priority_score DESC);
 CREATE INDEX IF NOT EXISTS idx_customers_test_data ON customers(is_test_data, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_cost_logs_created ON ai_cost_logs(created_at DESC);
