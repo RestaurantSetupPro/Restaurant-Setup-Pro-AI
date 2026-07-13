@@ -1,5 +1,5 @@
 import { getLocale, getSupportedLocales, localeForIntl, setLocale, t } from './i18n.js';
-import { uniqueNavigationItems } from './navigation.js';
+import { activateOpportunityTab, uniqueNavigationItems } from './navigation.js';
 
 const state = {
   user: null,
@@ -1309,14 +1309,14 @@ function renderSearchTaskDetail(task) {
   const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<dl class="execution-stat-grid"><div><dt>Connector</dt><dd>${esc(execution.connector_key)}</dd></div><div><dt>Version</dt><dd>${esc(execution.connector_version)}</dd></div><div><dt>Phase</dt><dd>${esc(displayPhase)}</dd></div><div><dt>Pages</dt><dd>${Number(execution.page_count)}</dd></div><div><dt>Received</dt><dd>${Number(execution.received_count)}</dd></div><div><dt>Normalized</dt><dd>${Number(execution.normalized_count)}</dd></div><div><dt>Inserted</dt><dd>${Number(execution.inserted_count)}</dd></div><div><dt>Duplicates</dt><dd>${Number(execution.duplicate_count)}</dd></div><div><dt>Estimated Cost</dt><dd>$${Number(execution.estimated_cost_usd||0).toFixed(2)}</dd></div><div><dt>Approved Limit</dt><dd>$${Number(execution.approved_cost_limit_usd||0).toFixed(2)}</dd></div></dl><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${esc(execution.heartbeat_at||'-')}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
   return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}</div></div>
     <section class="detail-grid">
-      <article><h3>Search Criteria</h3><div class="debug-list discovery-fields"><div><span>Customer Type</span><strong>${esc(task.customer_type || '—')}</strong></div><div><span>Location</span><strong>${esc(task.location || '—')}</strong></div><div><span>Company Size</span><strong>${esc(task.company_size || '—')}</strong></div><div><span>Priority</span><strong>${esc(task.priority || 'Medium')}</strong></div><div><span>Target Volume</span><strong>${Number(task.target_quantity || 0)} companies</strong></div></div></article>
+      <article><h3>Search Criteria</h3><dl class="search-criteria-grid"><div><dt>Customer Type</dt><dd>${esc(task.customer_type || '—')}</dd></div><div><dt>Location</dt><dd>${esc(task.location || '—')}</dd></div><div><dt>Company Size</dt><dd>${esc(task.company_size || '—')}</dd></div><div><dt>Priority</dt><dd>${esc(task.priority || 'Medium')}</dd></div><div><dt>Target Volume</dt><dd>${Number(task.target_quantity || 0)} companies</dd></div></dl></article>
       <article><h3>Keywords</h3><ul class="compact-list">${list(task.keywords)}</ul></article>
       <article><h3>Required Data Fields</h3><ul class="compact-list">${list(task.required_data_fields)}</ul></article>
       <article><h3>Filters</h3><ul class="compact-list">${list(task.filters)}</ul></article>
     </section>
     ${executionPanel}
     <section class="section-gap">${panelHeader('Search Results', 'Store manually discovered leads before they enter the Lead Pool')}
-      <div class="metrics-grid compact-metrics"><div class="metric-card"><span>Total Results</span><strong>${Number(summary.total || 0)}</strong><small>Stored candidates</small></div><div class="metric-card"><span>Converted</span><strong>${Number(summary.converted || 0)}</strong><small>Moved to Customers CRM</small></div><div class="metric-card"><span>Lead Pool</span><strong>${Number((summary.new || 0) + (summary.reviewed || 0))}</strong><small>Open leads</small></div></div>
+      <dl class="search-result-stat-grid"><div><dt>Total Results</dt><dd class="search-result-stat-value">${Number(summary.total || 0)}</dd><dd class="search-result-stat-note">Stored candidates</dd></div><div><dt>Converted</dt><dd class="search-result-stat-value">${Number(summary.converted || 0)}</dd><dd class="search-result-stat-note">Moved to Customers CRM</dd></div><div><dt>Lead Pool</dt><dd class="search-result-stat-value">${Number((summary.new || 0) + (summary.reviewed || 0))}</dd><dd class="search-result-stat-note">Open leads</dd></div></dl>
       ${detail}
       <form id="search-result-form" class="foundation-form section-gap" data-edit-id="${editing?.id || ''}">
         <div class="panel-header"><div class="panel-title"><h3>${editing ? 'Edit Search Result' : 'Add Search Result'}</h3><p>30-second entry. AI Qualification runs after saving; no external search API is connected.</p></div>${editing ? '<button class="button" type="button" data-action="cancel-search-result-edit">Cancel Edit</button>' : ''}</div>
@@ -2449,7 +2449,7 @@ async function handleAction(action, node) {
   } else if (action === 'close-knowledge-preview') {
     $('#knowledge-preview')?.remove();
   } else if (action === 'opportunity-tab') {
-    state.opportunityView = node.dataset.tab;
+    activateOpportunityTab(state, node.dataset.tab);
     await renderOpportunityIntelligence();
   } else if (action === 'analyze-discovery-requirement') {
     await runCustomerDiscovery('analyze');

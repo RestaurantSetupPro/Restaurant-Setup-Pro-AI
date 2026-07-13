@@ -594,8 +594,9 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
   .settings-nav { display: flex; overflow-x: auto; }
   .settings-nav button { width: auto; min-width: max-content; }
 }
-.opportunity-tabs { overflow-x: auto; margin-bottom: 18px; }
+.opportunity-tabs { position: relative; z-index: 2; overflow-x: auto; margin-bottom: 18px; pointer-events: auto; }
 .opportunity-tabs button { white-space: nowrap; }
+.opportunity-pane { position: relative; z-index: 1; }
 .opportunity-metrics { grid-template-columns: repeat(5, minmax(150px, 1fr)); }
 .opportunity-import-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .opportunity-form { align-self: start; }
@@ -709,7 +710,10 @@ kbd { padding: 2px 5px; color: var(--faint); border: 1px solid var(--line-strong
 @media(max-width:1100px){.generated-search-grid{grid-template-columns:1fr 1fr}}@media(max-width:680px){.generated-search-grid{grid-template-columns:1fr}}
 /* V5.3 Opportunity Intelligence V3.0: Search Task Management */
 .search-task-detail h3{margin:0 0 10px;color:var(--green-900)}.search-task-detail .detail-grid{grid-template-columns:1.2fr .8fr .8fr .8fr;gap:18px}.search-task-detail .detail-grid>article{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface-soft)}
+.search-criteria-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.search-criteria-grid>div{min-width:0;padding:10px 11px;display:grid;gap:6px;border:1px solid var(--line);border-radius:9px;background:var(--surface)}.search-criteria-grid dt{color:var(--muted);font-size:9px;font-weight:700;letter-spacing:.35px;text-transform:uppercase}.search-criteria-grid dd{min-width:0;margin:0;color:var(--green-900);font:700 12px/1.45 Manrope,sans-serif;overflow-wrap:anywhere}
+.search-result-stat-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0}.search-result-stat-grid>div{min-width:0;padding:18px 19px;display:grid;align-content:start;gap:7px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-sm)}.search-result-stat-grid dt{color:var(--muted);font-size:10px;font-weight:700}.search-result-stat-grid dd{margin:0}.search-result-stat-value{color:var(--green-900);font:700 26px/1 Manrope,sans-serif;letter-spacing:-.7px}.search-result-stat-note{display:block;color:var(--faint);font-size:9px;line-height:1.4}
 @media(max-width:1100px){.search-task-detail .detail-grid{grid-template-columns:1fr 1fr}}@media(max-width:680px){.search-task-detail .detail-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.search-criteria-grid,.search-result-stat-grid{grid-template-columns:1fr}}
 /* V3.15.2: simplified Search Result entry */
 .search-task-detail #search-result-form{grid-template-columns:repeat(2,minmax(0,1fr));padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}
 .search-task-detail #search-result-form>.panel-header,.search-task-detail #search-result-form>.field--full,.search-task-detail #search-result-form>.button{grid-column:1/-1}

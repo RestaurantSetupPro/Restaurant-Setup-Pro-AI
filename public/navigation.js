@@ -10,3 +10,13 @@ export function uniqueNavigationItems(items) {
     return true;
   });
 }
+
+export function activateOpportunityTab(state, tab) {
+  state.opportunityView = tab;
+  state.searchStrategyDetail = null;
+  state.searchStrategyContextOutdated = false;
+  state.searchTaskDetail = null;
+  state.searchResultDetail = null;
+  state.searchResultEdit = null;
+  return state;
+}
