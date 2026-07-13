@@ -11,6 +11,7 @@ import { createAiCostControl } from './services/ai-cost-control.mjs';
 import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
 import { createKnowledgeCenter } from './services/knowledge-center.mjs';
 import { blankSearchStrategyData, createSearchStrategyService, validateSearchStrategyData } from './services/search-strategy.mjs';
+import { createSearchExecutionService } from './services/search-execution.mjs';
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
@@ -36,6 +37,7 @@ let aiCostControl;
 let aiBusinessBrain;
 let knowledgeCenter;
 let searchStrategyService;
+let searchExecutionService;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -114,14 +116,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql', '027_v53_search_execution_foundation.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('026_v53_search_strategy_human_approval');
-      databaseDiagnostics.migration = migration?.version === '026_v53_search_strategy_human_approval';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('027_v53_search_execution_foundation');
+      databaseDiagnostics.migration = migration?.version === '027_v53_search_execution_foundation';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 026_v53_search_strategy_human_approval was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 027_v53_search_execution_foundation was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -134,14 +136,17 @@ function initializeDatabase() {
       ensureImageTaskColumns();
       ensureQuoteBuilderColumns();
       ensureCustomerIntelligenceColumns();
+      ensureSearchExecutionColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '026_v53_search_strategy_human_approval';
+      databaseDiagnostics.migrationVersion = '027_v53_search_execution_foundation';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     seedCustomerDiscoveryProfiles();
     aiCostControl = createAiCostControl(db);
     knowledgeCenter = createKnowledgeCenter({ db, audit });
     searchStrategyService = createSearchStrategyService({ db, audit });
+    searchExecutionService = createSearchExecutionService({ db, audit });
+    searchExecutionService.recoverInterrupted();
     aiBusinessBrain = createAiBusinessBrain({ db, aiCostControl, buildContext: buildAiContext });
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
@@ -246,6 +251,24 @@ function ensureImageTaskColumns() {
   db.prepare("UPDATE ai_image_generation_tasks SET lifecycle_status = status WHERE lifecycle_status = 'pending' AND status != 'pending'").run();
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_lifecycle ON ai_image_generation_tasks(product_id, lifecycle_status, created_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_image_tasks_execution_queue ON ai_image_generation_tasks(lifecycle_status, provider, created_at)');
+}
+
+function ensureSearchExecutionColumns() {
+  const existing = new Set(db.prepare('PRAGMA table_info(search_results)').all().map(column => column.name));
+  const columns = {
+    search_execution_id: 'INTEGER REFERENCES search_executions(id) ON DELETE SET NULL',
+    connector_key: 'TEXT', connector_version: 'TEXT', external_id: 'TEXT', canonical_website: 'TEXT',
+    address: 'TEXT', source_category: 'TEXT', captured_at: 'TEXT',
+    raw_payload_id: 'INTEGER REFERENCES search_result_raw_payloads(id) ON DELETE SET NULL',
+    normalization_version: 'TEXT', dedup_key: 'TEXT',
+    duplicate_of_search_result_id: 'INTEGER REFERENCES search_results(id) ON DELETE SET NULL',
+    evidence_json: "TEXT NOT NULL DEFAULT '{}'"
+  };
+  for (const [name, type] of Object.entries(columns)) if (!existing.has(name)) db.exec(`ALTER TABLE search_results ADD COLUMN ${name} ${type}`);
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_search_results_task_external ON search_results(search_task_id,connector_key,external_id) WHERE external_id IS NOT NULL AND LENGTH(TRIM(external_id)) > 0");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_search_results_task_dedup ON search_results(search_task_id,dedup_key) WHERE dedup_key IS NOT NULL AND LENGTH(TRIM(dedup_key)) > 0 AND duplicate_of_search_result_id IS NULL");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_execution ON search_results(search_execution_id,status)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_duplicate ON search_results(duplicate_of_search_result_id)');
 }
 
 function ensureCustomerIntelligenceColumns() {
@@ -2653,6 +2676,7 @@ function normalizeSearchResult(row) {
   return {
     ...row,
     opportunity_score: Number(row.opportunity_score || 0),
+    evidence_json: parseJsonValue(row.evidence_json, {}),
     source_url: evidence.source_url,
     reference_note: evidence.reference_note,
     recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
@@ -4357,21 +4381,35 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     } catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
   },
 
-  updateSearchTaskStatus(req, res, id, action) {
+  async updateSearchTaskStatus(req, res, id, action) {
     const user = currentUser(req);
-    if (!opportunityCapabilities(user).canRunCustomerIntelligence && !opportunityCapabilities(user).canRunAi) return json(res, user ? 403 : 401, { error: 'Search task status update is not allowed for this role.' });
+    if (!['Admin','Owner'].includes(user?.role)) { if(user) audit(user.id,'permission_denied_search_task_ready','search_tasks',String(id)); return json(res, user ? 403 : 401, { error: 'Only Admin or Owner can complete Task Review and mark Ready.' }); }
     const task = db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(id);
     if (!task) return json(res, 404, { error: 'Search task not found.' });
     if (action !== 'ready') return json(res, 400, { error: 'Only Draft to Ready is supported in this MVP.' });
     if (task.status !== 'Draft') return json(res, 409, { error: 'Only Draft tasks can be marked Ready.' });
+    const body = await readJson(req);
+    const connector = searchExecutionService.registry.get(body.connectorKey);
+    if (!connector) { audit(user.id,'gate_denied_search_task_ready','search_tasks',String(id),{reason:'connector'}); return json(res,409,{error:'Select an approved Connector before marking Ready.'}); }
+    const requiredFields=parseJsonValue(task.required_data_fields,[]),keywords=parseJsonValue(task.keywords,[]);
+    if(!keywords.length||!String(task.location||'').trim()||!requiredFields.length){audit(user.id,'gate_denied_search_task_ready','search_tasks',String(id),{reason:'incomplete query'});return json(res,409,{error:'Query, location, and required fields must be complete before marking Ready.'});}
     const strategy = db.prepare("SELECT * FROM search_strategies WHERE linked_search_task_id = ? AND status = 'Approved'").get(id);
     if (!strategy) { audit(user.id, 'blocked_search_task_ready_without_approved_strategy', 'search_tasks', String(id)); return json(res, 409, { error: 'Search Task requires a currently Approved Search Strategy before it can be marked Ready.' }); }
     db.prepare("UPDATE search_tasks SET status = 'Ready', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
-    audit(user.id, 'mark_search_task_ready', 'search_tasks', String(id));
+    audit(user.id, 'mark_search_task_ready', 'search_tasks', String(id), { connectorKey: connector.key, connectorVersion: connector.version });
     const updatedTask = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(id));
     const results = searchResultsForTask(id);
     return json(res, 200, { task: { ...updatedTask, search_results: results, search_result_summary: searchResultSummary(results) } });
   },
+
+  searchConnectors(req,res){const user=currentUser(req);if(!opportunityCapabilities(user).canView)return json(res,user?403:401,{error:'Search Connector access denied.'});return json(res,200,{connectors:searchExecutionService.registry.list()});},
+  searchTaskExecutions(req,res,taskId){const user=currentUser(req);if(!opportunityCapabilities(user).canView)return json(res,user?403:401,{error:'Search Execution access denied.'});return json(res,200,{executions:searchExecutionService.listForTask(taskId)});},
+  async estimateSearchExecution(req,res,taskId){const user=currentUser(req);try{return json(res,200,searchExecutionService.estimate(taskId,await readJson(req),user));}catch(error){return json(res,error.status||400,{error:error.message});}},
+  async createSearchExecution(req,res,taskId){const user=currentUser(req);try{return json(res,201,{execution:searchExecutionService.create(taskId,await readJson(req),user)});}catch(error){return json(res,error.status||400,{error:error.message});}},
+  searchExecutionDetail(req,res,id){const user=currentUser(req);if(!opportunityCapabilities(user).canView)return json(res,user?403:401,{error:'Search Execution access denied.'});const execution=searchExecutionService.readExecution(id);return execution?json(res,200,{execution}):json(res,404,{error:'Search Execution not found.'});},
+  async searchExecutionAction(req,res,id,action){const user=currentUser(req);try{const body=await readJson(req);let execution;if(action==='approve')execution=searchExecutionService.approve(id,user);else if(action==='start')execution=await searchExecutionService.run(id,user,{scenario:body.scenario});else if(action==='resume')execution=await searchExecutionService.run(id,user,{resume:true,scenario:body.scenario});else if(action==='pause')execution=searchExecutionService.pause(id,user);else if(action==='stop')execution=searchExecutionService.stop(id,user);else throw Object.assign(new Error('Unsupported Search Execution action.'),{status:400});return json(res,200,{execution});}catch(error){return json(res,error.status||400,{error:error.message});}},
+  searchExecutionResults(req,res,id){const user=currentUser(req);if(!opportunityCapabilities(user).canView)return json(res,user?403:401,{error:'Search Execution access denied.'});return json(res,200,{results:searchExecutionService.results(id)});},
+  searchExecutionDebugSummary(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Admin or Owner access required.'});const execution=searchExecutionService.readExecution(id);return execution?json(res,200,{execution,debug:searchExecutionService.debug()}):json(res,404,{error:'Search Execution not found.'});},
 
   searchTaskResults(req, res, taskId) {
     const user = currentUser(req);
@@ -4461,7 +4499,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
         values.opportunity_summary, values.why_customer_matters, values.recommended_next_action, values.source_type,
         values.source_reference, status, id
       );
-      audit(user.id, 'update_search_result', 'search_results', String(id), { aiExecutionLogId: aiResult.executionLogId });
+      if(existing.search_execution_id){const evidence={...parseJsonValue(existing.evidence_json,{}),manuallyModifiedFields:[...new Set([...(parseJsonValue(existing.evidence_json,{}).manuallyModifiedFields||[]),...Object.keys(body).filter(key=>!['status'].includes(key))])],lastModifiedBy:user.id,lastModifiedAt:new Date().toISOString()};db.prepare('UPDATE search_results SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence),id);}
+      audit(user.id, existing.search_execution_id?'manual_search_result_correction':'update_search_result', 'search_results', String(id), { aiExecutionLogId: aiResult.executionLogId, executionId:existing.search_execution_id||null });
       return json(res, 200, { result: searchResultDetail(id), ai: { provider: aiResult.provider, executionLogId: aiResult.executionLogId, cost: aiResult.cost } });
     } catch (error) {
       return json(res, error.status || 400, { error: error.message });
@@ -5136,6 +5175,7 @@ const server = createServer(async (req, res) => {
         aiBusinessBrain: aiBusinessBrainDebugData(),
         aiCostControl: aiCostDebugData(),
         knowledgeCenter: knowledgeCenter.debug(),
+        searchExecution: searchExecutionService.debug(),
         salesIntelligence: salesDebugData(),
         events: systemEvents.slice(-50).reverse()
       });
@@ -5213,11 +5253,18 @@ const server = createServer(async (req, res) => {
     if (strategyMatch && req.method === 'PUT') return await handlers.updateSearchStrategy(req, res, Number(strategyMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/search-tasks') return handlers.searchTasks(req, res);
     if (req.method === 'POST' && url.pathname === '/api/search-tasks') return await handlers.createSearchTask(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/search-connectors') return handlers.searchConnectors(req,res);
+    const taskExecutionsMatch=url.pathname.match(/^\/api\/search-tasks\/(\d+)\/executions$/);
+    if(taskExecutionsMatch&&req.method==='GET')return handlers.searchTaskExecutions(req,res,Number(taskExecutionsMatch[1]));
+    const taskEstimateExecutionMatch=url.pathname.match(/^\/api\/search-tasks\/(\d+)\/estimate-execution$/);
+    if(taskEstimateExecutionMatch&&req.method==='POST')return await handlers.estimateSearchExecution(req,res,Number(taskEstimateExecutionMatch[1]));
+    const taskCreateExecutionMatch=url.pathname.match(/^\/api\/search-tasks\/(\d+)\/create-execution$/);
+    if(taskCreateExecutionMatch&&req.method==='POST')return await handlers.createSearchExecution(req,res,Number(taskCreateExecutionMatch[1]));
     const searchTaskResultsMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/results$/);
     if (searchTaskResultsMatch && req.method === 'GET') return handlers.searchTaskResults(req, res, Number(searchTaskResultsMatch[1]));
     if (searchTaskResultsMatch && req.method === 'POST') return await handlers.createSearchResult(req, res, Number(searchTaskResultsMatch[1]));
     const searchTaskActionMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/(ready)$/);
-    if (searchTaskActionMatch && req.method === 'POST') return handlers.updateSearchTaskStatus(req, res, Number(searchTaskActionMatch[1]), searchTaskActionMatch[2]);
+    if (searchTaskActionMatch && req.method === 'POST') return await handlers.updateSearchTaskStatus(req, res, Number(searchTaskActionMatch[1]), searchTaskActionMatch[2]);
     const searchTaskMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)$/);
     if (searchTaskMatch && req.method === 'GET') return handlers.searchTaskDetail(req, res, Number(searchTaskMatch[1]));
     const searchResultActionMatch = url.pathname.match(/^\/api\/search-results\/(\d+)\/(convert|discard)$/);
@@ -5226,6 +5273,14 @@ const server = createServer(async (req, res) => {
     const searchResultMatch = url.pathname.match(/^\/api\/search-results\/(\d+)$/);
     if (searchResultMatch && req.method === 'GET') return handlers.searchResultDetail(req, res, Number(searchResultMatch[1]));
     if (searchResultMatch && req.method === 'PUT') return await handlers.updateSearchResult(req, res, Number(searchResultMatch[1]));
+    const searchExecutionResultsMatch=url.pathname.match(/^\/api\/search-executions\/(\d+)\/results$/);
+    if(searchExecutionResultsMatch&&req.method==='GET')return handlers.searchExecutionResults(req,res,Number(searchExecutionResultsMatch[1]));
+    const searchExecutionDebugMatch=url.pathname.match(/^\/api\/search-executions\/(\d+)\/debug-summary$/);
+    if(searchExecutionDebugMatch&&req.method==='GET')return handlers.searchExecutionDebugSummary(req,res,Number(searchExecutionDebugMatch[1]));
+    const searchExecutionActionMatch=url.pathname.match(/^\/api\/search-executions\/(\d+)\/(approve|start|pause|resume|stop)$/);
+    if(searchExecutionActionMatch&&req.method==='POST')return await handlers.searchExecutionAction(req,res,Number(searchExecutionActionMatch[1]),searchExecutionActionMatch[2]);
+    const searchExecutionMatch=url.pathname.match(/^\/api\/search-executions\/(\d+)$/);
+    if(searchExecutionMatch&&req.method==='GET')return handlers.searchExecutionDetail(req,res,Number(searchExecutionMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/customers/sales-handoff') return handlers.salesHandoff(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/run-ai-selected') return await handlers.runSelectedCustomerAi(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/import') return await handlers.importCustomers(req, res);
