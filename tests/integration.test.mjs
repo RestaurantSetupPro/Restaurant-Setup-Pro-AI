@@ -56,7 +56,9 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '026_v53_search_strategy_human_approval');
+  assert.equal(database.migrationVersion, '027_v53_search_execution_foundation');
+  assert.ok(database.tables.includes('search_executions'));
+  assert.ok(database.tables.includes('search_result_raw_payloads'));
   assert.equal(database.error, null);
   assert.ok(database.tables.includes('users'));
   const html = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
@@ -703,7 +705,17 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   const linkedArchive=await call(`/api/search-strategies/${id}/archive`,owner,'POST',{});
   assert.equal(linkedArchive.response.status,409);assert.match(linkedArchive.body.error,/Search Task #\d+ is Draft/);
   assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
-  const ready=await call(`/api/search-tasks/${task.body.task.id}/ready`,sales,'POST',{});assert.equal(ready.response.status,200,ready.body.error);
+  assert.equal((await call(`/api/search-tasks/${task.body.task.id}/ready`,sales,'POST',{connectorKey:'rules-mock'})).response.status,403);
+  const ready=await call(`/api/search-tasks/${task.body.task.id}/ready`,owner,'POST',{connectorKey:'rules-mock'});assert.equal(ready.response.status,200,ready.body.error);
+  const connectors=await call('/api/search-connectors',sales);assert.deepEqual(connectors.body.connectors.map(item=>item.key),['rules-mock']);
+  const executionEstimate=await call(`/api/search-tasks/${task.body.task.id}/estimate-execution`,sales,'POST',{connectorKey:'rules-mock'});assert.equal(executionEstimate.body.estimate.expected,0);
+  const createdExecution=await call(`/api/search-tasks/${task.body.task.id}/create-execution`,sales,'POST',{connectorKey:'rules-mock',idempotencyKey:`workflow-1c-${task.body.task.id}`});
+  assert.equal(createdExecution.body.execution.status,'Awaiting Approval');
+  assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{})).response.status,409);
+  assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/approve`,sales,'POST',{})).response.status,403);
+  assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/approve`,owner,'POST',{})).body.execution.status,'Approved');
+  const executed=await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{});assert.equal(executed.body.execution.status,'Completed');assert.ok(executed.body.execution.inserted_count>0);assert.ok(executed.body.execution.duplicate_count>0);
+  const connectorResults=await call(`/api/search-executions/${createdExecution.body.execution.id}/results`,sales);assert.ok(connectorResults.body.results.every(result=>result.evidence_json.connectorKey==='rules-mock'&&result.captured_at&&result.search_execution_id));
   const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
   assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
   assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
@@ -719,7 +731,7 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   assert.equal((await call('/api/search-strategies',designer)).response.status,403);
   const debug=await call('/api/debug/system',admin);assert.ok(debug.body.opportunityIntelligence.search_strategies_count>=2);assert.equal(typeof debug.body.opportunityIntelligence.blocked_strategy_task_attempts,'number');
   const logs=await call('/api/ai-cost/logs',admin);assert.ok(logs.body.logs.some(log=>log.module_name==='search-strategy'&&log.status==='executed'));
-  const detail=await call(`/api/search-tasks/${task.body.task.id}`,owner);assert.equal(detail.body.task.search_results.length,0);
+  const detail=await call(`/api/search-tasks/${task.body.task.id}`,owner);assert.equal(detail.body.task.search_results.length,executed.body.execution.inserted_count);
 });
 
 test('Owner and Sales Admin can create and edit Product Library records', async () => {
@@ -1245,8 +1257,8 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
 
   const readyResponse = await fetch(`http://127.0.0.1:${port}/api/search-tasks/${createdTask.task.id}/ready`, {
     method: 'POST',
-    headers: { Cookie: sales.cookie, 'Content-Type': 'application/json' },
-    body: '{}'
+    headers: { Cookie: admin.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ connectorKey: 'rules-mock' })
   });
   const ready = await readyResponse.json();
   assert.equal(readyResponse.status, 200, ready.error);
@@ -1491,7 +1503,8 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Generated Search Plan/);
   assert.match(appJs, /Create Search Task/);
   assert.match(appJs, /Search Tasks/);
-  assert.match(appJs, /Start Search/);
+  assert.match(appJs, /Mark Ready/);
+  assert.match(appJs, /Estimate Execution/);
   assert.match(appJs, /Recommended Data Fields/);
   assert.match(appJs, /Recommended Search Volume/);
   assert.match(appJs, /Update Customer Intelligence/);
