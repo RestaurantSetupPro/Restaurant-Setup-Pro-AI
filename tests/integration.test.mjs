@@ -719,7 +719,9 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   const pendingLead=await call(`/api/search-results/${connectorResults.body.results[0].id}`,sales);assert.equal(pendingLead.body.result.ai_qualification_status,'Pending');assert.equal(pendingLead.body.result.ai_qualification_at,null);
   const safeLeadPayload=JSON.stringify(pendingLead.body);assert.doesNotMatch(safeLeadPayload,/payload_json|authorization|api_key|secret|token/i);assert.equal(pendingLead.body.result.evidence_json.connectorKey,'rules-mock');assert.equal(pendingLead.body.result.evidence_json.externalId,'mock-001');
   const customerCountBeforeQualification=(await call('/api/customers',owner)).body.customers.length;
-  const qualifiedLead=await call(`/api/search-results/${pendingLead.body.result.id}`,owner,'PUT',pendingLead.body.result);assert.equal(qualifiedLead.response.status,200,qualifiedLead.body.error);assert.equal(qualifiedLead.body.result.ai_qualification_status,'Qualified');assert.ok(qualifiedLead.body.result.ai_qualification_at);
+  const concurrentQualification=await Promise.all([call(`/api/search-results/${pendingLead.body.result.id}/run-ai-qualification`,owner,'POST',{}),call(`/api/search-results/${pendingLead.body.result.id}/run-ai-qualification`,owner,'POST',{})]);
+  assert.deepEqual(concurrentQualification.map(item=>item.response.status).sort(),[200,409]);
+  const qualifiedLead=await call(`/api/search-results/${pendingLead.body.result.id}`,owner);assert.equal(qualifiedLead.body.result.ai_qualification_status,'Qualified');assert.ok(qualifiedLead.body.result.ai_qualification_at);assert.equal(qualifiedLead.body.result.qualification_source,'Formal AI Qualification');assert.ok(qualifiedLead.body.result.ai_qualification_execution_log_id);
   assert.equal((await call('/api/customers',owner)).body.customers.length,customerCountBeforeQualification);
   const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
   assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
@@ -1315,8 +1317,9 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   });
   const edited = await editedResponse.json();
   assert.equal(editedResponse.status, 200, edited.error);
-  assert.equal(edited.result.opportunity_score, 88);
+  assert.equal(edited.result.opportunity_score, 82);
   assert.equal(edited.result.status, 'reviewed');
+  assert.equal(edited.ai, undefined);
 
   const convertResponse = await fetch(`http://127.0.0.1:${port}/api/search-results/${searchResult.result.id}/convert`, {
     method: 'POST',
@@ -1511,6 +1514,8 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Mark Ready/);
   assert.match(appJs, /Estimate Execution/);
   assert.match(appJs, /AI Qualification Pending/);
+  assert.match(appJs, /run-ai-qualification/);
+  assert.doesNotMatch(appJs, /api\(`\/api\/search-results\/\$\{id\}`,[^{]*\{ method: 'PUT'/);
   assert.match(appJs, /aiStatus==='Qualified'\?'AI Qualified'/);
   assert.match(appJs, /Source & Evidence/);
   assert.match(appJs, /Connector Version/);

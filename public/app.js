@@ -1169,7 +1169,7 @@ function renderLeadDetail(lead) {
   const sourceUrl=lead.source_url||evidence.sourceUrl||'';
   const sourceLink=/^https?:\/\//i.test(String(sourceUrl))?`<a class="evidence-link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">View Source</a>`:'Not provided';
   const websiteLink=/^https?:\/\//i.test(String(lead.website||''))?`<a class="detail-value-link" href="${esc(lead.website)}" target="_blank" rel="noopener noreferrer">${esc(lead.website)}</a>`:esc(lead.website||'Missing');
-  const aiLabel=aiStatus==='Qualified'?'AI Qualified':aiStatus==='Failed'?'AI Qualification Failed':'AI Qualification Pending';
+  const aiLabel=aiStatus==='Qualified'?'AI Qualified':aiStatus==='Failed'?'AI Qualification Failed':aiStatus==='Blocked'?'AI Qualification Blocked':aiStatus==='Running'?'AI Qualification Running':'AI Qualification Pending';
   const history = [
     ['Lead Created', lead.created_at],
     [aiLabel, lead.ai_qualification_at || lead.created_at],
@@ -1179,14 +1179,14 @@ function renderLeadDetail(lead) {
   return `<article class="panel lead-detail-panel">
     <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>Lead Detail · ${esc(lead.task_name || 'Search Result')}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">Back to Lead Pool</button></div></div>
     <section class="detail-grid">
-      <article><h3>AI Summary</h3>${badge(aiLabel)}<p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
+      <article><h3>AI Summary</h3>${badge(aiLabel)}<small class="qualification-source">${esc(lead.qualification_source||'Initial Rules / Manual Data')}${lead.ai_qualification_provider?` · ${esc(lead.ai_qualification_provider)}`:''}</small><p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
       <article><h3>Website & Contact</h3><dl class="lead-field-list"><div><dt>Website</dt><dd>${websiteLink}</dd></div><div><dt>Contact</dt><dd>${esc(contact)}</dd></div></dl></article>
       <article><h3>Product Matching</h3><p>${esc(lead.recommended_product_reason || 'Run qualification to prepare product direction.')}</p></article>
     </section>
     <details class="source-evidence-card section-gap" open><summary>Source & Evidence</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>Connector Version</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||'—')}</dd></div><div><dt>External ID</dt><dd>${esc(lead.external_id||evidence.externalId||'—')}</dd></div><div><dt>Source URL</dt><dd>${sourceLink}</dd></div><div><dt>Captured Time</dt><dd>${esc(lead.captured_at||evidence.capturedTime||'—')}</dd></div><div><dt>Search Execution</dt><dd>${lead.search_execution_id?`#${Number(lead.search_execution_id)}`:'—'}</dd></div><div><dt>Normalization Version</dt><dd>${esc(lead.normalization_version||evidence.normalizationVersion||'—')}</dd></div><div><dt>Duplicate Status</dt><dd>${lead.duplicate_of_search_result_id?`Review candidate · Result #${Number(lead.duplicate_of_search_result_id)}`:'No duplicate detected'}</dd></div><div class="evidence-note-row"><dt>Reference Note</dt><dd>${esc(lead.reference_note||'—')}</dd></div></dl></details>
     <section class="detail-grid section-gap">
       <article><h3>AI Recommendation</h3><p>${esc(lead.recommended_next_action || 'Review the lead and decide whether to convert.')}</p><h3>Qualification Reason</h3><p>${esc(lead.qualification_reason || 'No qualification reason yet.')}</p></article>
-      <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}">Run AI</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
+      <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}" ${aiStatus==='Running'?'disabled':''}>${aiStatus==='Running'?'AI Running…':'Run AI'}</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
     </section>
     <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${esc(date || '')}</p></div></div>`).join('')}</div></article>
     <div class="row-actions section-gap">${lead.status !== 'converted' ? `<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
@@ -1554,12 +1554,22 @@ async function editSearchResult(id) {
 }
 
 async function runLeadAi(id) {
-  const current = await api(`/api/search-results/${id}`);
-  const result = await api(`/api/search-results/${id}`, { method: 'PUT', body: JSON.stringify(current.result) });
-  state.searchResultDetail = result.result;
-  state.searchResultEdit = null;
-  toast('Lead AI qualification updated.');
-  await renderOpportunityIntelligence();
+  const button=document.querySelector(`[data-action="run-lead-ai"][data-id="${id}"]`);
+  if(button?.disabled)return;
+  if(button){button.disabled=true;button.textContent='AI Running…';}
+  try{
+    await api(`/api/search-results/${id}/run-ai-qualification`, { method: 'POST', body: '{}' });
+    const refreshed=await api(`/api/search-results/${id}`);
+    state.searchResultDetail=refreshed.result;
+    state.searchResultEdit=null;
+    toast('AI Qualification completed.');
+    await renderOpportunityIntelligence();
+  }catch(error){
+    const refreshed=await api(`/api/search-results/${id}`).catch(()=>null);
+    if(refreshed?.result)state.searchResultDetail=refreshed.result;
+    toast(error.message||'AI Qualification failed.');
+    await renderOpportunityIntelligence();
+  }
 }
 
 async function convertSearchResult(id) {

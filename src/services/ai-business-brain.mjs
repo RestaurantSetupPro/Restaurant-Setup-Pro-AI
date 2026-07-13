@@ -123,6 +123,15 @@ export function createAiBusinessBrain({ db, aiCostControl, buildContext }) {
     ).id);
   }
 
+  function updateExecutionLog(id, input) {
+    db.prepare(`UPDATE ai_execution_logs SET provider=?,model=?,output_snapshot=?,status=?,estimated_cost_usd=?,actual_cost_usd=?,cost_log_id=?,error_message=?,started_at=COALESCE(started_at,?),completed_at=? WHERE id=?`).run(
+      input.provider, input.model || null, JSON.stringify(input.outputSnapshot || {}), input.status,
+      Number(input.estimatedCost || 0), Number(input.actualCost || 0), input.costLogId || null,
+      input.errorMessage || null, input.startedAt || null, input.completedAt || null, id
+    );
+    return Number(id);
+  }
+
   function validateRequest(request) {
     for (const field of ['moduleName', 'actionName', 'entityType', 'entityId', 'contextType', 'userId']) {
       if (request[field] === undefined || request[field] === null || String(request[field]).trim() === '') {
@@ -162,24 +171,31 @@ export function createAiBusinessBrain({ db, aiCostControl, buildContext }) {
       user_id: userId,
       fingerprint
     };
+    const trackedLifecycle = request.options?.trackLifecycle === true;
+    const trackedExecutionLogId = trackedLifecycle ? insertExecutionLog({ moduleName, actionName, entityType, entityId, userId, provider: adapter.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: {}, status: 'pending', estimatedCost: 0, actualCost: 0, startedAt }) : null;
+    if (trackedExecutionLogId) db.prepare("UPDATE ai_execution_logs SET status='running',started_at=? WHERE id=?").run(startedAt,trackedExecutionLogId);
     const estimate = aiCostControl.estimate(costInput);
     const authorization = aiCostControl.authorize({ ...costInput, estimated_cost_usd: estimate.estimated_cost_usd });
     if (!authorization.allowed) {
       const completedAt = new Date().toISOString();
       const output = { blocked: true, reason: authorization.blocked_reason, recommendation: 'AI execution was blocked by Cost Control.' };
-      const executionLogId = insertExecutionLog({ moduleName, actionName, entityType, entityId, userId, provider: authorization.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: output, status: 'blocked', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: authorization.log_id || estimate.id, errorMessage: authorization.blocked_reason, startedAt, completedAt });
+      const logInput = { moduleName, actionName, entityType, entityId, userId, provider: authorization.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: output, status: 'blocked', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: authorization.log_id || estimate.id, errorMessage: authorization.blocked_reason, startedAt, completedAt };
+      const executionLogId = trackedExecutionLogId ? updateExecutionLog(trackedExecutionLogId, logInput) : insertExecutionLog(logInput);
       return { status: 'blocked', provider: authorization.provider, model: adapter.model, executionLogId, contextSnapshotId: snapshot.id, cost: { estimate, authorization }, result: output };
     }
     try {
+      if (trackedLifecycle) await new Promise(resolve => setTimeout(resolve, 10));
       const result = await adapter.client.generateStructured({ request: { moduleName, actionName, entityType, entityId, contextType }, context, prompt });
       const executedCostLogId = aiCostControl.executed({ ...costInput, provider: adapter.provider, actual_cost_usd: 0 });
       const completedAt = new Date().toISOString();
-      const executionLogId = insertExecutionLog({ moduleName, actionName, entityType, entityId, userId, provider: adapter.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: result, status: 'completed', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: executedCostLogId, startedAt, completedAt });
+      const logInput = { moduleName, actionName, entityType, entityId, userId, provider: adapter.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: result, status: 'completed', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: executedCostLogId, startedAt, completedAt };
+      const executionLogId = trackedExecutionLogId ? updateExecutionLog(trackedExecutionLogId, logInput) : insertExecutionLog(logInput);
       return { status: 'completed', provider: adapter.provider, requestedProvider: adapter.requestedProvider, model: adapter.model, prompt: { key: prompt.prompt_key, version: prompt.version }, executionLogId, contextSnapshotId: snapshot.id, cost: { estimate, authorization, executedCostLogId }, result };
     } catch (error) {
       const failedCostLogId = aiCostControl.failed(costInput, error.message);
       const completedAt = new Date().toISOString();
-      const executionLogId = insertExecutionLog({ moduleName, actionName, entityType, entityId, userId, provider: adapter.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: {}, status: 'failed', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: failedCostLogId, errorMessage: error.message, startedAt, completedAt });
+      const logInput = { moduleName, actionName, entityType, entityId, userId, provider: adapter.provider, model: adapter.model, promptTemplateKey: prompt.prompt_key, promptVersion: prompt.version, contextSnapshotId: snapshot.id, inputHash: fingerprint, outputSnapshot: {}, status: 'failed', estimatedCost: estimate.estimated_cost_usd, actualCost: 0, costLogId: failedCostLogId, errorMessage: error.message, startedAt, completedAt };
+      const executionLogId = trackedExecutionLogId ? updateExecutionLog(trackedExecutionLogId, logInput) : insertExecutionLog(logInput);
       error.executionLogId = executionLogId;
       throw error;
     }

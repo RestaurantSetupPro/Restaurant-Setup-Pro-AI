@@ -2156,6 +2156,14 @@ function buildAiContext({ contextType, entityType, entityId, user, options = {} 
     if (strategy) sourceReferences.push({ module: 'Search Strategy', table: 'search_strategies', id: strategy.id, revision: strategy.revision_no });
     return { ...base, context: { task: { ...task, keywords: parseJsonValue(task.keywords, []), filters: parseJsonValue(task.filters, []), required_data_fields: parseJsonValue(task.required_data_fields, []) }, strategy, constraints: { advisoryOnly: true, customerCreationAllowed: false } } };
   }
+  if (normalizedType === 'search-result-qualification') {
+    if (!requires(user, 'opportunity-intelligence')) throw Object.assign(new Error('Search Result qualification context access denied.'), { status: 403 });
+    const result = db.prepare(`SELECT id,search_task_id,company_name,customer_type,industry,country,city,website,contact_person,email,phone,company_size,business_type,source_type,source_reference,status FROM search_results WHERE id=?`).get(id);
+    if (!result) throw Object.assign(new Error('Search Result not found for AI context.'), { status: 404 });
+    const task = db.prepare('SELECT id,task_name,target_customer,customer_type,industry,location,search_objective,keywords,filters,required_data_fields,status FROM search_tasks WHERE id=?').get(result.search_task_id);
+    sourceReferences.push({ module: 'Opportunity Intelligence', table: 'search_results', id: result.id }, { module: 'Opportunity Intelligence', table: 'search_tasks', id: result.search_task_id });
+    return { ...base, context: { result: { ...result, source_reference: parseSearchResultEvidence(result.source_reference) }, task: task ? { ...task, keywords: parseJsonValue(task.keywords, []), filters: parseJsonValue(task.filters, []), required_data_fields: parseJsonValue(task.required_data_fields, []) } : null, constraints: { advisoryOnly: true, trustedOutputAppliedServerSide: true, customerCreationAllowed: false } } };
+  }
   if (normalizedType === 'quote' || normalizedType === 'pi') {
     if (!requires(user, 'sales-quotes')) throw Object.assign(new Error('Quote/PI context access denied.'), { status: 403 });
     const quote = salesQuoteDetail(id, user);
@@ -2689,6 +2697,10 @@ function normalizeSearchResult(row) {
     evidence_json: parseJsonValue(row.evidence_json, {}),
     ai_qualification_status: aiQualification.status,
     ai_qualification_at: aiQualification.at,
+    ai_qualification_execution_log_id: aiQualification.executionLogId || null,
+    ai_qualification_provider: aiQualification.provider || null,
+    ai_qualification_model: aiQualification.model || null,
+    qualification_source: aiQualification.status === 'Qualified' ? 'Formal AI Qualification' : 'Initial Rules / Manual Data',
     source_url: evidence.source_url,
     reference_note: evidence.reference_note,
     recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
@@ -2696,6 +2708,13 @@ function normalizeSearchResult(row) {
 }
 
 function searchResultAiQualification(id) {
+  const direct = db.prepare("SELECT id,status,provider,model,completed_at,created_at,error_message FROM ai_execution_logs WHERE entity_type='search_result' AND entity_id=? AND action_name='lead-qualification' ORDER BY created_at DESC,id DESC LIMIT 1").get(String(id));
+  if (direct) {
+    if (direct.status === 'completed') return { status: 'Qualified', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model };
+    if (direct.status === 'failed') return { status: 'Failed', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model, error: direct.error_message };
+    if (direct.status === 'blocked') return { status: 'Blocked', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model, error: direct.error_message };
+    return { status: direct.status === 'running' ? 'Running' : 'Pending', at: direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model };
+  }
   const audits = db.prepare("SELECT metadata,created_at FROM audit_log WHERE entity_type='search_results' AND entity_id=? AND action IN ('create_search_result','update_search_result','manual_search_result_correction') ORDER BY created_at DESC,id DESC LIMIT 20").all(String(id));
   for (const item of audits) {
     const executionId = Number(parseJsonValue(item.metadata, {}).aiExecutionLogId || 0);
@@ -2706,7 +2725,7 @@ function searchResultAiQualification(id) {
     if (['failed','blocked'].includes(execution.status)) return { status: 'Failed', at: execution.completed_at || item.created_at };
     return { status: 'Pending', at: null };
   }
-  return { status: 'Pending', at: null };
+  return { status: 'Pending', at: null, executionLogId: null, provider: null, model: null };
 }
 
 function parseSearchResultEvidence(value) {
@@ -4503,17 +4522,6 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(existing.search_task_id));
       const values = searchResultFieldValues(body, existing, task);
       const status = body.status && searchResultStatuses.includes(body.status) ? body.status : existing.status;
-      const aiResult = await aiBusinessBrain.runAiAction({
-        moduleName: 'opportunity-intelligence',
-        actionName: 'search-result-qualification',
-        entityType: 'search_result',
-        entityId: existing.search_task_id,
-        contextType: 'search-result',
-        promptTemplateKey: 'v53.foundation.mock.v1',
-        userId: user.id,
-        user,
-        options: { provider: 'rules' }
-      });
       db.prepare(`UPDATE search_results SET company_name = ?, customer_type = ?, industry = ?, country = ?, city = ?,
         website = ?, contact_person = ?, email = ?, phone = ?, linkedin = ?, instagram = ?, company_size = ?,
         business_type = ?, purchase_potential = ?, opportunity_score = ?, qualification_reason = ?,
@@ -4521,15 +4529,43 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
         source_reference = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(
         values.company_name, values.customer_type, values.industry, values.country, values.city, values.website,
         values.contact_person, values.email, values.phone, values.linkedin, values.instagram, values.company_size,
-        values.business_type, values.purchase_potential, values.opportunity_score, values.qualification_reason,
-        values.opportunity_summary, values.why_customer_matters, values.recommended_next_action, values.source_type,
+        values.business_type, existing.purchase_potential, existing.opportunity_score, existing.qualification_reason,
+        existing.opportunity_summary, existing.why_customer_matters, existing.recommended_next_action, values.source_type,
         values.source_reference, status, id
       );
       if(existing.search_execution_id){const evidence={...parseJsonValue(existing.evidence_json,{}),manuallyModifiedFields:[...new Set([...(parseJsonValue(existing.evidence_json,{}).manuallyModifiedFields||[]),...Object.keys(body).filter(key=>!['status'].includes(key))])],lastModifiedBy:user.id,lastModifiedAt:new Date().toISOString()};db.prepare('UPDATE search_results SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence),id);}
-      audit(user.id, existing.search_execution_id?'manual_search_result_correction':'update_search_result', 'search_results', String(id), { aiExecutionLogId: aiResult.executionLogId, executionId:existing.search_execution_id||null });
-      return json(res, 200, { result: searchResultDetail(id), ai: { provider: aiResult.provider, executionLogId: aiResult.executionLogId, cost: aiResult.cost } });
+      audit(user.id, existing.search_execution_id?'manual_search_result_correction':'update_search_result', 'search_results', String(id), { executionId:existing.search_execution_id||null });
+      return json(res, 200, { result: searchResultDetail(id) });
     } catch (error) {
       return json(res, error.status || 400, { error: error.message });
+    }
+  },
+
+  async runSearchResultQualification(req,res,id){
+    const user=currentUser(req),capabilities=opportunityCapabilities(user);
+    if(!capabilities.canRunCustomerIntelligence)return json(res,user?403:401,{error:'AI Qualification is not allowed for this role.'});
+    const existing=searchResultDetail(id);
+    if(!existing)return json(res,404,{error:'Search Result not found.'});
+    if(existing.status==='converted')return json(res,409,{error:'Converted Search Results cannot run AI Qualification.'});
+    const active=db.prepare("SELECT id,status FROM ai_execution_logs WHERE entity_type='search_result' AND entity_id=? AND action_name='lead-qualification' AND status IN ('pending','running') ORDER BY id DESC LIMIT 1").get(String(id));
+    if(active)return json(res,409,{error:'AI Qualification is already running.',executionLogId:active.id,status:active.status});
+    audit(user.id,'start_ai_qualification','search_results',String(id));
+    try{
+      const aiResult=await aiBusinessBrain.runAiAction({moduleName:'opportunity-intelligence',actionName:'lead-qualification',entityType:'search_result',entityId:id,contextType:'search-result-qualification',promptTemplateKey:'v53.foundation.mock.v1',userId:user.id,user,options:{provider:'rules',trackLifecycle:true}});
+      if(aiResult.status!=='completed'){
+        audit(user.id,aiResult.status==='blocked'?'block_ai_qualification':'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:aiResult.executionLogId,status:aiResult.status});
+        return json(res,409,{error:aiResult.result?.reason||`AI Qualification ${aiResult.status}.`,result:searchResultDetail(id),ai:{status:aiResult.status,provider:aiResult.provider,model:aiResult.model,executionLogId:aiResult.executionLogId,cost:aiResult.cost}});
+      }
+      const task=normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id=?').get(existing.search_task_id));
+      const trustedInput={...existing};
+      for(const field of ['opportunity_score','purchase_potential','qualification_reason','opportunity_summary','why_customer_matters','recommended_next_action','ai_qualification_status','ai_qualification_at'])delete trustedInput[field];
+      const qualification=buildSearchResultQualification(trustedInput,task);
+      db.prepare("UPDATE search_results SET purchase_potential=?,opportunity_score=?,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action=?,status='reviewed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(qualification.purchase_potential,qualification.opportunity_score,qualification.qualification_reason,qualification.opportunity_summary,qualification.why_customer_matters,qualification.recommended_next_action,id);
+      audit(user.id,'ai_qualified_search_result','search_results',String(id),{aiExecutionLogId:aiResult.executionLogId,provider:aiResult.provider,model:aiResult.model});
+      return json(res,200,{result:searchResultDetail(id),ai:{status:'completed',provider:aiResult.provider,model:aiResult.model,executionLogId:aiResult.executionLogId,cost:aiResult.cost}});
+    }catch(error){
+      audit(user.id,'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:error.executionLogId||null,error:String(error.message).slice(0,300)});
+      return json(res,error.status||500,{error:error.message||'AI Qualification failed.',result:searchResultDetail(id),ai:{status:'failed',executionLogId:error.executionLogId||null}});
     }
   },
 
@@ -5296,6 +5332,8 @@ const server = createServer(async (req, res) => {
     const searchResultActionMatch = url.pathname.match(/^\/api\/search-results\/(\d+)\/(convert|discard)$/);
     if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'convert') return handlers.convertSearchResult(req, res, Number(searchResultActionMatch[1]));
     if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'discard') return handlers.discardSearchResult(req, res, Number(searchResultActionMatch[1]));
+    const searchResultQualificationMatch=url.pathname.match(/^\/api\/search-results\/(\d+)\/run-ai-qualification$/);
+    if(searchResultQualificationMatch&&req.method==='POST')return await handlers.runSearchResultQualification(req,res,Number(searchResultQualificationMatch[1]));
     const searchResultMatch = url.pathname.match(/^\/api\/search-results\/(\d+)$/);
     if (searchResultMatch && req.method === 'GET') return handlers.searchResultDetail(req, res, Number(searchResultMatch[1]));
     if (searchResultMatch && req.method === 'PUT') return await handlers.updateSearchResult(req, res, Number(searchResultMatch[1]));
