@@ -10,10 +10,10 @@ export default {
   },
   roles: { Admin: 'System Administrator', Owner: 'Business Administrator', 'Sales Admin': 'Business Administrator', Sales: 'Sales Representative', Designer: 'Solution Specialist', VA: 'Operations Specialist' },
   nav: {
-    newInquiry: '+ New Inquiry', salesCustomers: 'Customers', salesQuotes: 'Quotes', salesOrders: 'Orders', salesTasks: 'Tasks',
-    dashboard: 'Main Dashboard', products: 'Product Knowledge Center', libraryProducts: 'Products', libraryCategories: 'Categories', libraryTags: 'Tags', libraryAttributes: 'Attributes', libraryVariants: 'Variants', knowledgeDashboard: 'Knowledge Completeness', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
+    inquiries: 'Inquiries', newInquiry: '+ New Inquiry', myTasks: 'My Tasks', salesCustomers: 'Customers', salesQuotes: 'Quotes', salesQuotesPi: 'Quotes & PI', salesOrders: 'Sales Orders', salesTasks: 'Tasks',
+    dashboard: 'Dashboard', products: 'Product Knowledge Center', aiKnowledgeCenter: 'AI Knowledge Center', libraryProducts: 'Products', libraryCategories: 'Categories', libraryTags: 'Tags', libraryAttributes: 'Attributes', libraryVariants: 'Variants', knowledgeDashboard: 'Knowledge Completeness', opportunityIntelligence: 'Opportunity Intelligence', imports: 'Product Import Center', images: 'AI Image Center',
     proposals: 'Proposal Generator', cases: 'Project Case Library', crm: 'Customer Management', salesAi: 'AI Sales Script Center',
-    contentAi: 'AI Content Center', coreFoundation: 'Base Configuration', debugCenter: 'Debug Center', settings: 'System Settings'
+    contentAi: 'AI Content Center', coreFoundation: 'Base Configuration', debugCenter: 'System Debug Center', settings: 'System Settings', help: 'Help'
   },
   login: {
     storyEyebrow: 'Built for hospitality projects', storyTitle: 'Turn furniture expertise into winning restaurant projects.',
@@ -26,8 +26,10 @@ export default {
   },
   shell: {
     supportTitle: 'Need help?', supportBody: 'Visit the team guide', notifications: 'Notifications', allCaughtUp: 'You’re all caught up.',
-    accountMenu: 'Account menu', myProfile: 'My profile', signOut: 'Sign out', profileNext: 'Profile editing is ready for the next release.'
+    accountMenu: 'Account menu', myProfile: 'My profile', signOut: 'Sign out', profileNext: 'Profile editing is ready for the next release.',
+    helpTitle: 'Help', helpBody: 'Use the team guide for workspace navigation and operating procedures.', helpAccount: 'Account & access', helpAccountBody: 'Contact a System Administrator or Business Administrator when your responsibilities or access need to change.', helpWorkflow: 'Workflow guidance', helpWorkflowBody: 'Follow the approved human review and audit steps shown inside each available workflow.'
   },
+  inquiries: { title: 'Inquiries', subtitle: 'Review existing inquiries or capture a new customer request.', newAction: 'New Inquiry' },
   fields: {
     opportunity: 'Opportunity', stage: 'Stage', value: 'Value', owner: 'Owner', nextAction: 'Next action', product: 'Product',
     sku: 'SKU', productName: 'Product Name', category: 'Category', material: 'Material', size: 'Size', priceRange: 'Price Range',

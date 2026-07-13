@@ -28,6 +28,34 @@ test('five-group role-aware navigation retains unique Product Library and Knowle
   assert.match(app, /'knowledge-dashboard': renderKnowledgeDashboard/);
 });
 
+test('global shell keeps Inquiries and Customers as the only customer-facing sidebar entries', () => {
+  assert.equal((app.match(/route: 'inquiries'/g) || []).length, 1);
+  assert.equal((app.match(/route: 'sales-customers'/g) || []).length, 1);
+  assert.doesNotMatch(app, /route: 'new-inquiry'/);
+  assert.doesNotMatch(app, /route: 'crm'/);
+  assert.match(app, /routeAliases = Object\.freeze\(\{ crm: 'sales-customers', 'new-inquiry': 'inquiries' \}\)/);
+  assert.match(app, /route: 'inquiries', labelKey: 'nav\.inquiries'/);
+  assert.match(app, /route: 'sales-tasks', labelKey: 'nav\.myTasks'/);
+  assert.match(app, /data-action="start-new-inquiry"/);
+});
+
+test('single navigation configuration fixes group ordering and role visibility boundaries', () => {
+  assert.equal((app.match(/const navItems = \[/g) || []).length, 1);
+  const order = ['workspace','opportunities','products','commercial','system'].map(key => app.indexOf(`salesOs.groups.${key}`));
+  assert.ok(order.every((position, index) => position >= 0 && (index === 0 || position > order[index - 1])));
+  assert.match(app, /route: 'debug-center'.*allowedRoles: \['Admin'\]/);
+  assert.match(app, /route: 'content-ai'.*allowedRoles: BUSINESS_ADMINS/);
+  assert.match(app, /route: 'product-library-categories'.*allowedRoles: \[\.\.\.BUSINESS_ADMINS, 'VA'\]/);
+  assert.match(app, /route: 'help'.*allowedRoles: ALL_ROLES, requiredPermission: null/);
+});
+
+test('navigation uses delegated closest targeting and canonical routes survive refreshes', () => {
+  assert.match(app, /event\.target\.closest\('\[data-route\]'\)/);
+  assert.match(app, /window\.addEventListener\('hashchange', \(\) => state\.user && navigate\(location\.hash\.slice\(1\), true\)\)/);
+  assert.match(app, /route = resolveRoute\(route\)/);
+  assert.match(app, /#main-nav'\)\.replaceChildren/);
+});
+
 test('navigation configuration cannot be expanded by category data or repeated rendering', () => {
   assert.match(app, /Object\.freeze\(uniqueNavigationItems\(/);
   assert.match(app, /\.map\(item => Object\.freeze\(item\)\)/);

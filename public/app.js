@@ -73,30 +73,37 @@ const ALL_ROLES = Object.freeze(['Admin', 'Owner', 'Sales', 'Designer', 'VA']);
 const BUSINESS_ADMINS = Object.freeze(['Admin', 'Owner']);
 const navItems = [
   { groupKey: 'salesOs.groups.workspace', route: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', allowedRoles: ALL_ROLES, order: 10 },
-  { groupKey: 'salesOs.groups.workspace', route: 'new-inquiry', labelKey: 'nav.newInquiry', icon: 'plus', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 20 },
-  { groupKey: 'salesOs.groups.workspace', route: 'sales-tasks', labelKey: 'nav.salesTasks', icon: 'check', allowedRoles: ALL_ROLES, order: 30 },
+  { groupKey: 'salesOs.groups.workspace', route: 'sales-tasks', labelKey: 'nav.myTasks', icon: 'check', allowedRoles: ALL_ROLES, order: 20 },
   { groupKey: 'salesOs.groups.opportunities', route: 'opportunity-intelligence', labelKey: 'nav.opportunityIntelligence', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'VA'], order: 110 },
-  { groupKey: 'salesOs.groups.opportunities', route: 'sales-customers', labelKey: 'nav.salesCustomers', icon: 'users', allowedRoles: ALL_ROLES, order: 120 },
-  { groupKey: 'salesOs.groups.opportunities', route: 'crm', labelKey: 'nav.crm', icon: 'crm', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 130 },
+  { groupKey: 'salesOs.groups.opportunities', route: 'inquiries', labelKey: 'nav.inquiries', icon: 'mail', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], requiredPermission: 'new-inquiry', activeRoutes: ['inquiries', 'new-inquiry'], order: 120 },
+  { groupKey: 'salesOs.groups.opportunities', route: 'sales-customers', labelKey: 'nav.salesCustomers', icon: 'users', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], activeRoutes: ['sales-customers', 'crm'], order: 130 },
   { groupKey: 'salesOs.groups.products', route: 'product-library-products', labelKey: 'nav.libraryProducts', icon: 'products', allowedRoles: ALL_ROLES, order: 210 },
-  { groupKey: 'salesOs.groups.products', route: 'product-library-categories', labelKey: 'nav.libraryCategories', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 220 },
-  { groupKey: 'salesOs.groups.products', route: 'product-library-tags', labelKey: 'nav.libraryTags', icon: 'tag', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 230 },
-  { groupKey: 'salesOs.groups.products', route: 'product-library-attributes', labelKey: 'nav.libraryAttributes', icon: 'filter', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 240 },
-  { groupKey: 'salesOs.groups.products', route: 'product-library-variants', labelKey: 'nav.libraryVariants', icon: 'palette', allowedRoles: [...BUSINESS_ADMINS, 'Designer', 'VA'], order: 250 },
-  { groupKey: 'salesOs.groups.products', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard', icon: 'document', allowedRoles: ALL_ROLES, order: 260 },
-  { groupKey: 'salesOs.groups.products', route: 'imports', labelKey: 'nav.imports', icon: 'imports', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 270 },
-  { groupKey: 'salesOs.groups.commercial', route: 'images', labelKey: 'nav.images', icon: 'images', allowedRoles: [...BUSINESS_ADMINS, 'Designer'], order: 310 },
-  { groupKey: 'salesOs.groups.commercial', route: 'proposals', labelKey: 'nav.proposals', icon: 'proposals', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'Designer'], order: 320 },
-  { groupKey: 'salesOs.groups.commercial', route: 'sales-quotes', labelKey: 'nav.salesQuotes', icon: 'document', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 330 },
-  { groupKey: 'salesOs.groups.commercial', route: 'sales-orders', labelKey: 'nav.salesOrders', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 340 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-categories', labelKey: 'nav.libraryCategories', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 220 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-tags', labelKey: 'nav.libraryTags', icon: 'tag', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 230 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-attributes', labelKey: 'nav.libraryAttributes', icon: 'filter', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 240 },
+  { groupKey: 'salesOs.groups.products', route: 'product-library-variants', labelKey: 'nav.libraryVariants', icon: 'palette', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 250 },
+  { groupKey: 'salesOs.groups.products', route: 'imports', labelKey: 'nav.imports', icon: 'imports', allowedRoles: [...BUSINESS_ADMINS, 'VA'], order: 260 },
+  { groupKey: 'salesOs.groups.products', route: 'knowledge-dashboard', labelKey: 'nav.knowledgeDashboard', icon: 'document', allowedRoles: ALL_ROLES, order: 270 },
+  { groupKey: 'salesOs.groups.products', route: 'products', labelKey: 'nav.aiKnowledgeCenter', icon: 'document', allowedRoles: ALL_ROLES, order: 280 },
+  { groupKey: 'salesOs.groups.commercial', route: 'proposals', labelKey: 'nav.proposals', icon: 'proposals', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'Designer'], order: 310 },
+  { groupKey: 'salesOs.groups.commercial', route: 'sales-quotes', labelKey: 'nav.salesQuotesPi', icon: 'document', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 320 },
+  { groupKey: 'salesOs.groups.commercial', route: 'sales-orders', labelKey: 'nav.salesOrders', icon: 'briefcase', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 330 },
+  { groupKey: 'salesOs.groups.commercial', route: 'images', labelKey: 'nav.images', icon: 'images', allowedRoles: [...BUSINESS_ADMINS, 'Designer'], order: 340 },
   { groupKey: 'salesOs.groups.commercial', route: 'cases', labelKey: 'nav.cases', icon: 'cases', allowedRoles: [...BUSINESS_ADMINS, 'Sales', 'Designer'], order: 350 },
   { groupKey: 'salesOs.groups.commercial', route: 'sales-ai', labelKey: 'nav.salesAi', icon: 'sales-ai', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 360 },
-  { groupKey: 'salesOs.groups.commercial', route: 'content-ai', labelKey: 'nav.contentAi', icon: 'content-ai', allowedRoles: [...BUSINESS_ADMINS, 'Sales'], order: 370 },
+  { groupKey: 'salesOs.groups.commercial', route: 'content-ai', labelKey: 'nav.contentAi', icon: 'content-ai', allowedRoles: BUSINESS_ADMINS, order: 370 },
   { groupKey: 'salesOs.groups.system', route: 'core-foundation', labelKey: 'nav.coreFoundation', icon: 'settings', allowedRoles: ['Admin'], order: 410 },
   { groupKey: 'salesOs.groups.system', route: 'debug-center', labelKey: 'nav.debugCenter', icon: 'debug-center', allowedRoles: ['Admin'], order: 420 },
-  { groupKey: 'salesOs.groups.system', route: 'settings', labelKey: 'nav.settings', icon: 'settings', allowedRoles: BUSINESS_ADMINS, order: 430 }
-].map(item => ({ ...item, requiredPermission: item.route, featureAvailability: 'available', activeRoutes: [item.route] }));
+  { groupKey: 'salesOs.groups.system', route: 'settings', labelKey: 'nav.settings', icon: 'settings', allowedRoles: BUSINESS_ADMINS, order: 430 },
+  { groupKey: 'salesOs.groups.system', route: 'help', labelKey: 'nav.help', icon: 'help', allowedRoles: ALL_ROLES, requiredPermission: null, order: 440 }
+].map(item => ({
+  ...item,
+  requiredPermission: Object.hasOwn(item, 'requiredPermission') ? item.requiredPermission : item.route,
+  featureAvailability: 'available',
+  activeRoutes: item.activeRoutes || [item.route]
+}));
 const uniqueNavItems = Object.freeze(uniqueNavigationItems(navItems.map(item => ({ ...item, id: item.id || item.route }))).map(item => Object.freeze(item)));
+const routeAliases = Object.freeze({ crm: 'sales-customers', 'new-inquiry': 'inquiries' });
 
 const roleEmails = {
   Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
@@ -108,8 +115,13 @@ const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&a
 const money = value => new Intl.NumberFormat(localeForIntl(), { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(value || 0));
 const quoteMoney = (value, currency = 'USD') => formatLocalMoney(value, currency);
 const shortMoney = value => Number(value) >= 1_000_000 ? `$${(Number(value) / 1_000_000).toFixed(2)}M` : `$${Math.round(Number(value) / 1000)}K`;
-const titleForRoute = route => t(uniqueNavItems.find(item => item.route === route)?.labelKey || 'nav.dashboard');
-const allowed = route => state.user?.permissions.includes(route);
+const routeConfig = route => uniqueNavItems.find(item => item.route === route);
+const resolveRoute = route => routeAliases[route] || route;
+const titleForRoute = route => t(routeConfig(resolveRoute(route))?.labelKey || 'nav.dashboard');
+const allowed = route => {
+  const permission = routeConfig(resolveRoute(route))?.requiredPermission;
+  return permission == null || Boolean(state.user?.permissions.includes(permission));
+};
 const statusClass = status => String(status || '').toLowerCase().replaceAll('_', '-').replaceAll(' ', '-');
 const statusKey = status => ({
   'new lead': 'newLead', qualified: 'qualified', proposal: 'proposal', negotiation: 'negotiation', won: 'won', lost: 'lost',
@@ -154,7 +166,6 @@ function setupStaticIcons() {
   $('#search-icon').innerHTML = icon('search');
   $('#modal-search-icon').innerHTML = icon('search');
   $('#bell-icon').innerHTML = icon('bell');
-  $('#support-icon').innerHTML = icon('help');
   $('#language-icon').innerHTML = icon('globe');
   $('#language-chevron').innerHTML = icon('down');
 }
@@ -165,8 +176,8 @@ function updateStaticLocale() {
     '#login-proof-title': 'login.proofTitle', '#login-proof-body': 'login.proofBody', '#login-kicker': 'login.kicker',
     '#login-welcome': 'login.welcome', '#login-subtitle': 'login.subtitle', '#login-email-label': 'login.email',
     '#login-password-label': 'login.password', '#login-submit-label': 'login.signIn', '#login-demo-label': 'login.demoRoles',
-    '#login-demo-password': 'login.demoPassword', '#login-footer': 'login.privateWorkspace', '#support-title': 'shell.supportTitle',
-    '#support-body': 'shell.supportBody', '#global-search-label': 'common.searchWorkspace', '#command-navigate': 'common.navigate', '#command-open': 'common.open'
+    '#login-demo-password': 'login.demoPassword', '#login-footer': 'login.privateWorkspace',
+    '#global-search-label': 'common.searchWorkspace', '#command-navigate': 'common.navigate', '#command-open': 'common.open'
   };
   Object.entries(text).forEach(([selector, key]) => { const node = $(selector); if (node) node.textContent = t(key); });
   $('#command-query').placeholder = t('common.searchPlaceholder');
@@ -241,9 +252,9 @@ function enterApp() {
   if (preferredLocale) setLocale(preferredLocale);
   buildShell();
   startLocalizationObserver();
-  const requested = location.hash.slice(1);
-  const defaultRoute = state.user.role === 'Sales' ? 'new-inquiry' : 'dashboard';
-  navigate(requested && uniqueNavItems.some(item => item.route === requested) && allowed(requested) ? requested : defaultRoute, true);
+  const requested = resolveRoute(location.hash.slice(1));
+  const defaultRoute = state.user.role === 'Sales' ? 'inquiries' : 'dashboard';
+  navigate(requested && routeConfig(requested) && allowed(requested) ? requested : defaultRoute, true);
 }
 
 function exitApp() {
@@ -279,7 +290,8 @@ function closeSidebar() {
 }
 
 async function navigate(route, replace = false) {
-  const known = uniqueNavItems.some(item => item.route === route);
+  route = resolveRoute(route);
+  const known = Boolean(routeConfig(route));
   route = known ? route : 'dashboard';
   state.route = route;
   if (replace) history.replaceState(null, '', `#${route}`);
@@ -314,9 +326,9 @@ async function navigate(route, replace = false) {
     'content-ai': renderContentAI,
     'core-foundation': renderFoundation,
     'debug-center': renderDebugCenter,
-    settings: renderSettings
-    ,'new-inquiry': renderNewInquiry, 'sales-customers': renderSalesCustomers, 'sales-quotes': renderSalesQuotes,
-    'sales-orders': renderSalesOrders, 'sales-tasks': renderSalesTasks
+    settings: renderSettings,
+    inquiries: renderNewInquiry, 'sales-customers': renderSalesCustomers, 'sales-quotes': renderSalesQuotes,
+    'sales-orders': renderSalesOrders, 'sales-tasks': renderSalesTasks, help: renderHelp
   };
   try {
     await renderers[route]();
@@ -1917,7 +1929,7 @@ async function salesData(refresh = false) {
 async function renderNewInquiry() {
   const data = await salesData();
   if (state.salesInquiry) return renderSalesInquiryDetail(state.salesInquiry.id);
-  $('#page').innerHTML = `${pageHeader('+ New Inquiry', 'Paste the customer’s original message. AI handles classification and recommendations.')}
+  $('#page').innerHTML = `${pageHeader(t('inquiries.title'), t('inquiries.subtitle'), `<button type="button" class="button button--primary" data-action="start-new-inquiry">${icon('plus')} ${t('inquiries.newAction')}</button>`)}
     <form id="sales-inquiry-form" class="panel sales-simple-form">
       <fieldset class="customer-choice"><legend>Customer *</legend><label><input type="radio" name="customer_mode" value="existing" checked> Select Existing Customer</label><label><input type="radio" name="customer_mode" value="new"> Create New Customer</label></fieldset>
       <div data-customer-mode="existing" class="form-grid"><label class="field"><span>Customer *</span><select name="customer_id" required><option value="">Select customer</option>${data.customers.map(c=>`<option value="${c.id}">${esc(c.company_name)}${c.country?` · ${esc(c.country)}`:''}</option>`).join('')}</select></label>
@@ -2357,6 +2369,14 @@ async function renderSettings() {
     </section>`;
 }
 
+function renderHelp() {
+  $('#page').innerHTML = `${pageHeader(t('shell.helpTitle'), t('shell.helpBody'))}
+    <section class="settings-grid">
+      <article class="panel">${panelHeader(t('shell.helpAccount'))}<p>${t('shell.helpAccountBody')}</p></article>
+      <article class="panel">${panelHeader(t('shell.helpWorkflow'))}<p>${t('shell.helpWorkflowBody')}</p></article>
+    </section>`;
+}
+
 function renderRestricted(route) {
   $('#page').innerHTML = `<div class="restricted"><div class="restricted-card"><span class="metric-icon metric-icon--gold">${icon('lock')}</span><h1>${t('access.title')}</h1><p>${t('access.body', { role: t(`roles.${state.user.role}`), module: esc(titleForRoute(route)) })}</p><button class="button button--primary" data-route="dashboard">${t('access.back')}</button></div></div>`;
 }
@@ -2415,6 +2435,11 @@ async function handleAction(action, node) {
   if (action === 'logout') {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
     exitApp();
+  } else if (action === 'start-new-inquiry') {
+    state.salesInquiry = null;
+    const form = $('#sales-inquiry-form');
+    form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    form?.querySelector('select, input, textarea')?.focus({ preventScroll: true });
   } else if (action === 'sales-back') {
     state.salesInquiry = null; await renderNewInquiry();
   } else if (action === 'open-sales-inquiry') {

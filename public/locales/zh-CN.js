@@ -1,5 +1,5 @@
 export default {
-  meta: { name: '中文', htmlLang: 'zh-CN' },
+  meta: { name: '简体中文', htmlLang: 'zh-CN' },
   common: {
     productLibrary: '产品与知识',
     workspace: '工作台', growth: '业务增长', system: '系统', searchWorkspace: '搜索工作台', searchPlaceholder: '搜索页面、产品或商机…',
@@ -11,9 +11,9 @@ export default {
   roles: { Admin: '系统管理员', Owner: '企业管理员', 'Sales Admin': '企业管理员', Sales: '销售人员', Designer: '方案专员', VA: '运营专员' },
   nav: {
     libraryProducts: '产品', libraryCategories: '分类', libraryTags: '标签', libraryAttributes: '属性', libraryVariants: '变体',
-    newInquiry: '+ 新建询盘', salesCustomers: '客户', salesQuotes: '报价', salesOrders: '订单', salesTasks: '任务',
-    dashboard: '主工作台', products: '产品知识中心', knowledgeDashboard: '知识完整度', opportunityIntelligence: '商机智能', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
-    cases: '项目案例库', crm: '客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置', debugCenter: '调试中心', settings: '系统设置'
+    inquiries: '询盘', newInquiry: '+ 新建询盘', myTasks: '我的任务', salesCustomers: '客户', salesQuotes: '报价', salesQuotesPi: '报价与PI', salesOrders: '销售订单', salesTasks: '任务',
+    dashboard: '工作台', products: '产品知识中心', aiKnowledgeCenter: 'AI知识中心', knowledgeDashboard: '知识完整度', opportunityIntelligence: '商机智能', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
+    cases: '项目案例库', crm: '客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置', debugCenter: '系统调试中心', settings: '系统设置', help: '帮助'
   },
   login: {
     storyEyebrow: '专为餐饮项目打造', storyTitle: '把家具专业能力转化为更多餐饮项目订单。',
@@ -25,8 +25,10 @@ export default {
   },
   shell: {
     supportTitle: '需要帮助？', supportBody: '查看团队使用指南', notifications: '通知', allCaughtUp: '暂无新通知。', accountMenu: '账号菜单',
-    myProfile: '我的资料', signOut: '退出登录', profileNext: '个人资料编辑将在下一版本开放。'
+    myProfile: '我的资料', signOut: '退出登录', profileNext: '个人资料编辑将在下一版本开放。',
+    helpTitle: '帮助', helpBody: '通过团队使用指南了解工作台导航和操作规范。', helpAccount: '账号与权限', helpAccountBody: '当职责或访问权限需要调整时，请联系系统管理员或企业管理员。', helpWorkflow: '流程指南', helpWorkflowBody: '请遵循各可用流程中显示的人工审核与审计步骤。'
   },
+  inquiries: { title: '询盘', subtitle: '查看已有询盘，或录入新的客户需求。', newAction: '新建询盘' },
   fields: {
     opportunity: '商机', stage: '阶段', value: '金额', owner: '负责人', nextAction: '下一步行动', product: '产品', sku: '产品编号',
     productName: '产品名称', category: '产品分类', material: '材质', size: '尺寸', priceRange: '价格区间', leadTime: '交期', moq: '起订量', tags: '标签',

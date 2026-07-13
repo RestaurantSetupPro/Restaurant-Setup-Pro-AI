@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import en from '../public/locales/en.js';
 import zh from '../public/locales/zh-CN.js';
-import { formatLocalDateTime, formatLocalMoney, formatLocalPercent, formatLocalQuantity, setLocale, t, translateVisibleText } from '../public/i18n.js';
+import { formatLocalDateTime, formatLocalMoney, formatLocalPercent, formatLocalQuantity, getSupportedLocales, setLocale, t, translateVisibleText } from '../public/i18n.js';
 
 const appSource = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const i18nSource = readFileSync(new URL('../public/i18n.js', import.meta.url), 'utf8');
@@ -21,7 +21,7 @@ test('English and Chinese resources have identical key coverage', () => {
 });
 
 test('all requested navigation modules and product fields are localized', () => {
-  const navigation = ['dashboard', 'products', 'imports', 'images', 'proposals', 'cases', 'crm', 'salesAi', 'contentAi', 'coreFoundation', 'debugCenter', 'settings'];
+  const navigation = ['dashboard', 'myTasks', 'inquiries', 'salesCustomers', 'imports', 'aiKnowledgeCenter', 'images', 'proposals', 'salesQuotesPi', 'salesOrders', 'cases', 'salesAi', 'contentAi', 'coreFoundation', 'debugCenter', 'settings', 'help'];
   const fields = ['sku', 'productName', 'category', 'material', 'size', 'priceRange', 'leadTime', 'moq', 'tags', 'status'];
   for (const key of navigation) {
     assert.ok(en.nav[key]);
@@ -47,6 +47,24 @@ test('Sales OS menus, Opportunity tabs, actions, terms, statuses, and history ar
   for (const action of ['saveDraft','submitReview','approve','markReady','estimateExecution','runAi','markReviewed','convertCustomer','discard','viewSource']) assert.ok(en.salesOs.actions[action] && zh.salesOs.actions[action]);
   for (const status of ['needsReview','superseded','new','reviewed','running','paused','partiallyCompleted','failed','interrupted','aiQualified','aiPending','aiRunning','aiFailed','aiBlocked']) assert.ok(en.salesOs.status[status] && zh.salesOs.status[status]);
   assert.equal(new Set(Object.values(zh.roles)).size, 5);
+});
+
+test('five internal roles have the approved bilingual display names', () => {
+  assert.deepEqual(Object.fromEntries(['Admin','Owner','Sales','Designer','VA'].map(role => [role, en.roles[role]])), {
+    Admin: 'System Administrator', Owner: 'Business Administrator', Sales: 'Sales Representative', Designer: 'Solution Specialist', VA: 'Operations Specialist'
+  });
+  assert.deepEqual(Object.fromEntries(['Admin','Owner','Sales','Designer','VA'].map(role => [role, zh.roles[role]])), {
+    Admin: '系统管理员', Owner: '企业管理员', Sales: '销售人员', Designer: '方案专员', VA: '运营专员'
+  });
+});
+
+test('language selector exposes only English and Simplified Chinese once each', () => {
+  assert.deepEqual(getSupportedLocales(), [
+    { code: 'en', name: 'English' },
+    { code: 'zh-CN', name: '简体中文' }
+  ]);
+  assert.equal(new Set(getSupportedLocales().map(locale => locale.code)).size, 2);
+  assert.equal(new Set(getSupportedLocales().map(locale => locale.name)).size, 2);
 });
 
 test('missing keys are humanized and never exposed as internal translation paths', () => {

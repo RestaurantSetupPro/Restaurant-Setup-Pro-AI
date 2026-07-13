@@ -165,13 +165,6 @@ svg { display: block; }
 .nav-item svg { width: 17px; height: 17px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .nav-item span { min-width: 0; line-height: 1.25; overflow-wrap: anywhere; }
 .nav-item .nav-badge { min-width: 20px; height: 18px; margin-left: auto; padding: 0 5px; display: grid; place-items: center; color: #aed2c9; border-radius: 9px; background: rgba(255,255,255,.08); font-size: 9px; }
-.sidebar-support { margin: auto 4px 13px; padding: 12px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: rgba(255,255,255,.035); cursor: pointer; }
-.support-icon { width: 27px; height: 27px; display: grid; place-items: center; color: #c7ded9; border-radius: 7px; background: rgba(255,255,255,.07); }
-.support-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-.sidebar-support div { flex: 1; }
-.sidebar-support strong, .sidebar-support small { display: block; }
-.sidebar-support strong { color: #d7e5e1; font-size: 10px; }
-.sidebar-support small { margin-top: 2px; color: #749d93; font-size: 9px; }
 .sidebar-user { padding: 13px 9px 2px; display: flex; align-items: center; gap: 9px; border-top: 1px solid rgba(255,255,255,.08); }
 .avatar { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; color: #fff; border-radius: 9px; background: #b9824a; font-size: 10px; font-weight: 700; }
 .avatar--round { border-radius: 50%; }
