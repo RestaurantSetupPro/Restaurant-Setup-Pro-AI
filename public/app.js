@@ -95,8 +95,7 @@ const navItems = [
   { groupKey: 'common.system', route: 'debug-center', labelKey: 'nav.debugCenter' },
   { groupKey: 'common.system', route: 'settings', labelKey: 'nav.settings' }
 ];
-navItems.forEach(item => { item.id ||= item.route; });
-const uniqueNavItems = Object.freeze(uniqueNavigationItems(navItems));
+const uniqueNavItems = Object.freeze(uniqueNavigationItems(navItems.map(item => ({ ...item, id: item.id || item.route }))).map(item => Object.freeze(item)));
 
 const roleEmails = {
   Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', 'Sales Admin': 'salesadmin@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
@@ -249,16 +248,18 @@ function exitApp() {
 }
 
 function buildShell() {
-  let lastGroup = '';
   const salesRoutes = new Set(['new-inquiry','sales-customers','sales-quotes','sales-orders','sales-tasks']);
   const renderedItems = uniqueNavItems.filter(item => !item.hidden && allowed(item.route) && (state.user.role !== 'Sales' || salesRoutes.has(item.route) || item.route === 'knowledge-dashboard' || item.route.startsWith('product-library-')));
   const renderedIds = new Set(renderedItems.map(item => item.id));
   if (renderedIds.size !== renderedItems.length) throw new Error('Navigation menu IDs must be unique.');
-  $('#main-nav').innerHTML = renderedItems.map(item => {
+  let lastGroup = '';
+  const template=document.createElement('template');
+  template.innerHTML = renderedItems.map(item => {
     const group = item.groupKey !== lastGroup ? `<div class="nav-label">${t(item.groupKey)}</div>` : '';
     lastGroup = item.groupKey;
     return `${group}<a class="nav-item" href="#${item.route}" data-route="${item.route}">${icon(item.icon||item.route)}<span>${t(item.labelKey)}</span>${item.badge ? `<em class="nav-badge">${item.badge}</em>` : ''}</a>`;
   }).join('');
+  $('#main-nav').replaceChildren(template.content.cloneNode(true));
   $('#sidebar-user').innerHTML = `<span class="avatar">${esc(state.user.initials)}</span><span class="sidebar-user-copy"><strong>${esc(state.user.name)}</strong><small>${t(`roles.${state.user.role}`)} · ${t('common.workspace')}</small></span><button class="icon-button" data-action="profile" aria-label="${t('shell.accountMenu')}">${icon('dots')}</button>`;
   $('#profile-button').innerHTML = `<span class="avatar">${esc(state.user.initials)}</span>${icon('down')}`;
   $('#profile-menu').innerHTML = `<div class="profile-summary"><strong>${esc(state.user.name)}</strong><small>${esc(state.user.email)} · ${t(`roles.${state.user.role}`)}</small></div><button data-action="my-profile">${icon('users')} ${t('shell.myProfile')}</button><button data-action="logout">${icon('logout')} ${t('shell.signOut')}</button>`;
@@ -1172,9 +1173,10 @@ function renderLeadDetail(lead) {
   const aiLabel=aiStatus==='Qualified'?'AI Qualified':aiStatus==='Failed'?'AI Qualification Failed':aiStatus==='Blocked'?'AI Qualification Blocked':aiStatus==='Running'?'AI Qualification Running':'AI Qualification Pending';
   const history = [
     ['Lead Created', lead.created_at],
-    [aiLabel, lead.ai_qualification_at || lead.created_at],
-    [lead.status === 'reviewed' ? 'Reviewed' : `Status: ${lead.status || 'new'}`, lead.updated_at || lead.created_at]
+    [aiLabel, lead.ai_qualification_at || lead.created_at]
   ];
+  if(lead.review_audit_id)history.push([`Reviewed by ${lead.reviewed_by||'User'}`,lead.reviewed_at]);
+  else history.push([lead.status==='reviewed'?'Reviewed (legacy status)':`Status: ${lead.status||'new'}`,lead.updated_at||lead.created_at]);
   if (lead.status === 'converted') history.push(['Converted to Customer', lead.updated_at]);
   return `<article class="panel lead-detail-panel">
     <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>Lead Detail · ${esc(lead.task_name || 'Search Result')}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">Back to Lead Pool</button></div></div>
@@ -1189,7 +1191,7 @@ function renderLeadDetail(lead) {
       <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}" ${aiStatus==='Running'?'disabled':''}>${aiStatus==='Running'?'AI Running…':'Run AI'}</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
     </section>
     <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${esc(date || '')}</p></div></div>`).join('')}</div></article>
-    <div class="row-actions section-gap">${lead.status !== 'converted' ? `<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
+    <div class="row-actions section-gap">${lead.status !== 'converted' ? `${!['reviewed','discarded'].includes(lead.status)?`<button class="button" data-action="review-search-result" data-id="${lead.id}">Mark Reviewed</button>`:''}<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
   </article>`;
 }
 
@@ -1303,7 +1305,8 @@ function renderSearchTaskDetail(task) {
   const sourceTypes = ['Google Maps','Website','Instagram','Facebook','LinkedIn','Manual','Other'];
   const executionActions=task.status==='Ready'&&!execution?`<button class="button button--primary" data-action="estimate-execution" data-id="${task.id}">Estimate Execution</button>`:'';
   const lifecycle=execution?`${execution.status==='Awaiting Approval'&&isAdmin?`<button class="button button--primary" data-action="execution-approve" data-id="${execution.id}">Approve</button>`:''}${execution.status==='Approved'&&isAdmin?`<button class="button button--primary" data-action="execution-start" data-id="${execution.id}">Start</button>`:''}${['Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--primary" data-action="execution-resume" data-id="${execution.id}">Resume</button>`:''}${execution.status==='Running'&&isAdmin?`<button class="button" data-action="execution-pause" data-id="${execution.id}">Pause</button>`:''}${['Approved','Running','Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--risk" data-action="execution-stop" data-id="${execution.id}">Stop</button>`:''}`:'';
-  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<div class="metrics-grid compact-metrics"><div class="metric-card"><span>Connector</span><strong>${esc(execution.connector_key)}</strong><small>v${esc(execution.connector_version)}</small></div><div class="metric-card"><span>Phase</span><strong>${esc(execution.phase||'-')}</strong><small>${Number(execution.page_count)} pages</small></div><div class="metric-card"><span>Received</span><strong>${Number(execution.received_count)}</strong><small>${Number(execution.normalized_count)} normalized</small></div><div class="metric-card"><span>Inserted</span><strong>${Number(execution.inserted_count)}</strong><small>${Number(execution.duplicate_count)} duplicates</small></div><div class="metric-card"><span>Cost</span><strong>$${Number(execution.actual_cost_usd||0).toFixed(2)}</strong><small>$${Number(execution.approved_cost_limit_usd||0).toFixed(2)} approved</small></div></div><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${esc(execution.heartbeat_at||'-')}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
+  const displayPhase=execution?.status==='Completed'?'Complete':execution?.status==='Partially Completed'?'Partial Complete':execution?.phase||'-';
+  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<dl class="execution-stat-grid"><div><dt>Connector</dt><dd>${esc(execution.connector_key)}</dd></div><div><dt>Version</dt><dd>${esc(execution.connector_version)}</dd></div><div><dt>Phase</dt><dd>${esc(displayPhase)}</dd></div><div><dt>Pages</dt><dd>${Number(execution.page_count)}</dd></div><div><dt>Received</dt><dd>${Number(execution.received_count)}</dd></div><div><dt>Normalized</dt><dd>${Number(execution.normalized_count)}</dd></div><div><dt>Inserted</dt><dd>${Number(execution.inserted_count)}</dd></div><div><dt>Duplicates</dt><dd>${Number(execution.duplicate_count)}</dd></div><div><dt>Estimated Cost</dt><dd>$${Number(execution.estimated_cost_usd||0).toFixed(2)}</dd></div><div><dt>Approved Limit</dt><dd>$${Number(execution.approved_cost_limit_usd||0).toFixed(2)}</dd></div></dl><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${esc(execution.heartbeat_at||'-')}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
   return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}</div></div>
     <section class="detail-grid">
       <article><h3>Search Criteria</h3><div class="debug-list discovery-fields"><div><span>Customer Type</span><strong>${esc(task.customer_type || '—')}</strong></div><div><span>Location</span><strong>${esc(task.location || '—')}</strong></div><div><span>Company Size</span><strong>${esc(task.company_size || '—')}</strong></div><div><span>Priority</span><strong>${esc(task.priority || 'Medium')}</strong></div><div><span>Target Volume</span><strong>${Number(task.target_quantity || 0)} companies</strong></div></div></article>
@@ -1570,6 +1573,14 @@ async function runLeadAi(id) {
     toast(error.message||'AI Qualification failed.');
     await renderOpportunityIntelligence();
   }
+}
+
+async function reviewSearchResult(id){
+  const reviewed=await api(`/api/search-results/${id}/review`,{method:'POST',body:'{}'});
+  state.searchResultDetail=reviewed.result;
+  state.searchResultEdit=null;
+  toast('Lead marked Reviewed.');
+  await renderOpportunityIntelligence();
 }
 
 async function convertSearchResult(id) {
@@ -2505,6 +2516,8 @@ async function handleAction(action, node) {
     await discardSearchResult(node.dataset.id);
   } else if (action === 'run-lead-ai') {
     await runLeadAi(node.dataset.id);
+  } else if (action === 'review-search-result') {
+    await reviewSearchResult(node.dataset.id);
   } else if (action === 'show-score-detail') {
     const id = Number(node.dataset.id);
     state.customerScoreDetail = (state.opportunityIntelligence?.customers || []).find(customer => Number(customer.id) === id)

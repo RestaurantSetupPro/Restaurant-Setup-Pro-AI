@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createSearchConnectorRegistry } from '../src/services/search-execution.mjs';
+
+const app=readFileSync(resolve(import.meta.dirname,'../public/app.js'),'utf8');
 
 test('Workflow 1C registry exposes only the approved deterministic Rules/Mock connector', async () => {
   const registry=createSearchConnectorRegistry(),listed=registry.list();
@@ -23,4 +27,11 @@ test('Rules/Mock classifies retryable and terminal failures through the shared c
   await assert.rejects(()=>connector.executePage(request,null,{scenario:'auth'}),error=>!connector.classifyError(error).retryable);
   const recovered=await connector.executePage(request,null,{scenario:'429',attempt:1});
   assert.ok(recovered.records.length);
+});
+
+test('Search Execution UI renders every statistic in an independent definition-list node', () => {
+  for(const label of ['Connector','Version','Phase','Pages','Received','Normalized','Inserted','Duplicates','Estimated Cost','Approved Limit'])assert.match(app,new RegExp(`<dt>${label}</dt><dd>`));
+  assert.match(app,/execution\?\.status==='Completed'\?'Complete'/);
+  assert.doesNotMatch(app,/<small>v\$\{esc\(execution\.connector_version\)\}<\/small>/);
+  assert.doesNotMatch(app,/normalized<\/small>/);
 });

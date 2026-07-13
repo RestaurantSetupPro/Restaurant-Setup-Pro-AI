@@ -116,14 +116,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql', '027_v53_search_execution_foundation.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql', '027_v53_search_execution_foundation.sql', '028_search_execution_terminal_phase.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('027_v53_search_execution_foundation');
-      databaseDiagnostics.migration = migration?.version === '027_v53_search_execution_foundation';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('028_search_execution_terminal_phase');
+      databaseDiagnostics.migration = migration?.version === '028_search_execution_terminal_phase';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 027_v53_search_execution_foundation was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 028_search_execution_terminal_phase was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -138,7 +138,7 @@ function initializeDatabase() {
       ensureCustomerIntelligenceColumns();
       ensureSearchExecutionColumns();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '027_v53_search_execution_foundation';
+      databaseDiagnostics.migrationVersion = '028_search_execution_terminal_phase';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     seedCustomerDiscoveryProfiles();
@@ -2691,6 +2691,7 @@ function normalizeSearchResult(row) {
   if (!row) return null;
   const evidence = parseSearchResultEvidence(row.source_reference);
   const aiQualification = searchResultAiQualification(row.id);
+  const humanReview = searchResultHumanReview(row.id);
   return {
     ...row,
     opportunity_score: Number(row.opportunity_score || 0),
@@ -2700,11 +2701,22 @@ function normalizeSearchResult(row) {
     ai_qualification_execution_log_id: aiQualification.executionLogId || null,
     ai_qualification_provider: aiQualification.provider || null,
     ai_qualification_model: aiQualification.model || null,
+    reviewed_at: humanReview.at || null,
+    reviewed_by: humanReview.userName || null,
+    review_audit_id: humanReview.auditId || null,
     qualification_source: aiQualification.status === 'Qualified' ? 'Formal AI Qualification' : 'Initial Rules / Manual Data',
     source_url: evidence.source_url,
     reference_note: evidence.reference_note,
     recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
   };
+}
+
+function searchResultHumanReview(id) {
+  const review = db.prepare(`SELECT audit_log.id, audit_log.created_at, users.name AS user_name
+    FROM audit_log LEFT JOIN users ON users.id = audit_log.user_id
+    WHERE audit_log.entity_type='search_results' AND audit_log.entity_id=? AND audit_log.action='review_search_result'
+    ORDER BY audit_log.created_at DESC,audit_log.id DESC LIMIT 1`).get(String(id));
+  return review ? { auditId: review.id, at: review.created_at, userName: review.user_name } : {};
 }
 
 function searchResultAiQualification(id) {
@@ -4535,6 +4547,7 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       );
       if(existing.search_execution_id){const evidence={...parseJsonValue(existing.evidence_json,{}),manuallyModifiedFields:[...new Set([...(parseJsonValue(existing.evidence_json,{}).manuallyModifiedFields||[]),...Object.keys(body).filter(key=>!['status'].includes(key))])],lastModifiedBy:user.id,lastModifiedAt:new Date().toISOString()};db.prepare('UPDATE search_results SET evidence_json=? WHERE id=?').run(JSON.stringify(evidence),id);}
       audit(user.id, existing.search_execution_id?'manual_search_result_correction':'update_search_result', 'search_results', String(id), { executionId:existing.search_execution_id||null });
+      if(status==='reviewed'&&existing.status!=='reviewed')audit(user.id,'review_search_result','search_results',String(id),{previousStatus:existing.status});
       return json(res, 200, { result: searchResultDetail(id) });
     } catch (error) {
       return json(res, error.status || 400, { error: error.message });
@@ -4560,13 +4573,25 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       const trustedInput={...existing};
       for(const field of ['opportunity_score','purchase_potential','qualification_reason','opportunity_summary','why_customer_matters','recommended_next_action','ai_qualification_status','ai_qualification_at'])delete trustedInput[field];
       const qualification=buildSearchResultQualification(trustedInput,task);
-      db.prepare("UPDATE search_results SET purchase_potential=?,opportunity_score=?,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action=?,status='reviewed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(qualification.purchase_potential,qualification.opportunity_score,qualification.qualification_reason,qualification.opportunity_summary,qualification.why_customer_matters,qualification.recommended_next_action,id);
+      db.prepare("UPDATE search_results SET purchase_potential=?,opportunity_score=?,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(qualification.purchase_potential,qualification.opportunity_score,qualification.qualification_reason,qualification.opportunity_summary,qualification.why_customer_matters,qualification.recommended_next_action,id);
       audit(user.id,'ai_qualified_search_result','search_results',String(id),{aiExecutionLogId:aiResult.executionLogId,provider:aiResult.provider,model:aiResult.model});
       return json(res,200,{result:searchResultDetail(id),ai:{status:'completed',provider:aiResult.provider,model:aiResult.model,executionLogId:aiResult.executionLogId,cost:aiResult.cost}});
     }catch(error){
       audit(user.id,'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:error.executionLogId||null,error:String(error.message).slice(0,300)});
       return json(res,error.status||500,{error:error.message||'AI Qualification failed.',result:searchResultDetail(id),ai:{status:'failed',executionLogId:error.executionLogId||null}});
     }
+  },
+
+  reviewSearchResult(req,res,id){
+    const user=currentUser(req),capabilities=opportunityCapabilities(user),result=searchResultDetail(id);
+    if(!(capabilities.canRunCustomerIntelligence||capabilities.canImport))return json(res,user?403:401,{error:'Search Result review is not allowed for this role.'});
+    if(!result)return json(res,404,{error:'Search Result not found.'});
+    if(['converted','discarded'].includes(result.status))return json(res,409,{error:'Only active leads can be reviewed.'});
+    if(result.status!=='reviewed'){
+      db.prepare("UPDATE search_results SET status='reviewed',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);
+      audit(user.id,'review_search_result','search_results',String(id),{previousStatus:result.status});
+    }
+    return json(res,200,{result:searchResultDetail(id)});
   },
 
   convertSearchResult(req, res, id) {
@@ -5329,9 +5354,10 @@ const server = createServer(async (req, res) => {
     if (searchTaskActionMatch && req.method === 'POST') return await handlers.updateSearchTaskStatus(req, res, Number(searchTaskActionMatch[1]), searchTaskActionMatch[2]);
     const searchTaskMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)$/);
     if (searchTaskMatch && req.method === 'GET') return handlers.searchTaskDetail(req, res, Number(searchTaskMatch[1]));
-    const searchResultActionMatch = url.pathname.match(/^\/api\/search-results\/(\d+)\/(convert|discard)$/);
+    const searchResultActionMatch = url.pathname.match(/^\/api\/search-results\/(\d+)\/(convert|discard|review)$/);
     if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'convert') return handlers.convertSearchResult(req, res, Number(searchResultActionMatch[1]));
     if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'discard') return handlers.discardSearchResult(req, res, Number(searchResultActionMatch[1]));
+    if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'review') return handlers.reviewSearchResult(req, res, Number(searchResultActionMatch[1]));
     const searchResultQualificationMatch=url.pathname.match(/^\/api\/search-results\/(\d+)\/run-ai-qualification$/);
     if(searchResultQualificationMatch&&req.method==='POST')return await handlers.runSearchResultQualification(req,res,Number(searchResultQualificationMatch[1]));
     const searchResultMatch = url.pathname.match(/^\/api\/search-results\/(\d+)$/);

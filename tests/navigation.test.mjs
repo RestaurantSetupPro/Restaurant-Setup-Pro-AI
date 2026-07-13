@@ -22,5 +22,13 @@ test('Owner and Sales navigation contracts retain unique Product Library and Kno
   assert.equal((app.match(/route: 'knowledge-dashboard'/g) || []).length, 1);
   assert.match(app, /item\.route === 'knowledge-dashboard'/);
   assert.match(app, /renderedIds\.size !== renderedItems\.length/);
+  assert.match(app, /#main-nav'\)\.replaceChildren\(template\.content\.cloneNode\(true\)\)/);
   assert.match(app, /'knowledge-dashboard': renderKnowledgeDashboard/);
+});
+
+test('navigation configuration cannot be expanded by category data or repeated rendering', () => {
+  assert.match(app, /Object\.freeze\(uniqueNavigationItems\(/);
+  assert.match(app, /\.map\(item => Object\.freeze\(item\)\)/);
+  assert.doesNotMatch(app, /categories\.(map|forEach).*main-nav/s);
+  assert.deepEqual(productRoutes, ['product-library-products','product-library-categories','product-library-tags','product-library-attributes','product-library-variants']);
 });

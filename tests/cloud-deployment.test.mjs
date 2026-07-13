@@ -33,6 +33,7 @@ test('cloud deployment files are safe and complete', () => {
   const customerSourceMigration = read('database/migrations/024_v53_customer_source.sql');
   const knowledgeCenterMigration = read('database/migrations/025_v53_ai_knowledge_center_foundation.sql');
   const searchStrategyMigration = read('database/migrations/026_v53_search_strategy_human_approval.sql');
+  const terminalPhaseMigration = read('database/migrations/028_search_execution_terminal_phase.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -190,6 +191,8 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(app, /Archived \(\$\{archivedCount\}\)/);
   assert.match(app, /strategyKeywordTags/);
   assert.match(server, /026_v53_search_strategy_human_approval/);
+  assert.match(terminalPhaseMigration, /'Complete','Partial Complete'/);
+  assert.match(server, /028_search_execution_terminal_phase/);
 });
 
 test('health check validates the database and returns the required payload', () => {

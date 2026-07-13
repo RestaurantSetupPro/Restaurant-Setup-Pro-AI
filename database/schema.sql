@@ -697,7 +697,7 @@ CREATE TABLE IF NOT EXISTS search_executions (
   search_strategy_id INTEGER NOT NULL REFERENCES search_strategies(id) ON DELETE RESTRICT,
   connector_key TEXT NOT NULL, connector_version TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft','Awaiting Approval','Approved','Running','Paused','Completed','Partially Completed','Failed','Cancelled','Interrupted')),
-  phase TEXT CHECK (phase IS NULL OR phase IN ('Estimating','Fetching','Normalizing','Deduplicating','Persisting','Finalizing')),
+  phase TEXT CHECK (phase IS NULL OR phase IN ('Estimating','Fetching','Normalizing','Deduplicating','Persisting','Finalizing','Complete','Partial Complete','Failed','Cancelled','Paused')),
   request_snapshot_json TEXT NOT NULL DEFAULT '{}', limits_json TEXT NOT NULL DEFAULT '{}', estimate_json TEXT NOT NULL DEFAULT '{}',
   estimated_cost_usd REAL NOT NULL DEFAULT 0 CHECK (estimated_cost_usd >= 0),
   approved_cost_limit_usd REAL CHECK (approved_cost_limit_usd IS NULL OR approved_cost_limit_usd >= 0),

@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '027_v53_search_execution_foundation');
+  assert.equal(database.migrationVersion, '028_search_execution_terminal_phase');
   assert.ok(database.tables.includes('search_executions'));
   assert.ok(database.tables.includes('search_result_raw_payloads'));
   assert.equal(database.error, null);
@@ -714,15 +714,16 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{})).response.status,409);
   assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/approve`,sales,'POST',{})).response.status,403);
   assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/approve`,owner,'POST',{})).body.execution.status,'Approved');
-  const executed=await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{});assert.equal(executed.body.execution.status,'Completed');assert.ok(executed.body.execution.inserted_count>0);assert.ok(executed.body.execution.duplicate_count>0);
+  const executed=await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{});assert.equal(executed.response.status,200,executed.body.error);assert.equal(executed.body.execution.status,'Completed');assert.equal(executed.body.execution.phase,'Complete');assert.ok(executed.body.execution.inserted_count>0);assert.ok(executed.body.execution.duplicate_count>0);
   const connectorResults=await call(`/api/search-executions/${createdExecution.body.execution.id}/results`,sales);assert.ok(connectorResults.body.results.every(result=>result.evidence_json.connectorKey==='rules-mock'&&result.captured_at&&result.search_execution_id));
   const pendingLead=await call(`/api/search-results/${connectorResults.body.results[0].id}`,sales);assert.equal(pendingLead.body.result.ai_qualification_status,'Pending');assert.equal(pendingLead.body.result.ai_qualification_at,null);
   const safeLeadPayload=JSON.stringify(pendingLead.body);assert.doesNotMatch(safeLeadPayload,/payload_json|authorization|api_key|secret|token/i);assert.equal(pendingLead.body.result.evidence_json.connectorKey,'rules-mock');assert.equal(pendingLead.body.result.evidence_json.externalId,'mock-001');
   const customerCountBeforeQualification=(await call('/api/customers',owner)).body.customers.length;
   const concurrentQualification=await Promise.all([call(`/api/search-results/${pendingLead.body.result.id}/run-ai-qualification`,owner,'POST',{}),call(`/api/search-results/${pendingLead.body.result.id}/run-ai-qualification`,owner,'POST',{})]);
   assert.deepEqual(concurrentQualification.map(item=>item.response.status).sort(),[200,409]);
-  const qualifiedLead=await call(`/api/search-results/${pendingLead.body.result.id}`,owner);assert.equal(qualifiedLead.body.result.ai_qualification_status,'Qualified');assert.ok(qualifiedLead.body.result.ai_qualification_at);assert.equal(qualifiedLead.body.result.qualification_source,'Formal AI Qualification');assert.ok(qualifiedLead.body.result.ai_qualification_execution_log_id);
+  const qualifiedLead=await call(`/api/search-results/${pendingLead.body.result.id}`,owner);assert.equal(qualifiedLead.body.result.ai_qualification_status,'Qualified');assert.ok(qualifiedLead.body.result.ai_qualification_at);assert.equal(qualifiedLead.body.result.qualification_source,'Formal AI Qualification');assert.ok(qualifiedLead.body.result.ai_qualification_execution_log_id);assert.equal(qualifiedLead.body.result.status,'new');assert.equal(qualifiedLead.body.result.review_audit_id,null);
   assert.equal((await call('/api/customers',owner)).body.customers.length,customerCountBeforeQualification);
+  const reviewedLead=await call(`/api/search-results/${pendingLead.body.result.id}/review`,owner,'POST',{});assert.equal(reviewedLead.response.status,200,reviewedLead.body.error);assert.equal(reviewedLead.body.result.status,'reviewed');assert.ok(reviewedLead.body.result.review_audit_id);assert.equal(reviewedLead.body.result.reviewed_by,owner.body.user.name);assert.ok(reviewedLead.body.result.reviewed_at);
   const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
   assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
   assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
