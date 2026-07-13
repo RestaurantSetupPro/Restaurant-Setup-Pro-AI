@@ -100,6 +100,71 @@ The complete Node test suite passes. Syntax checks, health/readiness and Debug e
 - Rules/Mock fixtures prove the contract but are not real market data.
 - Real-provider cost categories and credential management are intentionally deferred.
 
+## Deployment and Future Connector Architecture
+
+### Production topology and verified deployment state
+
+The production source-of-truth topology is:
+
+`GitHub -> Render Web Service -> Supabase PostgreSQL -> Cloudflare R2`.
+
+The following separates repository evidence, public runtime evidence, and items that require authorized console access:
+
+| Item | Confirmed state | Evidence / required follow-up |
+| --- | --- | --- |
+| Render Web Service region | **Not verifiable from this repository or public response headers** | `render.yaml` does not declare a region. The Cloudflare `CF-RAY` edge suffix must not be treated as the Render origin region. Confirm the actual region in the Render service Settings page before a real Connector is approved. |
+| Supabase project region | **Not verifiable from this repository or public diagnostics** | No project reference or region is committed, correctly avoiding environment-specific credentials. Confirm the actual project region in Supabase Project Settings before a real Connector is approved. |
+| Production database engine | **PostgreSQL/Supabase, not SQLite** | `DATABASE_URL` selects PostgreSQL in the server; SQLite is the local fallback only. The inspected public Render diagnostic returned PostgreSQL-style `schema_migrations`. The formal production topology identifies the managed PostgreSQL provider as Supabase. |
+| GitHub-to-Render automatic deployment | **Configured, but current successful binding requires console verification** | `render.yaml` declares `autoDeploy: true`. A read-only check on 2026-07-12 of the service-name-derived Render endpoint reported migration `004_real_ai_image_generation`, not repository migration 027. This means a current automatic deployment cannot be certified from the public endpoint alone; verify the connected repository/branch, latest deploy commit and deploy status in Render. |
+| Render environment variables and secrets | **Blueprint plus dashboard-managed values** | Non-secret configuration may be declared in `render.yaml`. `DATABASE_URL` and `SEED_PASSWORD` use `sync: false`, so their values are supplied through Render environment/secret management and are not committed to Git. Future Connector credentials must follow the same rule. |
+
+The public diagnostic discrepancy is an operational verification item, not authorization to alter deployment settings or redeploy as part of Workflow 1C documentation work.
+
+### Server-side Connector network policy
+
+Future Google Maps, Apollo, overseas commercial-directory and overseas website Connectors must run from the Render backend. A browser used by a China-based team member communicates only with Restaurant AI Sales OS; it must not call those Provider APIs directly and must not require a per-computer VPN.
+
+The Connector transport contract must retain these modes:
+
+- `direct` — default and preferred. Render calls the overseas Provider directly.
+- `proxy` — reserved configuration option; not implemented now.
+- `relay` — reserved overseas relay option; not implemented now.
+- `disabled` — prevents Provider calls.
+
+`proxy` or an overseas `relay` may be considered only when measured Render-to-Provider connectivity is not sufficiently stable. They are not a default response to users being located in China. No proxy or relay was developed in Workflow 1C.
+
+### Credentials and secret handling
+
+Provider API keys, OAuth client secrets, proxy credentials and relay tokens may exist only in Render environment variables or an approved Render Secret Store. They must never be stored in Git, browser JavaScript, local browser storage, Search Strategy/Task/Execution records, raw payloads, Evidence, Debug responses or Audit metadata. Browser responses may expose only safe readiness booleans and non-sensitive connector metadata.
+
+### China compatibility boundary
+
+China compatibility must not reduce or remove Google Maps, Apollo or other approved overseas data sources. The compatibility scope is instead:
+
+- reliable access to the Restaurant AI Sales OS pages from China;
+- strong Windows and desktop-PC behavior;
+- UTF-8 and Chinese-language correctness;
+- locally served/versioned static assets where appropriate;
+- explicit network error classification and actionable messages;
+- an excellent PC experience across supported desktop widths.
+
+Provider selection remains a business, compliance, quality and cost decision. The geographic location of the browser user is not, by itself, a reason to shrink the overseas source catalog.
+
+### Gate before any real Connector
+
+Before development or activation of a real Connector, an authorized operator must test from the actual Render service region and record:
+
+1. DNS, TLS and outbound network reachability to the Provider;
+2. authentication and API-product permissions;
+3. quota, rate limits, pagination and timeout behavior;
+4. pricing, estimated cost, budget limits and approval behavior;
+5. Provider terms, data licensing, retention, privacy and regional compliance;
+6. error classification for DNS, TLS, timeout, 401/403, 429 and 5xx responses;
+7. whether `direct` is stable enough before considering `proxy` or `relay`;
+8. confirmation that credentials remain server-side and browser traffic contains no Provider secret.
+
+This section records architecture and deployment gates only. It does not implement Google Maps, Apollo, another real Connector, proxy, relay or Workflow 1D.
+
 ## Scope Confirmation
 
 No Google Maps, Apollo, Yellow Pages, Website Search, social connector, CSV connector or web scraping was implemented. Google Maps belongs to a separately approved future phase. Workflow 1D has not started. Lead Qualification, Product Matching, CRM, Quote, PI, Production, Shipping and After Sales were not upgraded by Workflow 1C.
