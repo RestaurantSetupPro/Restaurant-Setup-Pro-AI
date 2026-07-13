@@ -2147,6 +2147,15 @@ function buildAiContext({ contextType, entityType, entityId, user, options = {} 
       }
     };
   }
+  if (normalizedType === 'search-result') {
+    if (!requires(user, 'opportunity-intelligence')) throw Object.assign(new Error('Search Result context access denied.'), { status: 403 });
+    const task = db.prepare('SELECT id,task_name,target_customer,customer_type,industry,location,search_objective,keywords,filters,required_data_fields,status FROM search_tasks WHERE id=?').get(id);
+    if (!task) throw Object.assign(new Error('Search Task not found for AI context.'), { status: 404 });
+    const strategy = db.prepare("SELECT id,strategy_key,revision_no,status FROM search_strategies WHERE linked_search_task_id=? ORDER BY id DESC LIMIT 1").get(id) || null;
+    sourceReferences.push({ module: 'Opportunity Intelligence', table: 'search_tasks', id: task.id });
+    if (strategy) sourceReferences.push({ module: 'Search Strategy', table: 'search_strategies', id: strategy.id, revision: strategy.revision_no });
+    return { ...base, context: { task: { ...task, keywords: parseJsonValue(task.keywords, []), filters: parseJsonValue(task.filters, []), required_data_fields: parseJsonValue(task.required_data_fields, []) }, strategy, constraints: { advisoryOnly: true, customerCreationAllowed: false } } };
+  }
   if (normalizedType === 'quote' || normalizedType === 'pi') {
     if (!requires(user, 'sales-quotes')) throw Object.assign(new Error('Quote/PI context access denied.'), { status: 403 });
     const quote = salesQuoteDetail(id, user);
@@ -2673,14 +2682,31 @@ const searchResultStatuses = Object.freeze(['new', 'reviewed', 'converted', 'dis
 function normalizeSearchResult(row) {
   if (!row) return null;
   const evidence = parseSearchResultEvidence(row.source_reference);
+  const aiQualification = searchResultAiQualification(row.id);
   return {
     ...row,
     opportunity_score: Number(row.opportunity_score || 0),
     evidence_json: parseJsonValue(row.evidence_json, {}),
+    ai_qualification_status: aiQualification.status,
+    ai_qualification_at: aiQualification.at,
     source_url: evidence.source_url,
     reference_note: evidence.reference_note,
     recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
   };
+}
+
+function searchResultAiQualification(id) {
+  const audits = db.prepare("SELECT metadata,created_at FROM audit_log WHERE entity_type='search_results' AND entity_id=? AND action IN ('create_search_result','update_search_result','manual_search_result_correction') ORDER BY created_at DESC,id DESC LIMIT 20").all(String(id));
+  for (const item of audits) {
+    const executionId = Number(parseJsonValue(item.metadata, {}).aiExecutionLogId || 0);
+    if (!executionId) continue;
+    const execution = db.prepare('SELECT status,completed_at,created_at FROM ai_execution_logs WHERE id=?').get(executionId);
+    if (!execution) continue;
+    if (execution.status === 'completed') return { status: 'Qualified', at: execution.completed_at || item.created_at };
+    if (['failed','blocked'].includes(execution.status)) return { status: 'Failed', at: execution.completed_at || item.created_at };
+    return { status: 'Pending', at: null };
+  }
+  return { status: 'Pending', at: null };
 }
 
 function parseSearchResultEvidence(value) {
@@ -4433,8 +4459,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
         moduleName: 'opportunity-intelligence',
         actionName: 'search-result-qualification',
         entityType: 'search_task',
-        entityId: task.customer_discovery_request_id || taskId,
-        contextType: 'customer-discovery',
+        entityId: taskId,
+        contextType: 'search-result',
         promptTemplateKey: 'v53.foundation.mock.v1',
         userId: user.id,
         user,
@@ -4481,8 +4507,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
         moduleName: 'opportunity-intelligence',
         actionName: 'search-result-qualification',
         entityType: 'search_result',
-        entityId: task.customer_discovery_request_id || existing.search_task_id,
-        contextType: 'customer-discovery',
+        entityId: existing.search_task_id,
+        contextType: 'search-result',
         promptTemplateKey: 'v53.foundation.mock.v1',
         userId: user.id,
         user,

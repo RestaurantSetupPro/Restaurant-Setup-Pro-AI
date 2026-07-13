@@ -1150,34 +1150,40 @@ function customerTable(customers, capabilities, queue = false) {
 }
 
 function leadPoolTable(leads) {
-  return `<div class="table-scroll"><table class="data-table" id="opportunity-lead-table"><thead><tr>
+  const sourceLink=lead=>/^https?:\/\//i.test(String(lead.source_url||''))?`<a class="evidence-link" href="${esc(lead.source_url)}" target="_blank" rel="noopener noreferrer">View Source</a>`:`<span class="lead-muted">${esc(lead.reference_note||lead.website||'Not provided')}</span>`;
+  return `<div class="table-scroll lead-pool-scroll"><table class="data-table lead-pool-table" id="opportunity-lead-table"><colgroup><col class="lead-col"><col class="source-col"><col class="location-col"><col class="type-col"><col class="score-col"><col class="potential-col"><col class="recommendation-col"><col class="evidence-col"><col class="status-col"><col class="actions-col"></colgroup><thead><tr>
     <th>Lead</th><th>Source</th><th>Location</th><th>Customer Type</th><th>Score</th><th>Potential</th><th>AI Recommendation</th><th>Evidence</th><th>Status</th><th></th>
   </tr></thead><tbody>${leads.map(lead => `<tr data-search="${esc(`${lead.company_name || ''} ${lead.customer_type || ''} ${lead.country || ''} ${lead.city || ''} ${lead.source_type || ''} ${lead.status || ''}`.toLowerCase())}">
-    <td class="primary-cell"><strong>${esc(lead.company_name)}</strong><small>${esc(lead.task_name || 'Search Result Lead')}</small></td>
+    <td class="primary-cell lead-name-cell"><strong>${esc(lead.company_name)}</strong><small>${esc(lead.task_name || 'Search Result Lead')}</small></td>
     <td>${badge(lead.source_type || 'Manual')}</td><td>${esc([lead.country, lead.city].filter(Boolean).join(' / ') || '—')}</td><td>${esc(lead.customer_type || '—')}</td>
-    <td>${Number(lead.opportunity_score || 0)}</td><td>${esc(lead.purchase_potential || '—')}</td><td>${esc(lead.recommended_next_action || 'Review lead')}</td>
-    <td>${esc(lead.source_url || lead.website || lead.reference_note || 'Not provided')}</td><td>${badge(lead.status || 'reviewed')}</td>
-    <td><button class="button button--compact" data-action="view-search-result" data-id="${lead.id}">Open</button></td>
+    <td>${Number(lead.opportunity_score || 0)}</td><td>${esc(lead.purchase_potential || 'Unknown')}</td><td class="lead-recommendation">${esc(lead.recommended_next_action || 'Review lead')}</td>
+    <td class="lead-evidence-cell">${sourceLink(lead)}</td><td>${badge(lead.status || 'reviewed')}</td>
+    <td class="lead-actions-cell"><button class="button button--compact" data-action="view-search-result" data-id="${lead.id}">Open</button></td>
   </tr>`).join('') || '<tr><td colspan="10"><div class="empty-state">No leads yet. Create Search Results from Search Tasks first.</div></td></tr>'}</tbody></table></div>`;
 }
 
 function renderLeadDetail(lead) {
   if (!lead) return '';
   const contact = [lead.contact_person, lead.email, lead.phone, lead.linkedin, lead.instagram].filter(Boolean).join(' · ') || 'No contact information yet';
+  const evidence=lead.evidence_json||{},aiStatus=lead.ai_qualification_status||'Pending';
+  const sourceUrl=lead.source_url||evidence.sourceUrl||'';
+  const sourceLink=/^https?:\/\//i.test(String(sourceUrl))?`<a class="evidence-link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">View Source</a>`:'Not provided';
+  const websiteLink=/^https?:\/\//i.test(String(lead.website||''))?`<a class="detail-value-link" href="${esc(lead.website)}" target="_blank" rel="noopener noreferrer">${esc(lead.website)}</a>`:esc(lead.website||'Missing');
+  const aiLabel=aiStatus==='Qualified'?'AI Qualified':aiStatus==='Failed'?'AI Qualification Failed':'AI Qualification Pending';
   const history = [
     ['Lead Created', lead.created_at],
-    ['AI Qualified', lead.updated_at || lead.created_at],
-    [lead.status === 'reviewed' ? 'Reviewed' : `Status: ${lead.status || 'reviewed'}`, lead.updated_at || lead.created_at]
+    [aiLabel, lead.ai_qualification_at || lead.created_at],
+    [lead.status === 'reviewed' ? 'Reviewed' : `Status: ${lead.status || 'new'}`, lead.updated_at || lead.created_at]
   ];
   if (lead.status === 'converted') history.push(['Converted to Customer', lead.updated_at]);
   return `<article class="panel lead-detail-panel">
     <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>Lead Detail · ${esc(lead.task_name || 'Search Result')}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">Back to Lead Pool</button></div></div>
     <section class="detail-grid">
-      <article><h3>AI Summary</h3><p>${esc(lead.opportunity_summary || 'AI qualification summary is pending.')}</p><div class="debug-list"><div><span>Score</span><strong>${Number(lead.opportunity_score || 0)}</strong></div><div><span>Purchase Potential</span><strong>${esc(lead.purchase_potential || 'Unknown')}</strong></div></div></article>
-      <article><h3>Customer Evidence</h3><div class="debug-list"><div><span>Original Source</span><strong>${esc(lead.source_type || 'Manual')}</strong></div><div><span>Source URL</span><strong>${esc(lead.source_url || 'Not provided')}</strong></div><div><span>Reference Note</span><strong>${esc(lead.reference_note || '—')}</strong></div></div></article>
-      <article><h3>Website & Contact</h3><div class="debug-list"><div><span>Website</span><strong>${esc(lead.website || 'Missing')}</strong></div><div><span>Contact</span><strong>${esc(contact)}</strong></div></div></article>
+      <article><h3>AI Summary</h3>${badge(aiLabel)}<p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
+      <article><h3>Website & Contact</h3><dl class="lead-field-list"><div><dt>Website</dt><dd>${websiteLink}</dd></div><div><dt>Contact</dt><dd>${esc(contact)}</dd></div></dl></article>
       <article><h3>Product Matching</h3><p>${esc(lead.recommended_product_reason || 'Run qualification to prepare product direction.')}</p></article>
     </section>
+    <details class="source-evidence-card section-gap" open><summary>Source & Evidence</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>Connector Version</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||'—')}</dd></div><div><dt>External ID</dt><dd>${esc(lead.external_id||evidence.externalId||'—')}</dd></div><div><dt>Source URL</dt><dd>${sourceLink}</dd></div><div><dt>Captured Time</dt><dd>${esc(lead.captured_at||evidence.capturedTime||'—')}</dd></div><div><dt>Search Execution</dt><dd>${lead.search_execution_id?`#${Number(lead.search_execution_id)}`:'—'}</dd></div><div><dt>Normalization Version</dt><dd>${esc(lead.normalization_version||evidence.normalizationVersion||'—')}</dd></div><div><dt>Duplicate Status</dt><dd>${lead.duplicate_of_search_result_id?`Review candidate · Result #${Number(lead.duplicate_of_search_result_id)}`:'No duplicate detected'}</dd></div><div class="evidence-note-row"><dt>Reference Note</dt><dd>${esc(lead.reference_note||'—')}</dd></div></dl></details>
     <section class="detail-grid section-gap">
       <article><h3>AI Recommendation</h3><p>${esc(lead.recommended_next_action || 'Review the lead and decide whether to convert.')}</p><h3>Qualification Reason</h3><p>${esc(lead.qualification_reason || 'No qualification reason yet.')}</p></article>
       <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}">Run AI</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>

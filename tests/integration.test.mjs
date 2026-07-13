@@ -716,6 +716,11 @@ test('Workflow 1B enforces structured Search Strategy approval, revision, cost, 
   assert.equal((await call(`/api/search-executions/${createdExecution.body.execution.id}/approve`,owner,'POST',{})).body.execution.status,'Approved');
   const executed=await call(`/api/search-executions/${createdExecution.body.execution.id}/start`,owner,'POST',{});assert.equal(executed.body.execution.status,'Completed');assert.ok(executed.body.execution.inserted_count>0);assert.ok(executed.body.execution.duplicate_count>0);
   const connectorResults=await call(`/api/search-executions/${createdExecution.body.execution.id}/results`,sales);assert.ok(connectorResults.body.results.every(result=>result.evidence_json.connectorKey==='rules-mock'&&result.captured_at&&result.search_execution_id));
+  const pendingLead=await call(`/api/search-results/${connectorResults.body.results[0].id}`,sales);assert.equal(pendingLead.body.result.ai_qualification_status,'Pending');assert.equal(pendingLead.body.result.ai_qualification_at,null);
+  const safeLeadPayload=JSON.stringify(pendingLead.body);assert.doesNotMatch(safeLeadPayload,/payload_json|authorization|api_key|secret|token/i);assert.equal(pendingLead.body.result.evidence_json.connectorKey,'rules-mock');assert.equal(pendingLead.body.result.evidence_json.externalId,'mock-001');
+  const customerCountBeforeQualification=(await call('/api/customers',owner)).body.customers.length;
+  const qualifiedLead=await call(`/api/search-results/${pendingLead.body.result.id}`,owner,'PUT',pendingLead.body.result);assert.equal(qualifiedLead.response.status,200,qualifiedLead.body.error);assert.equal(qualifiedLead.body.result.ai_qualification_status,'Qualified');assert.ok(qualifiedLead.body.result.ai_qualification_at);
+  assert.equal((await call('/api/customers',owner)).body.customers.length,customerCountBeforeQualification);
   const revision=await call(`/api/search-strategies/${id}`,sales,'PUT',{title:'AI Restaurant Growth Search v2',strategy_data_json:{...approved.body.strategy.strategy_data_json,searchObjective:'Find multi-location restaurant groups planning expansion'}});
   assert.equal(revision.body.strategy.revision_no,2);assert.equal(revision.body.strategy.status,'Draft');
   assert.equal((await call(`/api/search-strategies/${id}`,owner)).body.strategy.status,'Approved');
@@ -1505,6 +1510,13 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Search Tasks/);
   assert.match(appJs, /Mark Ready/);
   assert.match(appJs, /Estimate Execution/);
+  assert.match(appJs, /AI Qualification Pending/);
+  assert.match(appJs, /aiStatus==='Qualified'\?'AI Qualified'/);
+  assert.match(appJs, /Source & Evidence/);
+  assert.match(appJs, /Connector Version/);
+  assert.match(appJs, /Normalization Version/);
+  assert.match(appJs, /Search Execution/);
+  assert.match(appJs, /View Source/);
   assert.match(appJs, /Recommended Data Fields/);
   assert.match(appJs, /Recommended Search Volume/);
   assert.match(appJs, /Update Customer Intelligence/);
@@ -1516,6 +1528,11 @@ test('V5.3 Opportunity Intelligence V2 creates AI customer discovery plans with 
   assert.match(appJs, /Customers CRM/);
   assert.match(appJs, /Add Search Result/);
   assert.match(appJs, /Save Search Result/);
+  const stylesCss=await fetch(`http://127.0.0.1:${port}/styles.css`).then(response=>response.text());
+  assert.match(stylesCss,/\.lead-pool-table\{[^}]*table-layout:fixed/);
+  assert.match(stylesCss,/\.lead-recommendation\{white-space:normal/);
+  assert.match(stylesCss,/\.lead-actions-cell\{position:sticky;right:0/);
+  assert.match(stylesCss,/@media\(max-width:900px\)\{\.lead-pool-table\{min-width:920px/);
   assert.match(appJs, /Contact Information \(Optional\)/);
   assert.match(appJs, /Customer Evidence/);
   assert.match(appJs, /AI Analysis Completed/);
