@@ -131,6 +131,9 @@ svg { display: block; }
 .button--risk { color: #9b4038; border-color: #e3b7b2; background: #fff7f6; }
 .button--risk:hover { color: #84342e; border-color: #d99f99; background: #fff0ee; }
 .button--risk:disabled { color: #8b6d69; border-color: #e5d8d6; background: #f8f5f4; cursor: not-allowed; opacity: .78; box-shadow: none; }
+.execution-panel{overflow:hidden}.execution-panel .metrics-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.execution-summary details{grid-column:1/-1;min-width:0}.execution-summary details p{overflow-wrap:anywhere;white-space:normal}.search-task-detail .row-actions{flex-wrap:wrap}
+@media(max-width:1440px){.execution-panel .metrics-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1280px){.execution-panel .metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.search-task-detail .detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .form-error { min-height: 0; margin-top: -8px; color: var(--red); font-size: 12px; }
 .form-error:not(:empty) { padding: 9px 11px; border-radius: 7px; background: var(--red-soft); }

@@ -1279,7 +1279,7 @@ function searchTaskRows(tasks) {
   return tasks.map(task => `<tr><td class="primary-cell"><strong>${esc(task.task_name)}</strong><small>Target: ${esc(task.target_customer || task.customer_type || '—')}</small></td>
     <td>${esc(task.customer_type || '—')}</td><td>${esc(task.location || '—')}</td><td>${esc(task.company_size || '—')}</td><td>${Number(task.target_quantity || 0)} companies</td>
     <td>${badge(task.priority || 'Medium')}</td><td>${badge(task.status || 'Draft')}</td><td>${esc(task.created_at || '')}</td>
-    <td><div class="row-actions"><button class="button button--compact" data-action="view-search-task" data-id="${task.id}">View</button>${task.status === 'Draft' ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">Start Search</button>` : ''}<button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">Cancel</button></div></td></tr>`).join('');
+    <td><div class="row-actions"><button class="button button--compact" data-action="view-search-task" data-id="${task.id}">View</button>${task.status === 'Draft' && ['Admin','Owner'].includes(state.user?.role) ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}<button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">Cancel</button></div></td></tr>`).join('');
 }
 
 function renderSearchTaskDetail(task) {
@@ -1288,19 +1288,24 @@ function renderSearchTaskDetail(task) {
   const results = task.search_results || [];
   const summary = task.search_result_summary || { total: results.length };
   const editing = state.searchResultEdit || null;
+  const executions=task.executions||[],execution=executions[0]||null,isAdmin=['Admin','Owner'].includes(state.user?.role);
   const resultRows = results.map(result => `<tr><td class="primary-cell"><strong>${esc(result.company_name)}</strong><small>${esc(result.website || result.email || 'No website/contact yet')}</small></td>
-    <td>${esc(result.customer_type || '-')}</td><td>${esc([result.city, result.country].filter(Boolean).join(', ') || '-')}</td><td>${Number(result.opportunity_score || 0)}</td><td>${esc(result.purchase_potential || '-')}</td><td>${badge(result.status || 'new')}</td>
+    <td>${esc(result.customer_type || '-')}<small>${badge(result.connector_key||result.source_type||'Manual')}</small></td><td>${esc([result.city, result.country].filter(Boolean).join(', ') || '-')}</td><td>${Number(result.opportunity_score || 0)}</td><td>${esc(result.purchase_potential || '-')}</td><td>${badge(result.status || 'new')}</td>
     <td><div class="row-actions"><button class="button button--compact button--primary" data-action="view-search-result" data-id="${result.id}">Open</button><button class="button button--compact" data-action="edit-search-result" data-id="${result.id}">Edit</button>${result.status !== 'converted' ? `<button class="button button--compact" data-action="discard-search-result" data-id="${result.id}">Discard</button>` : ''}</div></td></tr>`).join('');
   const detail = state.searchResultDetail ? `<article class="panel soft-panel"><div class="panel-header"><div class="panel-title"><h3>${esc(state.searchResultDetail.company_name)}</h3><p>${esc(state.searchResultDetail.opportunity_summary || '')}</p></div><div class="row-actions">${badge('AI Analysis Completed')}${badge(state.searchResultDetail.status)}</div></div><div class="debug-list"><div><span>Why this customer matters</span><strong>${esc(state.searchResultDetail.why_customer_matters || '-')}</strong></div><div><span>Recommended products</span><strong>${esc(state.searchResultDetail.recommended_product_reason || '-')}</strong></div><div><span>Recommended next action</span><strong>${esc(state.searchResultDetail.recommended_next_action || '-')}</strong></div><div><span>Qualification reason</span><strong>${esc(state.searchResultDetail.qualification_reason || '-')}</strong></div><div><span>Source URL</span><strong>${esc(state.searchResultDetail.source_url || '-')}</strong></div><div><span>Reference Note</span><strong>${esc(state.searchResultDetail.reference_note || '-')}</strong></div></div></article>` : '';
   const value = name => esc(editing?.[name] || '');
   const sourceTypes = ['Google Maps','Website','Instagram','Facebook','LinkedIn','Manual','Other'];
-  return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft' ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Start Search</button>` : ''}</div></div>
+  const executionActions=task.status==='Ready'&&!execution?`<button class="button button--primary" data-action="estimate-execution" data-id="${task.id}">Estimate Execution</button>`:'';
+  const lifecycle=execution?`${execution.status==='Awaiting Approval'&&isAdmin?`<button class="button button--primary" data-action="execution-approve" data-id="${execution.id}">Approve</button>`:''}${execution.status==='Approved'&&isAdmin?`<button class="button button--primary" data-action="execution-start" data-id="${execution.id}">Start</button>`:''}${['Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--primary" data-action="execution-resume" data-id="${execution.id}">Resume</button>`:''}${execution.status==='Running'&&isAdmin?`<button class="button" data-action="execution-pause" data-id="${execution.id}">Pause</button>`:''}${['Approved','Running','Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--risk" data-action="execution-stop" data-id="${execution.id}">Stop</button>`:''}`:'';
+  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<div class="metrics-grid compact-metrics"><div class="metric-card"><span>Connector</span><strong>${esc(execution.connector_key)}</strong><small>v${esc(execution.connector_version)}</small></div><div class="metric-card"><span>Phase</span><strong>${esc(execution.phase||'-')}</strong><small>${Number(execution.page_count)} pages</small></div><div class="metric-card"><span>Received</span><strong>${Number(execution.received_count)}</strong><small>${Number(execution.normalized_count)} normalized</small></div><div class="metric-card"><span>Inserted</span><strong>${Number(execution.inserted_count)}</strong><small>${Number(execution.duplicate_count)} duplicates</small></div><div class="metric-card"><span>Cost</span><strong>$${Number(execution.actual_cost_usd||0).toFixed(2)}</strong><small>$${Number(execution.approved_cost_limit_usd||0).toFixed(2)} approved</small></div></div><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${esc(execution.heartbeat_at||'-')}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
+  return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}</div></div>
     <section class="detail-grid">
       <article><h3>Search Criteria</h3><div class="debug-list discovery-fields"><div><span>Customer Type</span><strong>${esc(task.customer_type || '—')}</strong></div><div><span>Location</span><strong>${esc(task.location || '—')}</strong></div><div><span>Company Size</span><strong>${esc(task.company_size || '—')}</strong></div><div><span>Priority</span><strong>${esc(task.priority || 'Medium')}</strong></div><div><span>Target Volume</span><strong>${Number(task.target_quantity || 0)} companies</strong></div></div></article>
       <article><h3>Keywords</h3><ul class="compact-list">${list(task.keywords)}</ul></article>
       <article><h3>Required Data Fields</h3><ul class="compact-list">${list(task.required_data_fields)}</ul></article>
       <article><h3>Filters</h3><ul class="compact-list">${list(task.filters)}</ul></article>
     </section>
+    ${executionPanel}
     <section class="section-gap">${panelHeader('Search Results', 'Store manually discovered leads before they enter the Lead Pool')}
       <div class="metrics-grid compact-metrics"><div class="metric-card"><span>Total Results</span><strong>${Number(summary.total || 0)}</strong><small>Stored candidates</small></div><div class="metric-card"><span>Converted</span><strong>${Number(summary.converted || 0)}</strong><small>Moved to Customers CRM</small></div><div class="metric-card"><span>Lead Pool</span><strong>${Number((summary.new || 0) + (summary.reviewed || 0))}</strong><small>Open leads</small></div></div>
       ${detail}
@@ -1491,17 +1496,21 @@ async function searchStrategyAction(id,action,body={}){const result=await api(`/
 function openStrategyArchiveConfirmation(id){const modal=document.createElement('div');modal.className='modal-backdrop';modal.id='strategy-archive-modal';modal.innerHTML=`<div class="command-modal strategy-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="strategy-archive-title"><div class="strategy-confirm-body"><span class="strategy-risk-mark">${icon('document')}</span><div><h2 id="strategy-archive-title">Archive Search Strategy?</h2><p>This action will not delete the record. It will archive the Strategy and preserve its complete history.</p></div></div><div class="strategy-confirm-actions"><button class="button" data-action="strategy-archive-cancel">Cancel</button><button class="button button--risk" data-action="strategy-archive-confirm" data-id="${id}">Archive Strategy</button></div></div>`;document.body.append(modal)}
 
 async function viewSearchTask(id) {
-  const result = await api(`/api/search-tasks/${id}`);
+  const [result,executionData] = await Promise.all([api(`/api/search-tasks/${id}`),api(`/api/search-tasks/${id}/executions`)]);
   state.searchTaskDetail = result.task;
+  state.searchTaskDetail.executions=executionData.executions||[];
   await renderOpportunityIntelligence();
 }
 
 async function startSearchTask(id) {
-  const result = await api(`/api/search-tasks/${id}/ready`, { method: 'POST', body: '{}' });
+  const result = await api(`/api/search-tasks/${id}/ready`, { method: 'POST', body: JSON.stringify({connectorKey:'rules-mock'}) });
   state.searchTaskDetail = result.task;
   toast('Search Task marked Ready.');
   await renderOpportunityIntelligence();
 }
+
+async function estimateExecution(taskId){await api(`/api/search-tasks/${taskId}/estimate-execution`,{method:'POST',body:JSON.stringify({connectorKey:'rules-mock'})});const created=await api(`/api/search-tasks/${taskId}/create-execution`,{method:'POST',body:JSON.stringify({connectorKey:'rules-mock'})});toast('Zero-cost execution estimate created. Approval is still required.');await viewSearchTask(taskId);return created;}
+async function executionAction(id,action){await api(`/api/search-executions/${id}/${action}`,{method:'POST',body:'{}'});toast(`Execution ${action} completed.`);await viewSearchTask(state.searchTaskDetail.id);}
 
 async function submitSearchResult(event) {
   event.preventDefault();
@@ -2451,6 +2460,10 @@ async function handleAction(action, node) {
     await viewSearchTask(node.dataset.id);
   } else if (action === 'start-search-task') {
     await startSearchTask(node.dataset.id);
+  } else if(action==='estimate-execution'){
+    await estimateExecution(node.dataset.id);
+  } else if(action.startsWith('execution-')){
+    await executionAction(node.dataset.id,action.replace('execution-',''));
   } else if (action === 'back-search-tasks') {
     state.searchTaskDetail = null;
     state.searchResultDetail = null;
@@ -2462,7 +2475,7 @@ async function handleAction(action, node) {
     state.opportunityView = 'lead-pool';
     await renderOpportunityIntelligence();
   } else if (action === 'cancel-search-task') {
-    toast('Cancel is reserved for the future execution workflow. This MVP supports Draft to Ready only.');
+    toast('Use Stop inside the controlled Search Execution panel.');
   } else if (action === 'view-search-result') {
     await viewSearchResult(node.dataset.id);
   } else if (action === 'edit-search-result') {
