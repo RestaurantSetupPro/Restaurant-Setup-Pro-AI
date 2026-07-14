@@ -56,7 +56,7 @@ test('health check and application shell are available', async () => {
   const database = await fetch(`http://127.0.0.1:${port}/api/debug/db`).then(response => response.json());
   assert.equal(database.connected, true);
   assert.equal(database.migration, true);
-  assert.equal(database.migrationVersion, '028_search_execution_terminal_phase');
+  assert.equal(database.migrationVersion, '029_product_foundation_correction');
   assert.ok(database.tables.includes('search_executions'));
   assert.ok(database.tables.includes('search_result_raw_payloads'));
   assert.equal(database.error, null);
@@ -1822,7 +1822,7 @@ test('Module 08A builds variants, configurable attributes, product relationships
   const stainlessVariant=await addVariant(stainlessBase,{variant_name:'600 mm Base',variant_sku:'M08-STAINLESS-600',dimensions:'600 x 720 mm',reference_price:85,status:'Active'});
   await fetch(`http://127.0.0.1:${port}/api/products/${stainlessBase.id}/foundation`,{method:'PUT',headers:{Cookie:admin.cookie,'Content-Type':'application/json'},body:JSON.stringify({attribute_values:[{attribute_id:tableBaseAttribute.attribute.id,value:'Brushed Stainless'},{attribute_id:tableBaseAttribute.attribute.id,variant_id:stainlessVariant.id,value:'Black Powder Coat'}]})});
   const stainlessDetail=await fetch(`http://127.0.0.1:${port}/api/products/${stainlessBase.id}`,{headers:{Cookie:admin.cookie}}).then(response=>response.json());
-  assert.ok(stainlessDetail.foundation.attributeDefinitions.some(attribute=>attribute.code==='m08-base-finish'));
+  assert.ok(stainlessDetail.foundation.attributeDefinitions.some(attribute=>attribute.code==='base_finish'));
   assert.ok(!stainlessDetail.foundation.attributeDefinitions.some(attribute=>attribute.code==='m08-thickness'));
   assert.equal(stainlessDetail.foundation.attributeValues.find(value=>value.variant_id===stainlessVariant.id).value,'Black Powder Coat');
   for(const [categoryName,expectedCode] of [['Dining Chair','PIM-DINING-CHAIR-FRAME-MATERIAL'],['Table Top','PIM-TABLE-TOP-SHAPE'],['Table Base','PIM-TABLE-BASE-BASE-TYPE'],['Kitchen Equipment','PIM-KITCHEN-EQUIPMENT-VOLTAGE'],['Tableware','PIM-TABLEWARE-DIAMETER'],['Lighting','PIM-LIGHTING-WATTAGE']]){
@@ -1845,6 +1845,29 @@ test('Module 08A builds variants, configurable attributes, product relationships
   for(const contract of ['data-submit-intent="draft"','data-submit-intent="create"','Save Draft','Create Product','Product created successfully.','Please complete the highlighted required fields'])assert.match(uiSource,new RegExp(contract));
   const styles=await fetch(`http://127.0.0.1:${port}/styles.css`).then(response=>response.text());
   assert.match(styles,/\.product-modal-actions\{position:sticky/);
+});
+
+test('Product Foundation Correction enforces bilingual attributes, category contracts, variant axes, inheritance, and role-safe writes',async()=>{
+  const [admin,designer,va,sales]=await Promise.all(['admin@rspro.ai','designer@rspro.ai','va@rspro.ai','sales@rspro.ai'].map(login)),headers=session=>({Cookie:session.cookie,'Content-Type':'application/json'});
+  const categoryResponse=await fetch(`http://127.0.0.1:${port}/api/product-categories`,{method:'POST',headers:headers(admin),body:JSON.stringify({name:'Foundation Correction Test',slug:`foundation-correction-${Date.now()}`})}),category=(await categoryResponse.json()).category;
+  assert.equal(categoryResponse.status,201);
+  const definitions=[];
+  for(const [name_en,name_zh,type,options] of [['Frame Finish','框架饰面','Select',['Black','Brass']],['Seat Width','座宽','Number',[]],['Upholstery Color','软包颜色','Color',[]],['Package Dimension','包装尺寸','Dimension',[]]]){
+    const response=await fetch(`http://127.0.0.1:${port}/api/product-attributes`,{method:'POST',headers:headers(admin),body:JSON.stringify({name_en,name_zh,data_type:type,category_ids:[category.id],options})}),result=await response.json();assert.equal(response.status,201,result.error);definitions.push(result.attribute);
+  }
+  assert.equal(definitions[0].code,'frame_finish');assert.equal(definitions[0].name_zh,'框架饰面');
+  const duplicate=await fetch(`http://127.0.0.1:${port}/api/product-attributes`,{method:'POST',headers:headers(admin),body:JSON.stringify({name_en:'Frame Finish',name_zh:'重复饰面',data_type:'Text',category_ids:[category.id]})});assert.equal(duplicate.status,409);
+  const configured=await fetch(`http://127.0.0.1:${port}/api/product-categories/${category.id}/attributes`,{method:'PUT',headers:headers(va),body:JSON.stringify({attributes:definitions.map((attribute,index)=>({attribute_id:attribute.id,required:index===0,filterable:true,show_on_product:true,show_on_quote:true,show_on_pi:index<2,internal_only:false,can_be_variant_axis:true,sort_order:index,default_unit:index===1?'mm':null}))})});assert.equal(configured.status,200);
+  const productResponse=await fetch(`http://127.0.0.1:${port}/api/products`,{method:'POST',headers:headers(va),body:JSON.stringify({category_id:category.id,sku:`PFC-${Date.now()}`,name:'Contract Chair',materials:'Steel',supplier_cost:999,tag_ids:[]})}),created=await productResponse.json();assert.equal(productResponse.status,201,created.error);assert.equal('supplier_cost' in created.product,false);
+  const designerUpdate=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`,{method:'PUT',headers:headers(designer),body:JSON.stringify({category_id:category.id,name:'Contract Chair',materials:'Steel',supplier_cost:777,tag_ids:[]})});assert.equal(designerUpdate.status,200);
+  const salesWrite=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`,{method:'PUT',headers:headers(sales),body:JSON.stringify({category_id:category.id,name:'Sales must not edit',tag_ids:[]})});assert.equal(salesWrite.status,403);
+  const foundation=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/foundation`,{method:'PUT',headers:headers(designer),body:JSON.stringify({attribute_values:[{attribute_id:definitions[0].id,value:'Black'}],variant_axis_attribute_ids:definitions.map(attribute=>attribute.id)})});assert.equal(foundation.status,200);
+  const variantResponse=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}/variants`,{method:'POST',headers:headers(designer),body:JSON.stringify({variant_name:'Black / 520',variant_sku:`PFC-V-${Date.now()}`,supplier_cost:888,option_values:[{attribute_id:definitions[0].id,value:'Black'},{attribute_id:definitions[1].id,value:'520'}]})}),variant=await variantResponse.json();assert.equal(variantResponse.status,201,variant.error);assert.equal('supplier_cost' in variant.variant,false);
+  const detail=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`,{headers:{Cookie:admin.cookie}}).then(response=>response.json());assert.equal(detail.foundation.variantAxes.length,4);assert.ok(detail.foundation.variantAxisWarning);assert.equal(detail.foundation.variants[0].option_values.length,2);assert.equal(detail.foundation.variants[0].effective_values.material,'Steel');assert.equal(detail.foundation.variants[0].supplier_cost,null);
+  const locked=await fetch(`http://127.0.0.1:${port}/api/product-attributes/${definitions[0].id}`,{method:'PUT',headers:headers(va),body:JSON.stringify({name_en:'Frame Finish',name_zh:'框架饰面',code:'changed_code'})});assert.equal(locked.status,409);
+  const alternateResponse=await fetch(`http://127.0.0.1:${port}/api/product-categories`,{method:'POST',headers:headers(admin),body:JSON.stringify({name:'Foundation Alternate',slug:`foundation-alternate-${Date.now()}`})}),alternate=(await alternateResponse.json()).category;
+  for(const category_id of [alternate.id,category.id]){const response=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`,{method:'PUT',headers:headers(va),body:JSON.stringify({category_id,name:'Contract Chair',materials:'Steel',tag_ids:[]})});assert.equal(response.status,200)}
+  const restored=await fetch(`http://127.0.0.1:${port}/api/products/${created.product.id}`,{headers:{Cookie:admin.cookie}}).then(response=>response.json());assert.equal(restored.foundation.attributeValues.find(value=>value.attribute_id===definitions[0].id)?.value,'Black');
 });
 
 test('Module 08B Part 1 analyzes bilingual spreadsheets into reviewable drafts and imports approved products',async()=>{

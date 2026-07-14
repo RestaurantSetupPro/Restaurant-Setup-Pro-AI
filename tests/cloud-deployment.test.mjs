@@ -34,6 +34,7 @@ test('cloud deployment files are safe and complete', () => {
   const knowledgeCenterMigration = read('database/migrations/025_v53_ai_knowledge_center_foundation.sql');
   const searchStrategyMigration = read('database/migrations/026_v53_search_strategy_human_approval.sql');
   const terminalPhaseMigration = read('database/migrations/028_search_execution_terminal_phase.sql');
+  const productCorrectionMigration = read('database/migrations/029_product_foundation_correction.sql');
   const render = read('render.yaml');
   const env = read('.env.example');
   const ignore = read('.gitignore');
@@ -94,6 +95,9 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(productMasterDataMigration, /'013_product_master_data'/);
   assert.match(productMasterDataMigration, /CREATE TABLE IF NOT EXISTS product_attribute_category_links/);
   assert.match(productMasterDataMigration, /CREATE TABLE IF NOT EXISTS product_attribute_options/);
+  assert.match(productCorrectionMigration, /CREATE TABLE IF NOT EXISTS product_variant_axes/);
+  assert.match(productCorrectionMigration, /CREATE TABLE IF NOT EXISTS product_variant_option_values/);
+  assert.match(productCorrectionMigration, /can_be_variant_axis/);
   assert.doesNotMatch(productMasterDataMigration, /\b(DROP|TRUNCATE)\b/i);
   assert.match(pimFoundationMigration, /'014_pim_foundation_upgrade'/);
   assert.match(pimFoundationMigration, /ALTER TABLE product_variants ADD COLUMN IF NOT EXISTS cbm/);
@@ -193,6 +197,7 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(server, /026_v53_search_strategy_human_approval/);
   assert.match(terminalPhaseMigration, /'Complete','Partial Complete'/);
   assert.match(server, /028_search_execution_terminal_phase/);
+  assert.match(server, /029_product_foundation_correction/);
 });
 
 test('health check validates the database and returns the required payload', () => {

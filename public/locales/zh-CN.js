@@ -10,7 +10,7 @@ export default {
   },
   roles: { Admin: '系统管理员', Owner: '企业管理员', 'Sales Admin': '企业管理员', Sales: '销售人员', Designer: '方案专员', VA: '运营专员' },
   nav: {
-    libraryProducts: '产品', libraryCategories: '分类', libraryTags: '标签', libraryAttributes: '属性', libraryVariants: '变体',
+    libraryProducts: '产品', libraryCategories: '产品分类', libraryTags: '产品标签', libraryAttributes: '规格属性', libraryVariants: '规格款式',
     inquiries: '询盘', newInquiry: '+ 新建询盘', myTasks: '我的任务', salesCustomers: '客户', salesQuotes: '报价', salesQuotesPi: '报价与PI', salesOrders: '销售订单', salesTasks: '任务',
     dashboard: '工作台', products: '产品知识中心', aiKnowledgeCenter: 'AI知识中心', knowledgeDashboard: '知识完整度', opportunityIntelligence: '商机智能', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
     cases: '项目案例库', crm: '客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置', debugCenter: '系统调试中心', settings: '系统设置', help: '帮助'
@@ -29,11 +29,22 @@ export default {
     helpTitle: '帮助', helpBody: '通过团队使用指南了解工作台导航和操作规范。', helpAccount: '账号与权限', helpAccountBody: '当职责或访问权限需要调整时，请联系系统管理员或企业管理员。', helpWorkflow: '流程指南', helpWorkflowBody: '请遵循各可用流程中显示的人工审核与审计步骤。'
   },
   inquiries: { title: '询盘', subtitle: '查看已有询盘，或录入新的客户需求。', newAction: '新建询盘' },
+  productFoundation: {
+    productsTitle: '产品智能中心', productsSubtitle: 'AI销售系统的产品数据工作台。', newProduct: '新建产品', products: '产品', productListHelp: '供销售、报价、PI和AI数据完整度使用的产品库记录。',
+    categories: '产品分类', categoriesHelp: '管理产品分类及其适用的规格属性。', newCategory: '新建产品分类', categoryAttributes: '分类规格属性模板',
+    tags: '产品标签', tagsHelp: '产品标签用于搜索、营销和使用场景，不用于保存尺寸、材质等正式规格。', newTag: '新建产品标签',
+    attributes: '规格属性', attributesHelp: '定义可复用并按产品分类配置的正式产品规格。', newAttribute: '新建规格属性', englishName: '英文名称', chineseName: '中文名称', attributeCode: '属性编码', codeHelp: '根据英文名称自动生成；属性使用后编码保持稳定。', allowedValues: '可选值', minimum: '最小值', maximum: '最大值',
+    variants: '规格款式', variantsHelp: '规格款式是同一产品型号下仅少量规格不同的具体款式。', newVariant: '新建规格款式', parentProduct: '所属产品', variantOptions: '规格选项', variantName: '规格名称', variantImage: '规格图片', salesPriceOverride: '销售价覆盖', overrideDefaults: '覆盖产品默认值', overrideHelp: '留空时继承产品默认值。', commercialSupplier: '商业与供应信息',
+    variantAxes: '规格款式轴', axisEligible: '可作为规格款式轴', axisWarning: '该产品存在较多核心差异，建议确认是否应拆分为不同产品。', fixedAttributes: '产品固定属性', saveAttributes: '保存规格属性',
+    required: '必填', filterable: '可筛选', showProduct: '产品页', showQuote: '报价', showPi: 'PI', internalOnly: '仅内部', defaultUnit: '默认单位', sortOrder: '排序', active: '启用', disabled: '停用', dataType: '数据类型', unit: '单位', options: '选项', status: '状态', actions: '操作', edit: '编辑', remove: '删除', save: '保存', create: '创建', allCategories: '全部产品分类', allVariants: '全部规格款式', noAttributes: '尚未配置规格属性。', noVariants: '尚未配置规格款式。', inherited: '继承产品', skuHelp: 'SKU指库存单位编码。', cbmHelp: 'CBM指立方米。', moqHelp: 'MOQ指最小起订量。',
+    attributesTitle: '规格属性', attributesSubtitle: '按产品分类配置的正式产品及规格款式属性。', newAttribute: '新建规格属性', createAttribute: '创建属性', nameEn: '英文名称', nameZh: '中文名称', generatedFromEnglish: '根据英文名称自动生成', applicableCategories: '适用产品分类', categorySpecificHelp: '请至少选择一个产品分类；属性适用范围必须明确配置。', productLibrary: '产品库', website: '网站', quote: '报价', pi: 'PI', usedBy: '已使用', noAttributes: '尚未配置规格属性。', categoryChangeWarning: '更改产品分类可能使部分原有规格属性不再适用。系统会保留原有值；是否继续并检查新分类规格？', typeText: '文本', typeNumber: '数字', typeSelect: '单选', typeMultiselect: '多选', typeBoolean: '是/否', typeColor: '颜色', typeDimension: '尺寸', typeDate: '日期', defaultSupplier: '默认供应商', supplierSku: '供应商SKU', supplierCost: '供应商成本', supplierLeadTime: '供应商交期（天）', supplierMoq: '供应商MOQ', supplierNotes: '供应商备注', grossWeight: '毛重（kg）', netWeight: '净重（kg）', packingInformation: '包装信息',
+    dashboardHeading: 'AI销售系统产品数据工作台', dashboardHelp: '审核产品对销售、报价、PI及未来AI匹配的就绪情况；产品库仍是唯一可信数据源。', allRecords: '全部产品库记录', activeProducts: '有效产品', availableRecords: '可用产品记录', readyQuote: '报价就绪产品', quality80: '数据质量80分以上', readyAi: 'AI就绪产品', ai80: 'AI就绪度80分以上', missingInformation: '信息缺失产品', needsDataWork: '需要补充产品数据', reviewStates: '草稿、待审核或未完成', qualitySummary: '数据质量摘要', qualityHelp: '会阻碍报价和AI就绪的缺失字段。', missingAttributes: '缺少规格属性', missingVariants: '缺少规格款式', missingPricing: '缺少定价信息', statusSummary: '产品状态摘要', statusHelp: '当前产品库工作流状态。', sourceTruth: '产品库 / 产品智能中心', searchProduct: '搜索产品名称或SKU', allDataQuality: '全部数据质量', needsImprovement: '需要完善', allPricing: '全部定价状态', pricingReady: '定价就绪', needsPricing: '需要定价', productImage: '产品图片', skuCode: 'SKU / 产品编码', variantCount: '规格款式数', qualityScore: '数据质量分', aiStatus: 'AI就绪状态'
+  },
   fields: {
-    opportunity: '商机', stage: '阶段', value: '金额', owner: '负责人', nextAction: '下一步行动', product: '产品', sku: '产品编号',
+    name: '名称', code: '编码', group: '分组', description: '说明', opportunity: '商机', stage: '阶段', value: '金额', owner: '负责人', nextAction: '下一步行动', product: '产品', sku: '产品编号',
     productName: '产品名称', category: '产品分类', material: '材质', size: '尺寸', priceRange: '价格区间', leadTime: '交期', moq: '起订量', tags: '标签',
     status: '状态', file: '文件', startedBy: '操作人', rows: '总行数', imported: '已导入', issues: '问题', client: '客户', market: '市场',
-    validUntil: '有效期至', teamMember: '团队成员', role: '角色', lastActive: '最近登录', module: '功能模块', projectPrompt: '项目描述',
+    validUntil: '有效期至', teamMember: '团队成员', role: '角色', lastActive: '最近登录', module: '功能模块', projectPrompt: '项目描述', dataType: '数据类型', options: '选项（每行一个）', unit: '单位', sortOrder: '排序', display: '显示设置',
     spaceType: '空间类型', aspectRatio: '画面比例', visualDirection: '视觉方向', organization: '公司'
   },
   status: {

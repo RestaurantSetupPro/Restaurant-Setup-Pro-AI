@@ -67,6 +67,10 @@ test('language selector exposes only English and Simplified Chinese once each', 
   assert.equal(new Set(getSupportedLocales().map(locale => locale.name)).size, 2);
 });
 
+test('language option names are not retranslated by the legacy DOM localizer',()=>{
+  assert.match(appSource,/data-language="\$\{locale\.code\}" data-no-translate/);
+});
+
 test('missing keys are humanized and never exposed as internal translation paths', () => {
   setLocale('en');
   assert.equal(t('internal.missing_key'), 'Missing key');
