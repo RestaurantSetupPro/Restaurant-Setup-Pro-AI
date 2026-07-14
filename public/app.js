@@ -575,9 +575,21 @@ async function renderLibraryProductDetail(id,tab='general'){
   if(!['attributes','relationships','channel'].includes(tab)){
     if(tab==='variants'){
       const preview=await api(`/api/products/${id}`);
-      if(!preview.foundation.variantAxes.length){const p=preview.product;$('#page').innerHTML=`${pageHeader(p.name,`${p.sku} · ${t('productFoundation.products')}`)}${productDetailTabsV2(id,tab)}<article class="panel"><div class="panel-title"><h2>${t('productFinal.variants')}</h2><p>${t('productFinal.variantPageHelp')}</p></div><div class="empty-state">${t('productFinal.noVariantProduct')}</div></article>`;return}
+      const variantCount=Number(preview.foundation.variantCount||preview.foundation.variants?.length||0);
+      const variantStatus=preview.foundation.variantConfigurationStatus || (preview.foundation.variantAxes.length ? 'configured' : variantCount >= 2 ? 'needs_setup' : 'no_variation');
+      const p=preview.product;
+      const tabs=productDetailTabsV2(id,tab);
+      if(variantStatus==='no_variation'){ $('#page').innerHTML=`${pageHeader(p.name,`${p.sku} · ${t('productFoundation.products')}`)}${tabs}<article class="panel"><div class="panel-title"><h2>${t('productFinal.variants')}</h2><p>${t('productFinal.variantPageHelp')}</p></div><div class="empty-state">${t('productFinal.noVariantProduct')}</div></article>`; return; }
+      if(variantStatus==='needs_setup'){
+        const axisCandidates=preview.foundation.attributeDefinitions.filter(attribute=>attribute.category_config?.can_be_variant_axis);
+        const productVariants=preview.foundation.variants||[];
+        const rows=productVariants.map((variant,index)=>`<tr data-variant-id="${variant.id}"><td><strong>${esc(variant.variant_name)}</strong></td><td>${esc(variant.variant_sku||'—')}</td><td>${variant.reference_price==null?t('productFoundation.inherited'):quoteMoney(variant.reference_price)}</td><td><input name="variant_value" data-variant-value value="${esc(variant.option_values?.[0]?.value || variant.variant_value || '')}" placeholder="${t('productFinal.variantValue')}" required></td></tr>`).join('')||`<tr><td colspan="4"><div class="empty-state">${t('productFinal.noVariantProduct')}</div></td></tr>`;
+        $('#page').innerHTML=`${pageHeader(p.name,`${p.sku} · ${t('productFoundation.products')}`,`<button class="button" data-route="products">${t('productFinal.backProducts')}</button>`)}${tabs}<article class="panel"><div class="panel-title"><h2>${t('productFinal.variantOption')}</h2><p>${t('productFinal.variantSetupHelp')}</p></div><div class="empty-state">${t('productFinal.existingVariantsDetected')}</div><form id="variant-configuration-form" class="foundation-form"><label class="field"><span>${t('productFinal.variantOption')}</span><select name="attribute_id" required>${axisCandidates.map(attribute=>`<option value="${attribute.id}">${esc(getLocale()==='zh-CN'?(attribute.name_zh||attribute.name):(attribute.name_en||attribute.name))}</option>`).join('')}</select></label><div class="table-scroll"><table class="data-table"><thead><tr><th>${t('productFoundation.variantName')}</th><th>SKU</th><th>${t('productFoundation.salesPriceOverride')}</th><th>${t('productFinal.variantValue')}</th></tr></thead><tbody>${rows}</tbody></table></div><button class="button button--primary">${t('productFinal.configureVariantOption')}</button></form></article>`;
+        $('#variant-configuration-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,mappings=[...form.querySelectorAll('[data-variant-value]')].map((input,index)=>({variant_id:productVariants[index].id,value:input.value.trim()}));await api(`/api/products/${id}/variant-configuration`,{method:'POST',body:JSON.stringify({attribute_id:Number(form.attribute_id.value),variant_value_mappings:mappings})});await renderLibraryProductDetail(id,'variants')});
+        return;
+      }
       await renderLibraryProductDetailFoundationV1(id,'variants');
-      const tabs=document.querySelector('.library-detail-tabs');if(tabs)tabs.outerHTML=productDetailTabsV2(id,tab);
+      const tabsNode=document.querySelector('.library-detail-tabs');if(tabsNode)tabsNode.outerHTML=productDetailTabsV2(id,tab);
       return;
     }
     await renderLibraryProductDetailLegacy(id,tab);

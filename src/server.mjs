@@ -1133,6 +1133,7 @@ function knowledgeScore(product) {
 function productKnowledge(id) {
   const product = productWithTags(id);
   if (!product) return null;
+  Object.assign(product, productVariantSummary(product, productFoundation(id)));
   product.recommended_products = db.prepare(`
     SELECT products.id, products.sku, products.name, product_categories.name AS category, product_relationships.recommendation_weight
     FROM product_relationships JOIN products ON products.id = product_relationships.target_product_id
@@ -1196,10 +1197,15 @@ function productFoundation(id) {
         const option_values=db.prepare(`SELECT pvov.attribute_id,pvov.value,pad.name,pad.name_en,pad.name_zh,pad.code,pad.unit FROM product_variant_option_values pvov JOIN product_attribute_definitions pad ON pad.id=pvov.attribute_id WHERE pvov.variant_id=? ORDER BY pad.sort_order,pad.name`).all(variant.id);
         return {...variant,option_values,effective_values:{material:variant.material??product.materials,finish:variant.finish??product.finish,color:variant.color??product.color,moq:variant.moq??product.moq,lead_time_days:variant.lead_time_days??product.lead_time_days,default_supplier:variant.default_supplier??product.default_supplier,supplier_sku:variant.supplier_sku??product.supplier_sku,supplier_cost:variant.supplier_cost??product.supplier_cost}};
       });
+  const variantSummary = productVariantSummary({ ...product, variant_count: variantRows.length }, { variantAxes, variants: variantRows });
   return {
     variants: variantRows,
     attributeDefinitions: definitions.filter(attribute=>Number(attribute.active)===1),
     variantAxes,
+    variantCount: variantSummary.variantCount,
+    hasVariants: variantSummary.hasVariants,
+    variantConfigurationStatus: variantSummary.variantConfigurationStatus,
+    activeVariantAxis: variantSummary.activeVariantAxis,
     variantAxisWarning:variantAxes.length>1?'Historical product has multiple active Variant Options and needs review.':null,
     hasVariantOption:variantAxes.length===1,
     attributeValues: db.prepare(`SELECT pav.*,pad.name,pad.name_en,pad.name_zh,pad.code,pad.unit,pv.variant_name,
@@ -1210,6 +1216,23 @@ function productFoundation(id) {
     frequentlyBoughtTogether: db.prepare("SELECT p.id,p.sku,p.name FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? AND pfr.relationship_type='frequently_bought_together' ORDER BY pfr.sort_order,p.name").all(id),
     relationships: db.prepare("SELECT p.id,p.sku,p.name,pfr.relationship_type,pfr.sort_order FROM product_foundation_relationships pfr JOIN products p ON p.id=pfr.target_product_id WHERE pfr.source_product_id=? ORDER BY pfr.relationship_type,pfr.sort_order,p.name").all(id),
     channelMappings: db.prepare('SELECT * FROM channel_product_mappings WHERE product_id=? ORDER BY channel,variant_id').all(id)
+  };
+}
+
+function productVariantSummary(productOrId, foundation = null) {
+  const product = typeof productOrId === 'object' && productOrId ? productOrId : productWithTags(Number(productOrId));
+  if (!product) return null;
+  const detail = foundation || productFoundation(product.id);
+  const variantCount = Math.max(Number(product.variant_count || 0), Array.isArray(detail?.variants) ? detail.variants.length : 0);
+  const activeVariantAxis = Array.isArray(detail?.variantAxes) ? detail.variantAxes.find(axis => Number(axis.active) !== 0) || detail.variantAxes[0] || null : null;
+  const hasVariants = variantCount >= 2;
+  const variantConfigurationStatus = hasVariants ? (activeVariantAxis ? 'configured' : 'needs_setup') : 'no_variation';
+  return {
+    variantCount,
+    hasVariants,
+    variantConfigurationStatus,
+    activeVariantAxis,
+    variants: Array.isArray(detail?.variants) ? detail.variants : []
   };
 }
 
@@ -1339,6 +1362,7 @@ function productIntelligenceSourceInformation(product, foundation, user) {
 function productIntelligenceListItem(product, user) {
   const quality = productQualitySummary(product);
   const foundation=productFoundation(product.id),pricing = productPricingSummary(product, foundation);
+  const variantSummary = productVariantSummary(product, foundation);
   const missing=[!product.main_image_url&&'main_image',!product.category_id&&'primary_category',!product.sku&&'product_code',!product.price_range&&pricing.reference_price_min==null&&'selling_price',!product.sales_mode&&'sales_mode',!product.publish_status&&'publish_status',foundation.variantAxes.length===0&&foundation.variants.length>0&&'variant_option',foundation.variants.some(variant=>!variant.variant_sku)&&'variant_sku'].filter(Boolean);
   return redactSensitiveProductData({
     id: product.id,
@@ -1349,7 +1373,11 @@ function productIntelligenceListItem(product, user) {
     sku: product.sku,
     category: product.category || null,
     category_id: product.category_id || null,
-    variant_count: product.variant_count ?? 0,
+    variant_count: variantSummary.variantCount,
+    has_variants: variantSummary.hasVariants,
+    variant_configuration_status: variantSummary.variantConfigurationStatus,
+    active_variant_axis: variantSummary.activeVariantAxis,
+    variants: variantSummary.variants,
     status: product.library_status || product.status || null,
     library_status: product.library_status || null,
     visibility: product.visibility || null,
@@ -4387,6 +4415,8 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     if(Array.isArray(b.relationships)||Array.isArray(b.related_product_ids)||Array.isArray(b.frequently_bought_together_ids)){db.prepare('DELETE FROM product_foundation_relationships WHERE source_product_id=?').run(id);const insertRelationship=db.prepare('INSERT INTO product_foundation_relationships(source_product_id,target_product_id,relationship_type,sort_order) VALUES(?,?,?,?)');const relationships=Array.isArray(b.relationships)?b.relationships:[...(b.related_product_ids||[]).map(target_product_id=>({target_product_id,relationship_type:'complementary'})),...(b.frequently_bought_together_ids||[]).map(target_product_id=>({target_product_id,relationship_type:'frequently_bought_together'}))];relationships.forEach((relationship,index)=>{const target=Number(relationship.target_product_id),type=String(relationship.relationship_type||'complementary');if(target!==id&&productRelationshipTypes.includes(type))insertRelationship.run(id,target,type,Number(relationship.sort_order??index))})}
     db.exec('COMMIT')}catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}return json(res,200,{foundation:productFoundation(id)})},
 
+  async updateProductVariantConfiguration(req,res,id){const user=currentUser(req);if(!['Admin','Owner','Designer','VA'].includes(user?.role))return json(res,user?403:401,{error:'Product editing is not allowed.'});const product=db.prepare('SELECT id,category_id FROM products WHERE id=?').get(id);if(!product)return json(res,404,{error:'Product not found.'});const body=await readJson(req),attributeId=Number(body.attribute_id),mappings=Array.isArray(body.variant_value_mappings)?body.variant_value_mappings:[];const allowedAxes=new Set(db.prepare('SELECT attribute_id FROM product_attribute_category_links WHERE category_id=? AND can_be_variant_axis=1').all(product.category_id).map(row=>Number(row.attribute_id)));if(!attributeId||!allowedAxes.has(attributeId))return json(res,400,{error:'Variant Option must be enabled for the selected product category.'});const variants=db.prepare('SELECT id,variant_name,variant_sku,reference_price,cost_price,status FROM product_variants WHERE product_id=? ORDER BY sort_order,id').all(id);if(variants.length<2)return json(res,409,{error:'At least two existing variants are required before configuring a Variant Option.'});if(mappings.length!==variants.length)return json(res,400,{error:'Provide one value for each existing variant.'});const variantIds=new Set(variants.map(variant=>Number(variant.id)));const normalizedMappings=mappings.map(mapping=>({variant_id:Number(mapping.variant_id),value:String(mapping.value||'').trim()}));if(normalizedMappings.some(mapping=>!variantIds.has(mapping.variant_id)))return json(res,400,{error:'All mapped variants must belong to this product.'});if(normalizedMappings.some(mapping=>!mapping.value))return json(res,400,{error:'Variant values cannot be empty.'});const seenValues=new Set();for(const mapping of normalizedMappings){const key=mapping.value.toLowerCase();if(seenValues.has(key))return json(res,409,{error:'Variant values must be unique within a product.'});seenValues.add(key)}db.exec('BEGIN IMMEDIATE');try{db.prepare('DELETE FROM product_variant_axes WHERE product_id=?').run(id);db.prepare('INSERT INTO product_variant_axes(product_id,attribute_id,sort_order,active) VALUES(?,?,0,1)').run(id,attributeId);db.prepare('DELETE FROM product_variant_option_values WHERE variant_id IN (SELECT id FROM product_variants WHERE product_id=?)').run(id);const insert=db.prepare('INSERT INTO product_variant_option_values(variant_id,attribute_id,value) VALUES(?,?,?)');for(const mapping of normalizedMappings)insert.run(mapping.variant_id,attributeId,mapping.value);db.prepare("UPDATE products SET variant_axis_review_status='clear' WHERE id=?").run(id);db.exec('COMMIT')}catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error}audit(user.id,'configure_variant_option','products',String(id),{attributeId,variantCount:normalizedMappings.length});return json(res,200,{product:redactSensitiveProductData(productKnowledge(id),user),foundation:redactSensitiveProductData(productFoundation(id),user)})},
+
   deleteProduct(req,res,id){const user=currentUser(req);if(!['Admin','Owner'].includes(user?.role))return json(res,user?403:401,{error:'Administrator access required.'});const product=db.prepare('SELECT * FROM products WHERE id=?').get(id);if(!product)return json(res,404,{error:'Product not found.'});const historical=Number(db.prepare('SELECT COUNT(*) AS count FROM sales_quote_items WHERE product_id=?').get(id).count)+Number(db.prepare('SELECT COUNT(*) AS count FROM sales_order_items WHERE product_id=?').get(id).count);if(historical){db.prepare("UPDATE products SET library_status='Hidden',visibility='Hidden',status='archived',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);return json(res,200,{deleted:false,archived:true,message:'Product hidden to preserve historical Quote, PI, and Order records.'})}db.prepare('DELETE FROM products WHERE id=?').run(id);return json(res,200,{deleted:true,archived:false})},
 
   searchStrategies(req, res) {
@@ -5648,6 +5678,8 @@ const server = createServer(async (req, res) => {
     if (productImagesMatch && req.method === 'POST') return await handlers.createProductImage(req, res, Number(productImagesMatch[1]));
     const productKnowledgeMatch = url.pathname.match(/^\/api\/products\/(\d+)\/knowledge$/);
     if (productKnowledgeMatch && req.method === 'PUT') return await handlers.mutateKnowledge(req, res, Number(productKnowledgeMatch[1]));
+    const productVariantConfigurationMatch = url.pathname.match(/^\/api\/products\/(\d+)\/variant-configuration$/);
+    if (productVariantConfigurationMatch && req.method === 'POST') return handlers.updateProductVariantConfiguration(req, res, Number(productVariantConfigurationMatch[1]));
     const productMatch = url.pathname.match(/^\/api\/products\/(\d+)$/);
     if (productMatch && req.method === 'GET') return handlers.productDetail(req, res, Number(productMatch[1]));
     if (productMatch && req.method === 'PUT') return await handlers.mutateProduct(req, res, Number(productMatch[1]));
