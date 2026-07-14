@@ -1845,7 +1845,7 @@ test('Module 08A builds variants, configurable attributes, product relationships
   const quoteAfterMasterChange=await fetch(`http://127.0.0.1:${port}/api/sales-quotes/${quoteId}`,{headers:{Cookie:sales.cookie}}).then(response=>response.json());
   assert.equal(quoteAfterMasterChange.quote.items.find(item=>item.product_id===dishwasher.id).name,'Commercial Dishwasher');
   const uiSource=await fetch(`http://127.0.0.1:${port}/app.js`).then(response=>response.text());
-  for(const contract of ['product-library-products','product-library-categories','product-library-tags','product-library-attributes','product-library-variants','Frequently Bought Together','Upload Image','delete-library-product','Category Attributes'])assert.match(uiSource,new RegExp(contract));
+  for(const contract of ['products','product-library-categories','product-library-tags','product-library-attributes','product-library-variants','Frequently Bought Together','Upload Image','delete-library-product','Category Attributes'])assert.match(uiSource,new RegExp(contract));
   for(const contract of ['data-submit-intent="draft"','data-submit-intent="create"','Save Draft','Create Product','Product created successfully.','Please complete the highlighted required fields'])assert.match(uiSource,new RegExp(contract));
   const styles=await fetch(`http://127.0.0.1:${port}/styles.css`).then(response=>response.text());
   assert.match(styles,/\.product-modal-actions\{position:sticky/);

@@ -6,7 +6,7 @@ import { activateOpportunityTab, navigationItemsForRole, uniqueNavigationItems }
 
 const app = readFileSync(resolve(import.meta.dirname, '../public/app.js'), 'utf8');
 const styles = readFileSync(resolve(import.meta.dirname, '../public/styles.css'), 'utf8');
-const productRoutes = ['product-library-products', 'product-library-categories', 'product-library-tags', 'product-library-attributes'];
+const productRoutes = ['products', 'product-library-categories', 'product-library-tags', 'product-library-attributes'];
 
 test('navigation deduplicates stable menu IDs and routes across repeated shell renders', () => {
   const configured = productRoutes.map(route => ({ id: route, route }));
@@ -18,7 +18,7 @@ test('navigation deduplicates stable menu IDs and routes across repeated shell r
   assert.equal(new Set(secondRender.map(item => item.id)).size, secondRender.length);
 });
 
-test('five-group role-aware navigation retains unique Product Library and Knowledge routes', () => {
+test('five-group role-aware navigation retains unique Products and Knowledge routes', () => {
   for (const route of productRoutes) assert.equal((app.match(new RegExp(`route: '${route}'`, 'g')) || []).length, 1);
   assert.equal((app.match(/route: 'knowledge-dashboard'/g) || []).length, 1);
   assert.equal((app.match(/route: 'ai-knowledge-center'/g) || []).length, 1);
@@ -34,7 +34,7 @@ test('global shell keeps Inquiries and Customers as the only customer-facing sid
   assert.equal((app.match(/route: 'sales-customers'/g) || []).length, 1);
   assert.doesNotMatch(app, /route: 'new-inquiry'/);
   assert.doesNotMatch(app, /route: 'crm'/);
-  assert.match(app, /routeAliases = Object\.freeze\(\{ crm: 'sales-customers', 'new-inquiry': 'inquiries', products:'product-library-products'/);
+  assert.match(app, /routeAliases = Object\.freeze\(\{ crm: 'sales-customers', 'new-inquiry': 'inquiries', 'product-library-products':'products', 'product-intelligence-center':'products'/);
   assert.match(app, /route: 'inquiries', labelKey: 'nav\.inquiries'/);
   assert.match(app, /route: 'sales-tasks', labelKey: 'nav\.myTasks'/);
   assert.match(app, /data-action="start-new-inquiry"/);
@@ -61,7 +61,7 @@ test('navigation configuration cannot be expanded by category data or repeated r
   assert.match(app, /Object\.freeze\(uniqueNavigationItems\(/);
   assert.match(app, /\.map\(item => Object\.freeze\(item\)\)/);
   assert.doesNotMatch(app, /categories\.(map|forEach).*main-nav/s);
-  assert.deepEqual(productRoutes, ['product-library-products','product-library-categories','product-library-tags','product-library-attributes']);
+  assert.deepEqual(productRoutes, ['products','product-library-categories','product-library-tags','product-library-attributes']);
 });
 
 test('role navigation keeps stable order and hides technical or commercial modules as specified', () => {
