@@ -6,13 +6,13 @@ export default {
     pages: '页面', navigate: '上下选择', open: '打开', view: '查看', browseAll: '查看全部', filter: '筛选', retry: '重试', moreActions: '更多操作',
     all: '全部', none: '无', notYet: '尚未登录', dueToday: '今天到期', dueTomorrow: '明天到期', friday: '星期五', yesterday: '昨天',
     language: '语言', signedInAs: '当前登录', noMatches: '没有匹配的页面。', actionNoted: '操作已记录。',
-    edit: '编辑', close: '关闭', cancel: '取消', save: '保存'
+    edit: '编辑', close: '关闭', cancel: '取消', save: '保存', create:'创建'
   },
   roles: { Admin: '系统管理员', Owner: '企业管理员', 'Sales Admin': '企业管理员', Sales: '销售人员', Designer: '方案专员', VA: '运营专员' },
   nav: {
     libraryProducts: '产品', libraryCategories: '产品分类', libraryTags: '产品标签', libraryAttributes: '规格属性', libraryVariants: '规格款式',
     inquiries: '询盘', newInquiry: '+ 新建询盘', myTasks: '我的任务', salesCustomers: '客户', salesQuotes: '报价', salesQuotesPi: '报价与PI', salesOrders: '销售订单', salesTasks: '任务',
-    dashboard: '工作台', products: '产品知识中心', aiKnowledgeCenter: 'AI知识中心', knowledgeDashboard: '知识完整度', opportunityIntelligence: '商机智能', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
+    dashboard: '工作台', products: '产品', aiKnowledgeCenter: 'AI知识中心', knowledgeDashboard: '产品数据完整度', opportunityIntelligence: '商机智能', imports: '产品导入中心', images: 'AI图片中心', proposals: '方案生成器',
     cases: '项目案例库', crm: '客户管理', salesAi: 'AI销售话术中心', contentAi: 'AI内容中心', coreFoundation: '基础配置', debugCenter: '系统调试中心', settings: '系统设置', help: '帮助'
   },
   login: {
@@ -39,6 +39,16 @@ export default {
     required: '必填', filterable: '可筛选', showProduct: '产品页', showQuote: '报价', showPi: 'PI', internalOnly: '仅内部', defaultUnit: '默认单位', sortOrder: '排序', active: '启用', disabled: '停用', dataType: '数据类型', unit: '单位', options: '选项', status: '状态', actions: '操作', edit: '编辑', remove: '删除', save: '保存', create: '创建', allCategories: '全部产品分类', allVariants: '全部规格款式', noAttributes: '尚未配置规格属性。', noVariants: '尚未配置规格款式。', inherited: '继承产品', skuHelp: 'SKU指库存单位编码。', cbmHelp: 'CBM指立方米。', moqHelp: 'MOQ指最小起订量。',
     attributesTitle: '规格属性', attributesSubtitle: '按产品分类配置的正式产品及规格款式属性。', newAttribute: '新建规格属性', createAttribute: '创建属性', nameEn: '英文名称', nameZh: '中文名称', generatedFromEnglish: '根据英文名称自动生成', applicableCategories: '适用产品分类', categorySpecificHelp: '请至少选择一个产品分类；属性适用范围必须明确配置。', productLibrary: '产品库', website: '网站', quote: '报价', pi: 'PI', usedBy: '已使用', noAttributes: '尚未配置规格属性。', categoryChangeWarning: '更改产品分类可能使部分原有规格属性不再适用。系统会保留原有值；是否继续并检查新分类规格？', typeText: '文本', typeNumber: '数字', typeSelect: '单选', typeMultiselect: '多选', typeBoolean: '是/否', typeColor: '颜色', typeDimension: '尺寸', typeDate: '日期', defaultSupplier: '默认供应商', supplierSku: '供应商SKU', supplierCost: '供应商成本', supplierLeadTime: '供应商交期（天）', supplierMoq: '供应商MOQ', supplierNotes: '供应商备注', grossWeight: '毛重（kg）', netWeight: '净重（kg）', packingInformation: '包装信息',
     dashboardHeading: 'AI销售系统产品数据工作台', dashboardHelp: '审核产品对销售、报价、PI及未来AI匹配的就绪情况；产品库仍是唯一可信数据源。', allRecords: '全部产品库记录', activeProducts: '有效产品', availableRecords: '可用产品记录', readyQuote: '报价就绪产品', quality80: '数据质量80分以上', readyAi: 'AI就绪产品', ai80: 'AI就绪度80分以上', missingInformation: '信息缺失产品', needsDataWork: '需要补充产品数据', reviewStates: '草稿、待审核或未完成', qualitySummary: '数据质量摘要', qualityHelp: '会阻碍报价和AI就绪的缺失字段。', missingAttributes: '缺少规格属性', missingVariants: '缺少规格款式', missingPricing: '缺少定价信息', statusSummary: '产品状态摘要', statusHelp: '当前产品库工作流状态。', sourceTruth: '产品库 / 产品智能中心', searchProduct: '搜索产品名称或SKU', allDataQuality: '全部数据质量', needsImprovement: '需要完善', allPricing: '全部定价状态', pricingReady: '定价就绪', needsPricing: '需要定价', productImage: '产品图片', skuCode: 'SKU / 产品编码', variantCount: '规格款式数', qualityScore: '数据质量分', aiStatus: 'AI就绪状态'
+  },
+  productFinal:{
+    overview:'基本信息',media:'图片与文档',specifications:'规格属性',variants:'具体规格',pricing:'定价',relationships:'关联推荐',channelReadiness:'渠道准备',backProducts:'返回产品',
+    variantOption:'规格变化字段',oneVariantHelp:'每个产品可以没有规格变化，或只设置一个启用的变化字段。',noVariant:'无规格变化',variantValue:'规格值',variantPageHelp:'同一产品型号下，仅一个尺寸、颜色或其他选项不同的具体SKU。',noVariantProduct:'该产品无规格变化，产品编号即为SKU，无需维护默认规格。',inapplicableAttributes:'已保留但不再适用于当前分类的属性值',
+    complementary:'配套产品',alternative:'替代产品',frequentlyBought:'常一起购买',upgrade:'升级产品',relationshipsHelp:'关联仅用于推荐，不强制生成方案或PI组合。',channelHelp:'仅准备未来渠道发布数据，不调用外部API。',ready:'就绪',draft:'草稿',salesMode:'销售方式',publishStatus:'发布状态',priceDisplay:'网站价格显示',externalSync:'外部同步',notConnected:'未连接',noRealChannel:'本版本未连接Shopify或WooCommerce API。',
+    basicInformation:'基本信息',productStatus:'产品状态',visibility:'可见范围',shortDescription:'简介',fullDescription:'详细说明',quoteDescription:'报价说明',minimumOrder:'最小起订量',channelContent:'渠道内容',storefrontTitleEn:'网站标题（英文）',storefrontTitleZh:'网站标题（中文）',storefrontDescriptionEn:'网站说明（英文）',storefrontDescriptionZh:'网站说明（中文）',requestQuote:'允许询价',customization:'支持定制',
+    salesMode_standard_sale:'标准销售',salesMode_quote_only:'仅询价',salesMode_customizable:'可定制',salesMode_project_only:'项目型',publish_draft:'草稿',publish_ready:'就绪',publish_published:'已发布',publish_archived:'已归档',price_exact_price:'明确价格',price_starting_from:'起售价',price_request_quote:'询价',price_hidden:'隐藏',
+    categoryCode:'分类编码',descriptionEn:'英文说明',descriptionZh:'中文说明',productCount:'产品数量',attributeCount:'规格属性数量',searchable:'可搜索',storefront:'网站展示',aliases:'字段别名',aliasPlaceholder:'底盘尺寸\n直径\n底盘直径',aliasHelp:'每行一个别名。经人工确认后可用于后续导入匹配。',
+    importCenter:'产品导入中心',importHelp:'供应商文件 → 字段匹配 → 产品与规格识别 → 人工审核 → 确认导入。',importUpload:'1 上传文件',importMapping:'2 字段匹配',importDetection:'3 产品与规格识别',importReview:'4 草稿审核',importConfirm:'5 确认导入',imageUnavailable:'图片不可用',
+    aiKnowledgeHelp:'管理已批准的公司知识、目标客户画像、销售规则和业务限制。',approvedKnowledge:'已批准知识',aiKnowledgeSeparated:'产品完整度已独立到“产品数据完整度”页面。',contextPreview:'上下文预览',companyKnowledge:'公司知识',targetProfiles:'目标客户画像',knowledge:'知识',type:'类型',revision:'版本',updated:'更新时间',noKnowledge:'暂无知识记录。'
   },
   fields: {
     name: '名称', code: '编码', group: '分组', description: '说明', opportunity: '商机', stage: '阶段', value: '金额', owner: '负责人', nextAction: '下一步行动', product: '产品', sku: '产品编号',
