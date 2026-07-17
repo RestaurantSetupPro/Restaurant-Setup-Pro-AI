@@ -25,5 +25,11 @@ services:
         value: "true"
       - key: SESSION_HOURS
         value: "12"
+      - key: DEMO_MODE
+        value: "false"
+      - key: ENABLE_DEMO_SEED
+        value: "false"
+      - key: RULES_MOCK_CONNECTOR_ENABLED
+        value: "false"
       - key: SEED_PASSWORD
         sync: false

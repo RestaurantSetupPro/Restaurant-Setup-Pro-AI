@@ -214,9 +214,16 @@ function updateStaticLocale() {
 }
 
 function renderDemoRoles() {
-  $('.demo-login')?.classList.toggle('is-hidden', !demoMode);
-  if (!demoMode) return;
-  $('#demo-roles').innerHTML = Object.keys(roleEmails).map(role => `<button type="button" class="demo-role" data-demo-role="${role}">${t(`roles.${role}`)}</button>`).join('');
+  const container = $('#demo-login');
+  if (!container) return;
+  container.hidden = !demoMode;
+  container.classList.toggle('is-hidden', !demoMode);
+  if (!demoMode) {
+    container.replaceChildren();
+    return;
+  }
+  const roles = Object.keys(roleEmails).map(role => `<button type="button" class="demo-role" data-demo-role="${role}">${t(`roles.${role}`)}</button>`).join('');
+  container.innerHTML = `<div class="divider"><span>${t('login.demoRoles')}</span></div><div class="demo-roles">${roles}</div><p>${t('login.demoPassword')} <code>Welcome123!</code></p>`;
 }
 
 function renderLanguageMenu() {
@@ -236,7 +243,7 @@ async function changeLanguage(locale) {
 
 function setupLogin() {
   renderDemoRoles();
-  $('#demo-roles').addEventListener('click', event => {
+  $('#demo-login').addEventListener('click', event => {
     const button = event.target.closest('[data-demo-role]');
     if (!button) return;
     $('#email').value = roleEmails[button.dataset.demoRole];

@@ -2,12 +2,13 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { PostgresSyncDatabase } from './postgres-sync.mjs';
 import { aiImageProviderConfig, createAiImageProvider } from './services/ai-image-provider.mjs';
 import { saveGeneratedImage } from './services/generated-image-storage.mjs';
 import { createAiCostControl } from './services/ai-cost-control.mjs';
+import { hashPassword, verifyPassword } from './services/auth-password.mjs';
 import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
 import { createKnowledgeCenter } from './services/knowledge-center.mjs';
 import { blankSearchStrategyData, createSearchStrategyService, validateSearchStrategyData } from './services/search-strategy.mjs';
@@ -609,20 +610,6 @@ const demoUsers = [
   ['Taylor Kim', 'designer@rspro.ai', 'Designer', 'TK'],
   ['Casey Rivera', 'va@rspro.ai', 'VA', 'CR']
 ];
-
-function hashPassword(password) {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(password, salt, 64).toString('hex');
-  return `scrypt$${salt}$${hash}`;
-}
-
-function verifyPassword(password, encoded) {
-  const [algorithm, salt, hash] = String(encoded).split('$');
-  if (algorithm !== 'scrypt' || !salt || !hash) return false;
-  const derived = scryptSync(password, salt, 64);
-  const stored = Buffer.from(hash, 'hex');
-  return stored.length === derived.length && timingSafeEqual(stored, derived);
-}
 
 function seedDatabase() {
   const userCount = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
