@@ -1,5 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import pg from 'pg';
+import { normalizePostgresQuery } from './postgres-sql-compat.mjs';
 
 const { Pool, types } = pg;
 types.setTypeParser(20, value => Number(value));
@@ -14,32 +15,9 @@ const pool = new Pool({
 });
 let transactionClient = null;
 
-function placeholders(sql) {
-  let index = 0;
-  let quote = null;
-  let output = '';
-  for (let i = 0; i < sql.length; i += 1) {
-    const char = sql[i];
-    if ((char === "'" || char === '"') && sql[i - 1] !== '\\') quote = quote === char ? null : (quote || char);
-    if (char === '?' && !quote) output += `$${++index}`;
-    else output += char;
-  }
-  return output;
-}
-
-function normalizeSql(value) {
-  let sql = String(value).trim().replace(/COLLATE\s+NOCASE/gi, '');
-  const ignore = /^INSERT\s+OR\s+IGNORE\s+INTO/i.test(sql);
-  if (ignore) {
-    sql = sql.replace(/^INSERT\s+OR\s+IGNORE\s+INTO/i, 'INSERT INTO');
-    sql = `${sql.replace(/;$/, '')} ON CONFLICT DO NOTHING`;
-  }
-  if (/^BEGIN\s+IMMEDIATE$/i.test(sql)) sql = 'BEGIN';
-  return placeholders(sql);
-}
-
 async function query(sql, params = []) {
-  return (transactionClient || pool).query(normalizeSql(sql), params);
+  const normalized = normalizePostgresQuery(sql, params);
+  return (transactionClient || pool).query(normalized.sql, normalized.params);
 }
 
 async function execute(action, payload) {

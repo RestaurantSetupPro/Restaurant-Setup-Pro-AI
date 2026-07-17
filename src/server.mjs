@@ -658,7 +658,7 @@ function seedDatabase() {
     Lighting: [['Wattage','Text'],['Voltage','Text'],['Color Temperature','Text'],['IP Rating','Text'],['Installation Type','Select']]
   };
   const findAttribute = db.prepare('SELECT id FROM product_attribute_definitions WHERE code = ?');
-  const addAttribute = db.prepare('INSERT INTO product_attribute_definitions(name,code,data_type,unit,active,sort_order) VALUES(?,?,?,?,1,?)');
+  const addAttribute = db.prepare('INSERT INTO product_attribute_definitions(name,code,data_type,unit,active,sort_order) VALUES(?,?,?,?,?,?)');
   const linkAttribute = db.prepare('INSERT OR IGNORE INTO product_attribute_category_links(attribute_id,category_id) VALUES(?,?)');
   for (const [categoryName, attributes] of Object.entries(categoryTemplates)) {
     const categoryId = db.prepare('SELECT id FROM product_categories WHERE name = ?').get(categoryName)?.id;
@@ -666,7 +666,7 @@ function seedDatabase() {
     attributes.forEach(([name, dataType, unit], index) => {
       const code = `PIM-${makeCode(categoryName)}-${makeCode(name)}`;
       let attributeId = findAttribute.get(code)?.id;
-      if (!attributeId) attributeId = Number(addAttribute.run(name, code, dataType, unit || null, index + 1).lastInsertRowid);
+      if (!attributeId) attributeId = Number(addAttribute.run(name, code, dataType, unit || null, databaseUrl ? true : 1, index + 1).lastInsertRowid);
       linkAttribute.run(attributeId, categoryId);
     });
   }
