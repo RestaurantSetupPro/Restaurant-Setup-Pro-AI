@@ -161,7 +161,8 @@ const statusLabel = status => statusKey(status) ? t(`${['needsReview','supersede
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
-    credentials: 'same-origin',
+    credentials: 'include',
+    cache: 'no-store',
     headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : options.headers,
     ...options
   });
@@ -169,6 +170,9 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || 'Something went wrong.');
     error.status = response.status;
+    if (response.status === 401 && !['/api/auth/login', '/api/auth/me', '/api/auth/logout'].includes(path)) {
+      await clearInvalidSession();
+    }
     throw error;
   }
   return data;
@@ -263,10 +267,12 @@ function setupLogin() {
     button.disabled = true;
     button.firstElementChild.textContent = t('login.signingIn');
     try {
-      const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#email').value, password: $('#password').value }) });
-      state.user = data.user;
+      await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('#email').value, password: $('#password').value }) });
+      const confirmed = await api('/api/auth/me');
+      state.user = confirmed.user;
       enterApp();
     } catch (error) {
+      if (error.status === 401) await clearInvalidSession();
       $('#login-error').textContent = error.status === 401 ? t('login.invalidCredentials') : t('access.genericError');
     } finally {
       button.disabled = false;
@@ -522,6 +528,18 @@ async function renderKnowledgeDashboard() {
     </section>`;
   $('.knowledge-center-workspace')?.remove();
   $('#knowledge-create-form')?.addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const list = name => String(form.get(name) || '').split(',').map(value => value.trim()).filter(Boolean); const type = String(form.get('knowledge_type')); const content = type === 'company' ? { company_introduction: form.get('description'), target_countries: list('target_countries'), main_product_categories: list('categories'), company_strengths: form.get('signals'), prohibited_sales_promises: form.get('limits') } : { profile_name: form.get('title'), target_countries: list('target_countries'), customer_types: list('categories'), target_business_signals: form.get('signals'), exclusions: form.get('limits') }; await api('/api/knowledge-center', { method: 'POST', body: JSON.stringify({ knowledge_type: type, knowledge_key: form.get('knowledge_key'), title: form.get('title'), summary: form.get('summary'), content_json: content, tags_json: [] }) }); toast('Knowledge Draft saved'); await renderKnowledgeDashboard(); });
+}
+
+let invalidSessionClearPromise = null;
+async function clearInvalidSession() {
+  if (invalidSessionClearPromise) return invalidSessionClearPromise;
+  invalidSessionClearPromise = (async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include', cache: 'no-store' });
+    } catch {}
+    exitApp();
+  })().finally(() => { invalidSessionClearPromise = null; });
+  return invalidSessionClearPromise;
 }
 
 async function renderAiKnowledgeCenter(){const center=await api('/api/knowledge-center');state.knowledgeCenter=center;$('#page').innerHTML=`${pageHeader(t('nav.aiKnowledgeCenter'),t('productFinal.aiKnowledgeHelp'))}<article class="panel"><div class="panel-header"><div class="panel-title"><h2>${t('productFinal.approvedKnowledge')}</h2><p>${t('productFinal.aiKnowledgeSeparated')}</p></div><button class="button" data-action="knowledge-context-preview">${t('productFinal.contextPreview')}</button></div><div class="knowledge-tabs"><button class="is-active" data-knowledge-filter="">${t('common.all')}</button><button data-knowledge-filter="company">${t('productFinal.companyKnowledge')}</button><button data-knowledge-filter="target_customer_profile">${t('productFinal.targetProfiles')}</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>${t('productFinal.knowledge')}</th><th>${t('productFinal.type')}</th><th>${t('productFinal.revision')}</th><th>${t('fields.status')}</th><th>${t('productFinal.updated')}</th></tr></thead><tbody id="knowledge-center-rows">${center.items.map(item=>`<tr data-knowledge-type="${esc(item.knowledge_type)}"><td class="primary-cell"><strong>${esc(item.title)}</strong><small>${esc(item.summary||'')}</small></td><td>${esc(item.knowledge_type)}</td><td>v${item.revision_no}</td><td>${badge(item.status)}</td><td>${formatLocalDateTime(item.updated_at)}</td></tr>`).join('')||`<tr><td colspan="5">${t('productFinal.noKnowledge')}</td></tr>`}</tbody></table></div></article>`;document.querySelectorAll('[data-knowledge-filter]').forEach(button=>button.addEventListener('click',()=>{document.querySelectorAll('[data-knowledge-filter]').forEach(item=>item.classList.toggle('is-active',item===button));document.querySelectorAll('#knowledge-center-rows tr[data-knowledge-type]').forEach(row=>row.hidden=Boolean(button.dataset.knowledgeFilter)&&row.dataset.knowledgeType!==button.dataset.knowledgeFilter)}))}
@@ -3032,7 +3050,7 @@ async function bootstrap() {
     state.user = data.user;
     enterApp();
   } catch {
-    $('#login-view').classList.remove('is-hidden');
+    await clearInvalidSession();
   }
 }
 

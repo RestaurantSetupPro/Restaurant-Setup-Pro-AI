@@ -899,6 +899,19 @@ function requires(user, permission) {
   return Boolean(user && rolePermissions[user.role]?.includes(permission));
 }
 
+function sessionCookie(value, maxAge) {
+  const attributes = [
+    `rsp_session=${encodeURIComponent(value)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    `Max-Age=${Math.max(0, Number(maxAge) || 0)}`
+  ];
+  if (process.env.NODE_ENV === 'production') attributes.splice(2, 0, 'Secure');
+  if (maxAge <= 0) attributes.push('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+  return attributes.join('; ');
+}
+
 function masterValues(type, fallback = []) {
   if (fallback === variantStatuses) return [...variantStatuses];
   const rows = db.prepare('SELECT name FROM system_configs WHERE config_type=? AND active=1 ORDER BY sort_order,name').all(type).map(row=>row.name);
@@ -3953,14 +3966,14 @@ const handlers = {
       return json(res, 401, { error: 'Email or password is incorrect.' });
     }
     const sessionId = randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + sessionHours * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    const expiresAtIso = new Date(Date.now() + sessionHours * 60 * 60 * 1000).toISOString();
+    const expiresAt = databaseUrl ? expiresAtIso : expiresAtIso.replace('T', ' ').slice(0, 19);
     db.prepare('DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP').run();
     db.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').run(sessionId, user.id, expiresAt);
     db.prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
     audit(user.id, 'login', 'session', sessionId.slice(0, 12));
-    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
     return json(res, 200, { user: publicUser(user) }, {
-      'Set-Cookie': `rsp_session=${sessionId}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${sessionHours * 3600}${secure}`
+      'Set-Cookie': sessionCookie(sessionId, sessionHours * 3600)
     });
   },
 
@@ -3970,7 +3983,7 @@ const handlers = {
     if (sessionId) db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
     if (user) audit(user.id, 'logout', 'session');
     return json(res, 200, { ok: true }, {
-      'Set-Cookie': 'rsp_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0'
+      'Set-Cookie': sessionCookie('', 0)
     });
   },
 
