@@ -688,6 +688,8 @@ CREATE TABLE IF NOT EXISTS search_results (
   normalization_version TEXT, dedup_key TEXT,
   duplicate_of_search_result_id INTEGER REFERENCES search_results(id) ON DELETE SET NULL,
   evidence_json TEXT NOT NULL DEFAULT '{}',
+  enrichment_status TEXT NOT NULL DEFAULT 'Pending',
+  enrichment_updated_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -721,6 +723,32 @@ CREATE TABLE IF NOT EXISTS search_result_raw_payloads (
   record_index INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL DEFAULT '{}', payload_hash TEXT NOT NULL,
   captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, retention_until TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(search_execution_id,payload_hash)
+);
+
+CREATE TABLE IF NOT EXISTS lead_enrichment_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  search_task_id INTEGER NOT NULL REFERENCES search_tasks(id) ON DELETE CASCADE,
+  search_execution_id INTEGER REFERENCES search_executions(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Running','Paused','Completed','Failed')),
+  total_count INTEGER NOT NULL DEFAULT 0, processed_count INTEGER NOT NULL DEFAULT 0,
+  completed_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0,
+  retry_failed INTEGER NOT NULL DEFAULT 0, checkpoint_json TEXT NOT NULL DEFAULT '{}',
+  pause_requested_at TEXT, heartbeat_at TEXT, last_error TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  started_at TEXT, completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS lead_enrichment_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  search_result_id INTEGER NOT NULL UNIQUE REFERENCES search_results(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Verified Website','Needs Review','No Reliable Website','Completed','Failed')),
+  official_website TEXT, phone TEXT, public_emails_json TEXT NOT NULL DEFAULT '[]',
+  contact_page_url TEXT, business_description TEXT, verification_score INTEGER NOT NULL DEFAULT 0,
+  evidence_json TEXT NOT NULL DEFAULT '{}', extracted_json TEXT NOT NULL DEFAULT '{}',
+  source_urls_json TEXT NOT NULL DEFAULT '[]', status_history_json TEXT NOT NULL DEFAULT '[]',
+  attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS ai_cost_settings (

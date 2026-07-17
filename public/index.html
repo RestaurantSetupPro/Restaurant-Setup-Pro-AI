@@ -8,6 +8,19 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css?v=__BUILD_VERSION__" />
     <title>Restaurant Setup Pro</title>
+    <script>
+      (() => {
+        const url = new URL(window.location.href);
+        let changed = false;
+        for (const key of [...url.searchParams.keys()]) {
+          if (/^(email|password|passwd)$/i.test(key)) {
+            url.searchParams.delete(key);
+            changed = true;
+          }
+        }
+        if (changed) history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      })();
+    </script>
   </head>
   <body>
     <div id="toast-root" class="toast-root" aria-live="polite"></div>
@@ -46,10 +59,10 @@
             <h2 id="login-welcome">Welcome back</h2>
             <p id="login-subtitle">Sign in to continue to your workspace.</p>
           </div>
-          <form id="login-form" class="login-form">
-            <label><span id="login-email-label">Email address</span><input id="email" name="email" type="email" autocomplete="email" value="owner@rspro.ai" required /></label>
+          <form id="login-form" class="login-form" method="post" action="/api/auth/login">
+            <label><span id="login-email-label">Email address</span><input id="email" name="email" type="email" autocomplete="email" required /></label>
             <label><span id="login-password-label">Password</span>
-              <span class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" value="Welcome123!" required /><button id="password-toggle" class="icon-button input-action" type="button" aria-label="Show password"></button></span>
+              <span class="password-field"><input id="password" name="password" type="password" autocomplete="current-password" required /><button id="password-toggle" class="icon-button input-action" type="button" aria-label="Show password"></button></span>
             </label>
             <div id="login-error" class="form-error" role="alert"></div>
             <button id="login-submit" class="button button--primary button--wide" type="submit"><span id="login-submit-label">Sign in to workspace</span><span aria-hidden="true">→</span></button>

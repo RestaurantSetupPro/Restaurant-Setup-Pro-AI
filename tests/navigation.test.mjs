@@ -98,15 +98,17 @@ test('Opportunity tabs clear Lead Pool and Search Task detail state on every swi
   }
 });
 
-test('Search Task criteria and result statistics use separate semantic label and value nodes', () => {
-  for (const key of ['customerType', 'location', 'companySize', 'priority', 'targetVolume']) {
+test('Search Task summary uses the approved primary criteria and batch qualification KPIs', () => {
+  for (const key of ['customerType', 'location', 'targetVolume', 'keywords']) {
     assert.match(app, new RegExp(`<dt>\\$\\{t\\('salesOs\\.terms\\.${key}'\\)\\}</dt><dd>`));
   }
-  assert.match(app, /salesOs\.terms\.totalResults.*search-result-stat-value.*summary\.total/);
-  assert.match(app, /salesOs\.terms\.converted.*search-result-stat-value.*summary\.converted/);
-  assert.match(app, /salesOs\.tabs\.leads.*search-result-stat-value.*summary\.new/);
-  assert.match(styles, /\.search-criteria-grid\{display:grid/);
-  assert.match(styles, /\.search-result-stat-grid\{display:grid/);
+  assert.doesNotMatch(app, /<dt>\$\{t\('salesOs\.terms\.(?:companySize|priority)'\)\}<\/dt><dd>/);
+  assert.match(app, /task-kpi-grid/);
+  assert.match(app, /progress\.groups\?\.recommended/);
+  assert.match(app, /progress\.groups\?\.needs_confirmation/);
+  assert.match(app, /progress\.groups\?\.not_recommended/);
+  assert.match(styles, /\.task-summary-grid/);
+  assert.match(styles, /\.task-kpi-grid/);
   assert.match(styles, /\.opportunity-tabs \{[^}]*z-index: 2;[^}]*pointer-events: auto;/);
   assert.match(styles, /\.opportunity-pane \{ position: relative; z-index: 1; \}/);
 });

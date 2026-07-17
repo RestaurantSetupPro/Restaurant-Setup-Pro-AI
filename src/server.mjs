@@ -12,6 +12,21 @@ import { createAiBusinessBrain } from './services/ai-business-brain.mjs';
 import { createKnowledgeCenter } from './services/knowledge-center.mjs';
 import { blankSearchStrategyData, createSearchStrategyService, validateSearchStrategyData } from './services/search-strategy.mjs';
 import { createSearchExecutionService } from './services/search-execution.mjs';
+import { createLocationProviderRegistry, normalizeLocation } from './services/location-provider.mjs';
+import { createGeoapifyLocationProvider } from './services/geoapify-location-provider.mjs';
+import { createWebsiteEvidenceEnrichmentService } from './services/website-evidence-enrichment.mjs';
+import {
+  classifyEvidenceText,
+  evaluateQualificationProfile,
+  qualificationProfileForTarget,
+  reclassifySavedEvidence
+} from './services/qualification-profile.mjs';
+
+// Local development secrets stay in the git-ignored .env file. Hosted environments
+// continue to supply process variables through their own secret managers.
+if (typeof process.loadEnvFile === 'function' && !process.env.NODE_ENV) {
+  try { process.loadEnvFile(); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+}
 import { analyzeInquiry, inquiryTypes, inquiryStatuses } from './services/sales-intelligence.mjs';
 import { analyzeSpreadsheet, parseSpreadsheet } from './services/smart-product-import.mjs';
 import {
@@ -29,8 +44,13 @@ const databaseInitializationDelayMs = Number(process.env.DATABASE_INITIALIZATION
 const databaseRetryDelayMs = Number(process.env.DATABASE_RETRY_DELAY_MS || 30_000);
 const sessionHours = Number(process.env.SESSION_HOURS || 12);
 const seedPassword = process.env.SEED_PASSWORD || 'Welcome123!';
-const demoMode = process.env.DEMO_MODE === 'true' || (process.env.DEMO_MODE !== 'false' && process.env.NODE_ENV !== 'production');
+const demoMode = process.env.DEMO_MODE === 'true';
+const demoSeedEnabled = process.env.ENABLE_DEMO_SEED === 'true';
 const buildVersion = String(process.env.BUILD_VERSION || process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || `startup-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '-');
+const locationProviderRegistry = createLocationProviderRegistry({
+  providers: [createGeoapifyLocationProvider()],
+  defaultProviderKey: 'geoapify'
+});
 
 let db;
 let aiCostControl;
@@ -38,6 +58,7 @@ let aiBusinessBrain;
 let knowledgeCenter;
 let searchStrategyService;
 let searchExecutionService;
+let websiteEnrichmentService;
 let databaseStatus = 'starting';
 let databaseInitializationError;
 let databaseRetryTimer;
@@ -116,14 +137,14 @@ function initializeDatabase() {
     if (databaseUrl) {
       recordSystemEvent('info', `Database migration: RUN_MIGRATIONS=${process.env.RUN_MIGRATIONS !== 'false'}`);
       if (process.env.RUN_MIGRATIONS !== 'false') {
-        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql', '027_v53_search_execution_foundation.sql', '028_search_execution_terminal_phase.sql', '029_product_foundation_correction.sql', '030_product_module_finalization.sql']) {
+        for (const migrationFile of ['001_initial_schema.sql', '002_product_intelligence.sql', '003_ai_product_content_factory.sql', '004_real_ai_image_generation.sql', '005_opportunity_intelligence_engine.sql', '006_ai_cost_control.sql', '007_sales_intelligence_part1.sql', '008_quote_pi_builder.sql', '009_custom_quote_items.sql', '010_global_pi_template.sql', '011_professional_pi_optimization.sql', '012_product_foundation.sql', '013_product_master_data.sql', '014_pim_foundation_upgrade.sql', '015_ai_product_import.sql', '016_product_library_business_readiness.sql', '017_product_price_engine.sql', '018_v53_ai_business_brain_foundation.sql', '019_v53_phase2a_customer_intelligence_mvp.sql', '020_v53_opportunity_discovery_assistant.sql', '021_v53_search_task_execution_center.sql', '022_v53_customer_intelligence_update_history.sql', '023_v53_search_result_storage.sql', '024_v53_customer_source.sql', '025_v53_ai_knowledge_center_foundation.sql', '026_v53_search_strategy_human_approval.sql', '027_v53_search_execution_foundation.sql', '028_search_execution_terminal_phase.sql', '029_product_foundation_correction.sql', '030_product_module_finalization.sql', '031_website_evidence_enrichment.sql']) {
           db.exec(readFileSync(join(root, 'database', 'migrations', migrationFile), 'utf8'));
         }
       }
-      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('030_product_module_finalization');
-      databaseDiagnostics.migration = migration?.version === '030_product_module_finalization';
+      const migration = db.prepare('SELECT version FROM schema_migrations WHERE version = ?').get('031_website_evidence_enrichment');
+      databaseDiagnostics.migration = migration?.version === '031_website_evidence_enrichment';
       databaseDiagnostics.migrationVersion = migration?.version || null;
-      if (!databaseDiagnostics.migration) throw new Error('Migration 030_product_module_finalization was not recorded.');
+      if (!databaseDiagnostics.migration) throw new Error('Migration 031_website_evidence_enrichment was not recorded.');
       databaseDiagnostics.tables = db.prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name").all().map(row => row.table_name);
     } else {
       db.exec(readFileSync(join(root, 'database', 'schema.sql'), 'utf8'));
@@ -139,17 +160,24 @@ function initializeDatabase() {
       ensureQuoteBuilderColumns();
       ensureCustomerIntelligenceColumns();
       ensureSearchExecutionColumns();
+      ensureWebsiteEnrichmentSchema();
       databaseDiagnostics.migration = true;
-      databaseDiagnostics.migrationVersion = '030_product_module_finalization';
+      databaseDiagnostics.migrationVersion = '031_website_evidence_enrichment';
       databaseDiagnostics.tables = db.prepare("SELECT name AS table_name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.table_name);
     }
     seedCustomerDiscoveryProfiles();
     aiCostControl = createAiCostControl(db);
     knowledgeCenter = createKnowledgeCenter({ db, audit });
     searchStrategyService = createSearchStrategyService({ db, audit });
-    searchExecutionService = createSearchExecutionService({ db, audit });
-    searchExecutionService.recoverInterrupted();
     aiBusinessBrain = createAiBusinessBrain({ db, aiCostControl, buildContext: buildAiContext });
+    websiteEnrichmentService = createWebsiteEvidenceEnrichmentService({
+      db,
+      audit,
+      qualifyResult: (id, user, options) => executeSearchResultQualification(id, user, options)
+    });
+    websiteEnrichmentService.recoverInterrupted();
+    searchExecutionService = createSearchExecutionService({ db, audit, onCompleted: runCompletedSearchExecutionPipeline });
+    searchExecutionService.recoverInterrupted();
     recordSystemEvent('info', `Database migration: verified (${databaseDiagnostics.tables.length} tables)`);
     recordSystemEvent('info', 'Database seed: started');
     seedDatabase();
@@ -271,6 +299,39 @@ function ensureSearchExecutionColumns() {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_search_results_task_dedup ON search_results(search_task_id,dedup_key) WHERE dedup_key IS NOT NULL AND LENGTH(TRIM(dedup_key)) > 0 AND duplicate_of_search_result_id IS NULL");
   db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_execution ON search_results(search_execution_id,status)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_duplicate ON search_results(duplicate_of_search_result_id)');
+}
+
+function ensureWebsiteEnrichmentSchema() {
+  const existing = new Set(db.prepare('PRAGMA table_info(search_results)').all().map(column => column.name));
+  if (!existing.has('enrichment_status')) db.exec("ALTER TABLE search_results ADD COLUMN enrichment_status TEXT NOT NULL DEFAULT 'Pending'");
+  if (!existing.has('enrichment_updated_at')) db.exec('ALTER TABLE search_results ADD COLUMN enrichment_updated_at TEXT');
+  db.exec(`CREATE TABLE IF NOT EXISTS lead_enrichment_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_task_id INTEGER NOT NULL REFERENCES search_tasks(id) ON DELETE CASCADE,
+    search_execution_id INTEGER REFERENCES search_executions(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Running','Paused','Completed','Failed')),
+    total_count INTEGER NOT NULL DEFAULT 0, processed_count INTEGER NOT NULL DEFAULT 0,
+    completed_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0,
+    retry_failed INTEGER NOT NULL DEFAULT 0, checkpoint_json TEXT NOT NULL DEFAULT '{}',
+    pause_requested_at TEXT, heartbeat_at TEXT, last_error TEXT,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    started_at TEXT, completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS lead_enrichment_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    search_result_id INTEGER NOT NULL UNIQUE REFERENCES search_results(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Verified Website','Needs Review','No Reliable Website','Completed','Failed')),
+    official_website TEXT, phone TEXT, public_emails_json TEXT NOT NULL DEFAULT '[]',
+    contact_page_url TEXT, business_description TEXT, verification_score INTEGER NOT NULL DEFAULT 0,
+    evidence_json TEXT NOT NULL DEFAULT '{}', extracted_json TEXT NOT NULL DEFAULT '{}',
+    source_urls_json TEXT NOT NULL DEFAULT '[]', status_history_json TEXT NOT NULL DEFAULT '[]',
+    attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_lead_enrichment_jobs_task ON lead_enrichment_jobs(search_task_id,status,created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_search_results_enrichment ON search_results(search_task_id,enrichment_status,id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_lead_enrichment_records_status ON lead_enrichment_records(status,updated_at)');
 }
 
 function ensureCustomerIntelligenceColumns() {
@@ -568,9 +629,12 @@ function seedDatabase() {
   if (!userCount) {
     const insert = db.prepare('INSERT INTO users (name, email, password_hash, role, initials) VALUES (?, ?, ?, ?, ?)');
     const password = hashPassword(seedPassword);
-    for (const user of demoUsers) insert.run(user[0], user[1], password, user[2], user[3]);
+    const initialUsers = demoSeedEnabled
+      ? demoUsers
+      : [['System Administrator', process.env.SEED_ADMIN_EMAIL || 'admin@rspro.ai', 'Admin', 'SA']];
+    for (const user of initialUsers) insert.run(user[0], user[1], password, user[2], user[3]);
   }
-  if (!db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get('salesadmin@rspro.ai')) {
+  if (demoSeedEnabled && !db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get('salesadmin@rspro.ai')) {
     db.prepare('INSERT INTO users (name,email,password_hash,role,initials) VALUES (?,?,?,?,?)').run('Riley Morgan','salesadmin@rspro.ai',hashPassword(seedPassword),'Admin','RM');
   }
 
@@ -593,8 +657,8 @@ function seedDatabase() {
   for (const name of ['Dining Chair','Bar Stool','Table Top','Table Base','Booth Seating','Sofa','Outdoor Furniture','Cabinet','Divider','Lighting','Decor','Custom Furniture','Kitchen Equipment','Tableware','Others']) ensureCategory.run(name, makeCode(name).toLowerCase());
 
   const adminId = db.prepare("SELECT id FROM users WHERE role = 'Admin'").get().id;
-  const salesId = db.prepare("SELECT id FROM users WHERE role = 'Sales'").get().id;
-  const ownerId = db.prepare("SELECT id FROM users WHERE role = 'Owner'").get().id;
+  const salesId = db.prepare("SELECT id FROM users WHERE role = 'Sales'").get()?.id || adminId;
+  const ownerId = db.prepare("SELECT id FROM users WHERE role = 'Owner'").get()?.id || adminId;
 
   const organizationDefaults = {
     company_logo: '/favicon.svg', company_name: 'Restaurant Setup Pro', address: '', city_state_zip: '', country: '',
@@ -603,17 +667,19 @@ function seedDatabase() {
   const insertOrganizationSetting = db.prepare('INSERT OR IGNORE INTO organization_settings (key, value, updated_by) VALUES (?, ?, ?)');
   for (const [key, value] of Object.entries(organizationDefaults)) insertOrganizationSetting.run(key, value, ownerId);
 
-  const demoCustomers = [
-    ['California Coffee Lab', 'Coffee Shop', 'United States', 'San Diego', 'Website'],
-    ['Tokyo Sushi House', 'Restaurant', 'Japan', 'Tokyo', 'Manual'],
-    ['Harbor Bakery Cafe', 'Bakery Cafe', 'Australia', 'Sydney', 'Instagram'],
-    ['Metro Bubble Tea', 'Bubble Tea', 'Malaysia', 'Kuala Lumpur', 'Facebook']
-  ];
-  const findDemoCustomer = db.prepare('SELECT id FROM customers WHERE LOWER(company_name) = LOWER(?) LIMIT 1');
-  const insertDemoCustomer = db.prepare(`INSERT INTO customers
-    (company_name, business_type, country, city, source, source_confidence, confidence_score, created_by)
-    VALUES (?, ?, ?, ?, ?, 80, 80, ?)`);
-  for (const customer of demoCustomers) if (!findDemoCustomer.get(customer[0])) insertDemoCustomer.run(...customer, ownerId);
+  if (demoSeedEnabled) {
+    const demoCustomers = [
+      ['California Coffee Lab', 'Coffee Shop', 'United States', 'San Diego', 'Website'],
+      ['Tokyo Sushi House', 'Restaurant', 'Japan', 'Tokyo', 'Manual'],
+      ['Harbor Bakery Cafe', 'Bakery Cafe', 'Australia', 'Sydney', 'Instagram'],
+      ['Metro Bubble Tea', 'Bubble Tea', 'Malaysia', 'Kuala Lumpur', 'Facebook']
+    ];
+    const findDemoCustomer = db.prepare('SELECT id FROM customers WHERE LOWER(company_name) = LOWER(?) LIMIT 1');
+    const insertDemoCustomer = db.prepare(`INSERT INTO customers
+      (company_name, business_type, country, city, source, source_confidence, confidence_score, created_by)
+      VALUES (?, ?, ?, ?, ?, 80, 80, ?)`);
+    for (const customer of demoCustomers) if (!findDemoCustomer.get(customer[0])) insertDemoCustomer.run(...customer, ownerId);
+  }
 
   const configSeeds = {
     'Product Categories': ['Booth Seating', 'Dining Chair', 'Restaurant Table', 'Bar Stool', 'Outdoor Furniture', 'Partition / Divider', 'Counter / Service Bar'],
@@ -671,6 +737,7 @@ function seedDatabase() {
     });
   }
 
+  if (demoSeedEnabled) {
   const productCount = db.prepare('SELECT COUNT(*) AS count FROM products').get().count;
   const demoDataCleared = db.prepare("SELECT value FROM organization_settings WHERE key='product_demo_data_cleared'").get()?.value === 'true';
   if (!productCount && !demoDataCleared) {
@@ -791,6 +858,7 @@ function seedDatabase() {
   ];
   const enrichKnowledge = db.prepare('UPDATE products SET ai_summary = COALESCE(ai_summary, ?), ai_recommendation_weight = COALESCE(ai_recommendation_weight, ?), ai_notes = COALESCE(ai_notes, ?), internal_notes = COALESCE(internal_notes, ?), knowledge_prompt = COALESCE(knowledge_prompt, ?) WHERE sku = ?');
   for (const row of knowledgeEnrichment) enrichKnowledge.run(...row);
+  }
 }
 
 function makeCode(value) {
@@ -2319,11 +2387,17 @@ function buildAiContext({ contextType, entityType, entityId, user, options = {} 
   }
   if (normalizedType === 'search-result-qualification') {
     if (!requires(user, 'opportunity-intelligence')) throw Object.assign(new Error('Search Result qualification context access denied.'), { status: 403 });
-    const result = db.prepare(`SELECT id,search_task_id,company_name,customer_type,industry,country,city,website,contact_person,email,phone,company_size,business_type,source_type,source_reference,status FROM search_results WHERE id=?`).get(id);
+    const result = db.prepare(`SELECT id,search_task_id,company_name,customer_type,industry,country,city,website,contact_person,email,phone,
+      company_size,business_type,source_type,source_reference,source_category,evidence_json,enrichment_status,enrichment_updated_at,status
+      FROM search_results WHERE id=?`).get(id);
     if (!result) throw Object.assign(new Error('Search Result not found for AI context.'), { status: 404 });
     const task = db.prepare('SELECT id,task_name,target_customer,customer_type,industry,location,search_objective,keywords,filters,required_data_fields,status FROM search_tasks WHERE id=?').get(result.search_task_id);
-    sourceReferences.push({ module: 'Opportunity Intelligence', table: 'search_results', id: result.id }, { module: 'Opportunity Intelligence', table: 'search_tasks', id: result.search_task_id });
-    return { ...base, context: { result: { ...result, source_reference: parseSearchResultEvidence(result.source_reference) }, task: task ? { ...task, keywords: parseJsonValue(task.keywords, []), filters: parseJsonValue(task.filters, []), required_data_fields: parseJsonValue(task.required_data_fields, []) } : null, constraints: { advisoryOnly: true, trustedOutputAppliedServerSide: true, customerCreationAllowed: false } } };
+    sourceReferences.push(
+      { module: 'Opportunity Intelligence', table: 'search_results', id: result.id },
+      { module: 'Opportunity Intelligence', table: 'search_tasks', id: result.search_task_id },
+      { module: 'Website & Evidence Enrichment', table: 'lead_enrichment_records', search_result_id: result.id }
+    );
+    return { ...base, context: { result: { ...result, source_reference: parseSearchResultEvidence(result.source_reference), evidence_json: parseJsonValue(result.evidence_json, {}) }, task: task ? { ...task, keywords: parseJsonValue(task.keywords, []), filters: parseJsonValue(task.filters, []), required_data_fields: parseJsonValue(task.required_data_fields, []) } : null, constraints: { advisoryOnly: true, trustedOutputAppliedServerSide: true, customerCreationAllowed: false, evidenceOnly: true, unsupportedBusinessFactsForbidden: true } } };
   }
   if (normalizedType === 'quote' || normalizedType === 'pi') {
     if (!requires(user, 'sales-quotes')) throw Object.assign(new Error('Quote/PI context access denied.'), { status: 403 });
@@ -2494,6 +2568,7 @@ const restaurantOwnerCustomerTypes = Object.freeze([
 const discoveryCustomerTypes = Object.freeze([
   'Restaurant Furniture Distributor',
   'Hospitality Furniture Dealer',
+  'Commercial Furniture Supplier',
   'Restaurant Interior Design Company',
   'Restaurant Contractor',
   'Restaurant Owner',
@@ -2524,6 +2599,12 @@ const discoveryProfileTemplates = Object.freeze({
     ['Purchase Potential', 30, 'Need for product catalog, margin, and quote-ready items.'],
     ['Company Size', 20, 'Dealer reach, number of projects, or sales coverage.'],
     ['Contact Availability', 10, 'Availability of verified contact channels.']
+  ],
+  'Commercial Furniture Supplier': [
+    ['Business Match', 40, 'Fit with commercial furniture supply for hospitality projects.'],
+    ['Purchase Potential', 30, 'Likelihood of recurring restaurant or contract furniture demand.'],
+    ['Company Size', 20, 'Ability to supply commercial project volume.'],
+    ['Contact Availability', 10, 'Availability of purchasing, sales, or owner contact.']
   ],
   'Restaurant Interior Design Company': [
     ['Project Capability', 40, 'Ability to specify furniture for restaurant build-outs.'],
@@ -2597,6 +2678,7 @@ function discoveryKeywordsFor(type) {
   const map = {
     'Restaurant Furniture Distributor': ['restaurant furniture supplier', 'hospitality furniture distributor', 'commercial seating supplier', 'restaurant tables and chairs distributor'],
     'Hospitality Furniture Dealer': ['hospitality furniture dealer', 'commercial furniture dealer', 'restaurant furniture showroom', 'contract furniture dealer'],
+    'Commercial Furniture Supplier': ['commercial furniture supplier', 'contract furniture supplier', 'hospitality furniture supplier', 'restaurant furniture supplier'],
     'Restaurant Interior Design Company': ['restaurant interior design company', 'hospitality design firm', 'restaurant design studio', 'cafe interior designer'],
     'Restaurant Contractor': ['restaurant contractor', 'restaurant build out contractor', 'hospitality fit out contractor', 'commercial kitchen and dining contractor'],
     'Restaurant Owner': ['restaurant owner', 'coffee shop owner', 'restaurant opening', 'restaurant renovation'],
@@ -2610,33 +2692,26 @@ function discoveryKeywordsFor(type) {
   return map[type] || ['restaurant furniture buyer', 'hospitality furniture customer', 'commercial furniture project'];
 }
 
-function inferDiscoveryCustomerType(text) {
-  const value = String(text || '').toLowerCase();
-  if (/\b(importer|importing|import)\b/.test(value)) return 'Importer';
-  if (/\b(distributor|distributors|supplier|suppliers|wholesale|reseller|resellers)\b/.test(value)) return 'Restaurant Furniture Distributor';
-  if (/\b(dealer|showroom)\b/.test(value)) return 'Hospitality Furniture Dealer';
-  if (/\b(design|designer|interior|architect|studio)\b/.test(value)) return 'Restaurant Interior Design Company';
-  if (/\b(contractor|builder|build[- ]?out|fit[- ]?out|construction)\b/.test(value)) return 'Restaurant Contractor';
-  if (/\b(group|chain|multi[- ]?location|franchise)\b/.test(value)) return 'Multi-location Restaurant Group';
-  if (/\b(bubble tea|boba)\b/.test(value)) return 'Bubble Tea Shop Owner';
-  if (/\b(bar|pub|cocktail)\b/.test(value)) return 'Bar Owner';
-  if (/\b(coffee shop|restaurant cafe|cafe|café)\b/.test(value)) return 'Cafe Owner';
-  if (/\b(owner|operator|restaurant|bakery)\b/.test(value)) return 'Independent Restaurant Owner';
-  return null;
+function discoveryStructuredInput(text) {
+  const raw = String(text || '');
+  const blockValues = label => {
+    const match = raw.match(new RegExp(`(?:^|\\n)\\s*${label}\\s*:\\s*\\n([\\s\\S]*?)(?=\\n\\s*[A-Za-z][^\\n:]{1,40}:|$)`, 'i'));
+    return match ? match[1].split(/\r?\n/).map(value => value.replace(/^\s*[-*]\s*/, '').trim()).filter(Boolean) : [];
+  };
+  return {
+    exclusionRules: blockValues('(?:Exclude|Exclusion rules?)')
+  };
 }
 
-function inferDiscoveryLocation(text) {
-  const raw = String(text || '');
-  const lower = raw.toLowerCase();
-  const countries = [
-    ['usa', 'USA'], ['united states', 'USA'], ['america', 'USA'], ['canada', 'Canada'], ['mexico', 'Mexico'],
-    ['malaysia', 'Malaysia'], ['singapore', 'Singapore'], ['australia', 'Australia'], ['uk', 'United Kingdom'], ['united kingdom', 'United Kingdom']
-  ];
-  const regions = ['California', 'Texas', 'Florida', 'New York', 'Los Angeles', 'San Francisco', 'Dallas', 'Houston', 'Austin', 'Miami', 'Chicago', 'Seattle', 'Toronto', 'London'];
-  let country = countries.find(([needle]) => lower.includes(needle))?.[1] || null;
-  const region = regions.find(regionName => lower.includes(regionName.toLowerCase())) || null;
-  if (!country && ['California', 'Texas', 'Florida', 'New York', 'Los Angeles', 'San Francisco', 'Dallas', 'Houston', 'Austin', 'Miami', 'Chicago', 'Seattle'].includes(region)) country = 'USA';
-  return { country, region };
+function normalizeDiscoveryCustomerType(value) {
+  const key = String(value || '').trim().toLowerCase();
+  const known = {
+    'restaurant furniture distributor': 'Restaurant Furniture Distributor', 'restaurant furniture distributors': 'Restaurant Furniture Distributor',
+    'hospitality furniture dealer': 'Hospitality Furniture Dealer', 'hospitality furniture dealers': 'Hospitality Furniture Dealer',
+    'commercial furniture supplier': 'Commercial Furniture Supplier', 'commercial furniture suppliers': 'Commercial Furniture Supplier',
+    'restaurant interior design company': 'Restaurant Interior Design Company', 'restaurant interior design companies': 'Restaurant Interior Design Company'
+  };
+  return known[key] || String(value || '').trim();
 }
 
 function inferCompanySize(text, customerType) {
@@ -2684,29 +2759,45 @@ function buildDiscoveryGuidance({ rawRequest, customerType, country, region }) {
   };
 }
 
-function buildDiscoveryPlan(rawRequest) {
-  const customerType = inferDiscoveryCustomerType(rawRequest);
-  const { country, region } = inferDiscoveryLocation(rawRequest);
+function buildDiscoveryPlan(rawRequest, inputs = {}) {
+  const structured = discoveryStructuredInput(rawRequest);
+  const customerTypes = inputs.customerTypes || [];
+  const customerType = customerTypes[0];
+  const selectedLocation = inputs.selectedLocation || {};
+  const country = String(selectedLocation.country || '').trim();
+  const region = String(selectedLocation.city || selectedLocation.state || '').trim();
   const companySize = inferCompanySize(rawRequest, customerType);
   const industry = 'Hospitality Furniture';
   const profiles = discoveryProfiles();
   const scoringProfile = profiles.find(profile => profile.customer_type === customerType) || null;
   const plan = {
     target_customer_type: customerType || 'Needs Clarification',
+    customer_types: customerTypes,
     industry,
     country: country || 'Needs Clarification',
     region_city: region || 'Needs Clarification',
+    state: selectedLocation.state || null,
+    city: selectedLocation.city || null,
+    full_location: selectedLocation.formatted_location,
+    location: { ...selectedLocation },
+    target_quantity: inputs.targetQuantity,
+    category_label: inputs.categoryLabel,
+    provider_category: inputs.providerCategory,
     company_size: companySize.label,
     company_size_detail: companySize.detail,
     recommended_keywords: discoveryKeywordsFor(customerType),
     recommended_search_sources: ['Google Maps', 'LinkedIn', 'Company Website'],
     suggested_filters: ['Target country', 'Customer type', 'Company size', 'Product category', 'Decision maker requirement'].filter(Boolean),
-    excluded_customers: restaurantOwnerCustomerTypes.includes(customerType)
+    excluded_customers: structured.exclusionRules.length ? structured.exclusionRules : restaurantOwnerCustomerTypes.includes(customerType)
       ? ['Residential furniture shoppers', 'Low-budget one-time buyers without project timing', 'Non-commercial home decor stores']
       : ['Large retail furniture chains', 'Residential furniture stores', 'Non-hospitality furniture sellers'],
     confidence_score: customerType && country ? 82 : customerType || country ? 58 : 35
   };
   return { plan, guidance: buildDiscoveryGuidance({ rawRequest, customerType, country, region }), scoringProfile };
+}
+
+function selectedDiscoveryLocation(value) {
+  return normalizeLocation(value);
 }
 
 function buildGeneratedSearchPlan(plan, guidance) {
@@ -2724,15 +2815,24 @@ function buildGeneratedSearchPlan(plan, guidance) {
     ...(customerType.includes('Design') || customerType.includes('Contractor') ? ['Works with restaurant clients'] : []),
     ...(customerType.includes('Owner') || customerType.includes('Group') ? ['Direct restaurant furniture demand'] : [])
   ];
-  const searchVolume = priority === 'High' ? '100 companies' : priority === 'Medium' ? '50 companies' : '25 companies';
+  const searchVolume = plan?.target_quantity ? `${plan.target_quantity} companies` : priority === 'High' ? '100 companies' : priority === 'Medium' ? '50 companies' : '25 companies';
   return {
     status: ready ? 'Ready for Search' : 'Draft Search Plan',
     target_customer: [plan?.company_size, plan?.target_customer_type].filter(value => value && value !== 'Unknown' && value !== 'Needs Clarification').join(' ') || plan?.target_customer_type || 'Needs Clarification',
     customer_type: plan?.target_customer_type || 'Needs Clarification',
+    customer_types: plan?.customer_types || [plan?.target_customer_type].filter(Boolean),
     industry: plan?.industry || 'Hospitality Furniture',
-    location: [plan?.region_city, plan?.country].filter(value => value && value !== 'Needs Clarification').join(', ') || 'Needs Clarification',
+    country: plan?.country,
+    state: plan?.state,
+    city: plan?.city || plan?.region_city,
+    full_location: plan?.full_location,
+    location_selection: plan?.location || null,
+    location: plan?.full_location || [plan?.region_city, plan?.country].filter(value => value && value !== 'Needs Clarification').join(', ') || 'Needs Clarification',
+    category_label: plan?.category_label,
+    provider_category: plan?.provider_category,
     company_size: plan?.company_size || 'Unknown',
     company_size_detail: plan?.company_size_detail || plan?.company_size || 'Unknown',
+    target_quantity: plan?.target_quantity,
     recommended_search_volume: searchVolume,
     priority,
     priority_reasons: priorityReasons,
@@ -2743,6 +2843,8 @@ function buildGeneratedSearchPlan(plan, guidance) {
     search_keywords: plan?.recommended_keywords || [],
     recommended_data_fields: ['Company Name', 'Website', 'City', 'Country', 'Contact Person', 'Email', 'Phone', 'LinkedIn', 'Instagram', 'Company Size', 'Business Type'],
     exclude: plan?.excluded_customers || []
+    ,connector_preference: plan?.provider_category ? 'geoapify-places' : null
+    ,connector_search_semantics: plan?.provider_category ? 'Category + geographic filter' : 'Needs Confirmation'
   };
 }
 
@@ -2851,12 +2953,15 @@ const searchResultStatuses = Object.freeze(['new', 'reviewed', 'converted', 'dis
 function normalizeSearchResult(row) {
   if (!row) return null;
   const evidence = parseSearchResultEvidence(row.source_reference);
+  const evidenceJson = parseJsonValue(row.evidence_json, {});
   const aiQualification = searchResultAiQualification(row.id);
   const humanReview = searchResultHumanReview(row.id);
   return {
     ...row,
     opportunity_score: Number(row.opportunity_score || 0),
-    evidence_json: parseJsonValue(row.evidence_json, {}),
+    evidence_json: evidenceJson,
+    enrichment_status: row.enrichment_status || 'Pending',
+    enrichment: websiteEnrichmentService?.readRecord(row.id) || null,
     ai_qualification_status: aiQualification.status,
     ai_qualification_at: aiQualification.at,
     ai_qualification_execution_log_id: aiQualification.executionLogId || null,
@@ -2865,10 +2970,16 @@ function normalizeSearchResult(row) {
     reviewed_at: humanReview.at || null,
     reviewed_by: humanReview.userName || null,
     review_audit_id: humanReview.auditId || null,
-    qualification_source: aiQualification.status === 'Qualified' ? 'Formal AI Qualification' : 'Initial Rules / Manual Data',
+    qualification_source: aiQualification.source || (aiQualification.status === 'Qualified' ? 'Formal AI Qualification' : 'No AI Judgment'),
+    ai_recommendation_group: aiQualification.status === 'Qualified'
+      ? qualificationRecommendationGroup(row.opportunity_score, row.status, evidenceJson.qualification?.recommendation)
+      : 'pending',
+    missing_information: searchResultMissingInformation(row),
     source_url: evidence.source_url,
     reference_note: evidence.reference_note,
-    recommended_product_reason: recommendedProductReasonFor(row.customer_type, row.business_type)
+    recommended_product_reason: row.connector_key !== 'geoapify-places' && aiQualification.status === 'Qualified'
+      ? recommendedProductReasonFor(row.customer_type, row.business_type)
+      : null
   };
 }
 
@@ -2883,11 +2994,13 @@ function searchResultHumanReview(id) {
 function searchResultAiQualification(id) {
   const direct = db.prepare("SELECT id,status,provider,model,completed_at,created_at,error_message FROM ai_execution_logs WHERE entity_type='search_result' AND entity_id=? AND action_name='lead-qualification' ORDER BY created_at DESC,id DESC LIMIT 1").get(String(id));
   if (direct) {
-    if (direct.status === 'completed') return { status: 'Qualified', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model };
+    if (direct.status === 'completed') return { status: 'Qualified', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model, source: 'Formal AI Qualification' };
     if (direct.status === 'failed') return { status: 'Failed', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model, error: direct.error_message };
     if (direct.status === 'blocked') return { status: 'Blocked', at: direct.completed_at || direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model, error: direct.error_message };
     return { status: direct.status === 'running' ? 'Running' : 'Pending', at: direct.created_at, executionLogId: direct.id, provider: direct.provider, model: direct.model };
   }
+  const ruleExcluded = db.prepare("SELECT metadata,created_at FROM audit_log WHERE entity_type='search_results' AND entity_id=? AND action='rule_excluded_search_result' ORDER BY created_at DESC,id DESC LIMIT 1").get(String(id));
+  if (ruleExcluded) return { status: 'Qualified', at: ruleExcluded.created_at, provider: 'rules', model: 'pre-qualification-rules-v1', source: 'Rules Assessment' };
   const audits = db.prepare("SELECT metadata,created_at FROM audit_log WHERE entity_type='search_results' AND entity_id=? AND action IN ('create_search_result','update_search_result','manual_search_result_correction') ORDER BY created_at DESC,id DESC LIMIT 20").all(String(id));
   for (const item of audits) {
     const executionId = Number(parseJsonValue(item.metadata, {}).aiExecutionLogId || 0);
@@ -2934,7 +3047,8 @@ function searchResultsForTask(taskId) {
 }
 
 function searchResultDetail(id) {
-  return normalizeSearchResult(db.prepare(`SELECT search_results.*, search_tasks.task_name, users.name AS created_by_name,
+  return normalizeSearchResult(db.prepare(`SELECT search_results.*, search_tasks.task_name,
+    search_tasks.customer_type AS target_customer_type, users.name AS created_by_name,
     customers.company_name AS converted_customer_name
     FROM search_results JOIN search_tasks ON search_tasks.id = search_results.search_task_id
     LEFT JOIN users ON users.id = search_results.created_by
@@ -2948,41 +3062,176 @@ function searchResultSummary(results) {
   return counts;
 }
 
+function searchResultMissingInformation(result = {}) {
+  const qualificationMissing = parseJsonValue(result.evidence_json, {}).qualification?.missingInformation;
+  if (Array.isArray(qualificationMissing)) return qualificationMissing;
+  const missing = [];
+  if (!String(result.website || '').trim()) missing.push('网站');
+  if (!String(result.phone || result.email || '').trim()) missing.push('联系方式');
+  if (!String(result.business_type || '').trim() && !String(result.source_category || '').trim()) missing.push('业务类型证据');
+  return missing;
+}
+
+function qualificationRecommendationGroup(score, status = 'new', profileRecommendation = null) {
+  if (status === 'discarded') return 'not_recommended';
+  if (['recommended', 'needs_confirmation', 'not_recommended'].includes(profileRecommendation)) return profileRecommendation;
+  if (Number(score || 0) < 40) return 'not_recommended';
+  return Number(score || 0) >= 70 ? 'recommended' : 'needs_confirmation';
+}
+
+function searchResultQualificationProgress(results = []) {
+  const analyzed = results.filter(result => result.ai_qualification_status === 'Qualified').length;
+  const groups = { recommended: 0, needs_confirmation: 0, not_recommended: 0 };
+  for (const result of results) if (result.ai_qualification_status === 'Qualified') groups[result.ai_recommendation_group] += 1;
+  return { found: results.length, analyzed, complete: results.length > 0 && analyzed === results.length, groups };
+}
+
+function preQualificationRuleAssessment(result = {}) {
+  const evidenceText = [result.company_name, result.source_category, result.business_type].filter(Boolean).join(' ').toLowerCase();
+  const positive = /furniture|furnish|interior|design|decor|mattress|upholster|seating|chair|table|booth|sofa|hospitality/.test(evidenceText);
+  const obviousMismatch = /church|school|university|hospital|medical|dentist|grocery|supermarket|restaurant|cafe|bakery|hotel|apartment|real estate|automotive|car dealer/.test(evidenceText) && !positive;
+  return { exclude: obviousMismatch, positive, evidenceText };
+}
+
 function buildSearchResultQualification(body, task) {
-  const hasManualScore = body.opportunity_score !== undefined && body.opportunity_score !== null && String(body.opportunity_score).trim() !== '';
   const location = [body.city, body.country].filter(Boolean).join(', ') || task?.location || 'Unknown location';
-  const customerType = String(body.customer_type || task?.customer_type || 'Hospitality customer').trim();
   const company = requiredText(body.company_name, 'Company name');
-  const inferredScore = clampScore(
-    35
-    + (customerType ? 20 : 0)
-    + (body.website ? 15 : 0)
-    + (body.email || body.phone || body.contact_person ? 15 : 0)
-    + (body.source_url || body.source_reference ? 10 : 0)
-    + (body.business_type ? 5 : 0)
-  );
-  const score = clampScore(hasManualScore ? body.opportunity_score : inferredScore);
-  const evaluatedPotential = String(body.purchase_potential || '').trim() || (score >= 75 ? 'High' : score >= 45 ? 'Medium' : 'Low');
-  const why = [
-    customerType && `${customerType} matches the active search task.`,
-    body.business_type && `Business type: ${body.business_type}.`,
-    evaluatedPotential && `Purchase potential: ${evaluatedPotential}.`,
-    body.email || body.phone || body.website ? 'Contact or website information is available.' : 'Contact information still needs review.',
-    body.source_url || body.source_reference ? 'Source evidence is saved for future handoff.' : null,
-    body.reference_note ? `Evidence note: ${body.reference_note}.` : null
-  ].filter(Boolean).join(' ');
+  const evidence = parseJsonValue(body.evidence_json, {});
+  const enrichment = evidence.enrichment || {};
+  const target = String(task?.customer_type || body.target_customer_type || '').trim();
+  const profile = qualificationProfileForTarget(target);
+  if (profile) {
+    const savedEvidence = reclassifySavedEvidence(profile, enrichment);
+    const source = parseSearchResultEvidence(body.source_reference);
+    const providerEvidence = classifyEvidenceText(profile, {
+      text: [body.company_name, body.source_category, body.business_type].filter(Boolean).join(' · '),
+      url: source.source_url,
+      pageType: 'provider_fact',
+      capturedAt: body.captured_at || evidence.capturedTime || null
+    }).filter(item => item.evidenceType === 'exclusion');
+    const evaluatedEvidence = [...new Map([...savedEvidence, ...providerEvidence]
+      .map(item => [`${item.evidenceType}|${item.type}|${item.url}|${item.snippet}`, item])).values()];
+    const profileResult = evaluateQualificationProfile(profile, {
+      evidence: evaluatedEvidence,
+      enrichmentStatus: body.enrichment_status || enrichment.status,
+      verifiedWebsite: enrichment.status === 'Completed' && Boolean(enrichment.officialWebsite),
+      publicContact: Boolean(body.email || body.phone || enrichment.publicEmails?.length || enrichment.phone)
+    });
+    const action = profileResult.recommendation === 'recommended'
+      ? '建议开发'
+      : profileResult.recommendation === 'not_recommended' ? '不建议开发' : '需要确认';
+    const positiveSummary = profileResult.keyEvidence.length
+      ? `直接目标证据：${profileResult.keyEvidence.map(item => item.matchedTerm).join('、')}`
+      : '没有餐饮、酒店或商业项目的直接证据';
+    const negativeSummary = profileResult.negativeEvidence.length
+      ? `负面证据：${profileResult.negativeEvidence.map(item => item.matchedTerm).join('、')}`
+      : '未发现明确负面证据';
+    const why = `${positiveSummary}；${negativeSummary}；${profileResult.scoringReason}。`;
+    return {
+      purchase_potential: profileResult.score >= 70 ? 'High' : profileResult.score >= 40 ? 'Medium' : 'Low',
+      opportunity_score: profileResult.score,
+      qualification_reason: why,
+      opportunity_summary: `${company}位于${location}，按${profile.name} Profile评估为${profileResult.score}分，结论：${action}。`,
+      why_customer_matters: why,
+      recommended_next_action: action,
+      profileResult: { ...profileResult, evaluatedEvidence }
+    };
+  }
+  const evidenceSignals = Array.isArray(enrichment.businessEvidence) ? enrichment.businessEvidence : [];
+  const savedEvidenceText = evidenceSignals.map(item => `${item.type || ''} ${item.snippet || ''}`).join(' ');
+  const evidenceText = [body.company_name, body.source_category, body.business_type, enrichment.businessDescription, savedEvidenceText].filter(Boolean).join(' ');
+  const strongBusinessSignal = /furniture|furnish|upholster|seating|chair|table|booth|mattress|sofa/i.test(evidenceText);
+  const adjacentBusinessSignal = /interior|design|decor|hospitality|commercial/i.test(evidenceText);
+  const hasEnrichmentEvidence = Boolean(enrichment.version || enrichment.status);
+  const verifiedWebsite = enrichment.status === 'Completed' && Boolean(enrichment.officialWebsite);
+  const evidenceStrength = Math.min(20, evidenceSignals.length * 5);
+  const score = !hasEnrichmentEvidence && body.opportunity_score !== undefined && body.opportunity_score !== null
+    ? clampScore(body.opportunity_score)
+    : hasEnrichmentEvidence
+    ? clampScore(20 + (strongBusinessSignal ? 30 : adjacentBusinessSignal ? 16 : 0) + (verifiedWebsite ? 15 : 0) + (body.email || body.phone || body.contact_person ? 10 : 0) + (body.source_url || body.source_reference ? 5 : 0) + evidenceStrength)
+    : clampScore(25 + (strongBusinessSignal ? 35 : adjacentBusinessSignal ? 20 : 0) + (body.website ? 15 : 0) + (body.email || body.phone || body.contact_person ? 15 : 0) + (body.source_url || body.source_reference ? 10 : 0));
+  const evaluatedPotential = score >= 70 ? 'High' : score >= 40 ? 'Medium' : 'Low';
+  const signal = hasEnrichmentEvidence
+    ? (strongBusinessSignal ? '已保存Evidence显示家具相关业务信号' : adjacentBusinessSignal ? '已保存Evidence显示室内设计、酒店或商业空间相关信号' : '已保存Evidence不足以确认目标客户匹配')
+    : (strongBusinessSignal ? '企业名称或Provider分类显示家具相关业务信号' : adjacentBusinessSignal ? '企业名称或Provider分类显示室内设计或商业空间相关信号' : '现有Provider证据不足以确认目标客户匹配');
+  const websiteStatement = hasEnrichmentEvidence
+    ? (verifiedWebsite ? '官网已经过公司名称、地点或业务信号验证' : enrichment.status === 'No Reliable Website' ? '未找到可靠官网' : '官网证据仍需人工确认')
+    : (body.website || body.email || body.phone ? '已有网站或联系方式可供人工核验' : '尚缺网站和联系方式');
+  const why = `${signal}；${websiteStatement}${target ? `${hasEnrichmentEvidence ? '；' : '，'}评估目标为${target}` : ''}。`;
   return {
     purchase_potential: evaluatedPotential,
     opportunity_score: score,
-    qualification_reason: String(body.qualification_reason || why).trim(),
-    opportunity_summary: `${company} is a ${customerType} candidate in ${location} with ${evaluatedPotential} purchase potential.`,
+    qualification_reason: why,
+    opportunity_summary: `${company}位于${location}，AI评估分数${score}，结论为${qualificationRecommendationGroup(score)}。`,
     why_customer_matters: why,
-    recommended_next_action: score >= 75
-      ? 'Review immediately, verify decision maker, and prepare a first sales touch.'
-      : score >= 45
-        ? 'Review details, complete missing contact information, and keep in the opportunity queue.'
-        : 'Keep as low-priority discovery result unless better qualification evidence appears.'
+    recommended_next_action: score >= 70 ? '建议开发' : score >= 40 ? '需要确认' : '不建议开发'
   };
+}
+
+async function executeSearchResultQualification(id, user, { force = false } = {}) {
+  const existing = searchResultDetail(id);
+  if (!existing) throw Object.assign(new Error('Search Result not found.'), { status: 404 });
+  if (existing.status === 'converted') throw Object.assign(new Error('Converted Search Results cannot run AI Qualification.'), { status: 409 });
+  if (!force && existing.ai_qualification_status === 'Qualified') return { result: existing, skipped: true };
+  const active = db.prepare("SELECT id,status FROM ai_execution_logs WHERE entity_type='search_result' AND entity_id=? AND action_name='lead-qualification' AND status IN ('pending','running') ORDER BY id DESC LIMIT 1").get(String(id));
+  if (active) throw Object.assign(new Error('AI Qualification is already running.'), { status: 409, executionLogId: active.id });
+  const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id=?').get(existing.search_task_id));
+  const profile = qualificationProfileForTarget(task?.customer_type);
+  const rules = profile ? { exclude: false, positive: false, profile: profile.key } : preQualificationRuleAssessment(existing);
+  if (rules.exclude) {
+    const reason = '规则预筛：现有Provider事实显示为明显非家具或室内业务，已跳过AI调用。';
+    db.prepare("UPDATE search_results SET purchase_potential='Low',opportunity_score=10,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action='不建议开发',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(reason, `${existing.company_name}经规则预筛后列为不建议开发。`, reason, id);
+    audit(user.id, 'rule_excluded_search_result', 'search_results', String(id), { ruleVersion: 'pre-qualification-rules-v1', aiCallSkipped: true, reason: 'obvious-mismatch' });
+    return { result: searchResultDetail(id), rules: { excluded: true, aiCallSkipped: true } };
+  }
+  audit(user.id, 'start_ai_qualification', 'search_results', String(id), { ruleVersion: 'pre-qualification-rules-v1', passedRules: true, evidenceVersion: existing.evidence_json?.enrichment?.version || 'provider-evidence-v1' });
+  const aiResult = await aiBusinessBrain.runAiAction({ moduleName: 'opportunity-intelligence', actionName: 'lead-qualification', entityType: 'search_result', entityId: id, contextType: 'search-result-qualification', promptTemplateKey: 'v53.foundation.mock.v1', userId: user.id, user, options: { provider: 'rules', trackLifecycle: true } });
+  if (aiResult.status !== 'completed') throw Object.assign(new Error(aiResult.result?.reason || `AI Qualification ${aiResult.status}.`), { status: 409, aiResult });
+  const qualification = buildSearchResultQualification(existing, task);
+  const evidenceJson = {
+    ...existing.evidence_json,
+    ...(qualification.profileResult ? {
+      qualification: {
+        ...qualification.profileResult,
+        scoredAt: new Date().toISOString()
+      }
+    } : {})
+  };
+  db.prepare('UPDATE search_results SET purchase_potential=?,opportunity_score=?,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action=?,evidence_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(qualification.purchase_potential, qualification.opportunity_score, qualification.qualification_reason, qualification.opportunity_summary, qualification.why_customer_matters, qualification.recommended_next_action, JSON.stringify(evidenceJson), id);
+  audit(user.id, 'ai_qualified_search_result', 'search_results', String(id), { aiExecutionLogId: aiResult.executionLogId, provider: aiResult.provider, model: aiResult.model, ruleVersion: profile ? `qualification-profile:${profile.key}:${profile.version}` : 'pre-qualification-rules-v1', evidenceOnly: true, evidenceVersion: existing.evidence_json?.enrichment?.version || 'provider-evidence-v1' });
+  return { result: searchResultDetail(id), ai: { status: 'completed', provider: aiResult.provider, model: aiResult.model, executionLogId: aiResult.executionLogId, cost: aiResult.cost } };
+}
+
+async function runSearchTaskQualificationBatch(taskId, user, { executionId = null, force = false } = {}) {
+  const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id=?').get(taskId));
+  if (!task) throw Object.assign(new Error('Search Task not found.'), { status: 404 });
+  const params = [taskId];
+  let executionFilter = '';
+  if (executionId) { executionFilter = ' AND search_execution_id=?'; params.push(executionId); }
+  const rows = db.prepare(`SELECT id FROM search_results WHERE search_task_id=?${executionFilter} AND status NOT IN ('converted','discarded') ORDER BY id`).all(...params);
+  audit(user.id, 'start_search_task_qualification_batch', 'search_tasks', String(taskId), { executionId, total: rows.length, force });
+  const outcomes = { total: rows.length, analyzed: 0, ruleExcluded: 0, aiCalled: 0, failed: 0 };
+  for (const row of rows) {
+    try {
+      const outcome = await executeSearchResultQualification(row.id, user, { force });
+      if (outcome.skipped) continue;
+      outcomes.analyzed += 1;
+      if (outcome.rules?.excluded) outcomes.ruleExcluded += 1;
+      if (outcome.ai) outcomes.aiCalled += 1;
+    } catch (error) {
+      outcomes.failed += 1;
+      audit(user.id, 'fail_ai_qualification', 'search_results', String(row.id), { aiExecutionLogId: error.executionLogId || error.aiResult?.executionLogId || null, error: String(error.message).slice(0, 300) });
+    }
+  }
+  const results = searchResultsForTask(taskId);
+  const progress = searchResultQualificationProgress(results);
+  audit(user.id, 'complete_search_task_qualification_batch', 'search_tasks', String(taskId), { executionId, ...outcomes, progress });
+  return { outcomes, progress, results };
+}
+
+async function runCompletedSearchExecutionPipeline({ execution, user }) {
+  const job = websiteEnrichmentService.createJob(execution.search_task_id, user, { executionId: execution.id });
+  return websiteEnrichmentService.runJob(job.id, user);
 }
 
 function searchResultFieldValues(body, existing = {}, task = {}) {
@@ -4434,7 +4683,35 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
 
   async createSearchStrategy(req, res) {
     const user = currentUser(req), body = await readJson(req);
-    return json(res, 201, { strategy: safeStrategy(searchStrategyService.create(user, body), user) });
+    const discoveryId = Number(body.customer_discovery_request_id) || null;
+    if (discoveryId && !body.strategy_data_json) {
+      const request = db.prepare('SELECT * FROM customer_discovery_requests WHERE id = ?').get(discoveryId);
+      if (!request) return json(res, 404, { error: 'Customer discovery request not found.' });
+      const plan = parseJsonValue(request.search_plan, {}), guidance = parseJsonValue(request.guidance, {});
+      const generated = body.generated_search_plan || buildGeneratedSearchPlan(plan, guidance);
+      const customerTypes = uniqueStrategyValues(generated.customer_types, plan.customer_types, generated.customer_type, plan.target_customer_type);
+      const expectedCount = Number(generated.target_quantity || String(generated.recommended_search_volume || '').match(/\d+/)?.[0] || 0);
+      body.strategy_data_json = {
+        ...blankSearchStrategyData(body.objective || generated.search_objective),
+        targetMarket: { countries: uniqueStrategyValues(generated.country, plan.country), cities: uniqueStrategyValues(generated.city, plan.city), regions: uniqueStrategyValues(generated.state, plan.state) },
+        targetCustomerProfile: { customerTypes, companySize: { description: generated.company_size_detail || '' }, businessAge: {}, locationCount: {}, expectedOrderRange: {} },
+        searchObjective: body.objective || generated.search_objective,
+        productCategories: uniqueStrategyValues(generated.category_label, plan.category_label),
+        searchKeywords: uniqueStrategyValues(generated.search_keywords, plan.recommended_keywords),
+        negativeKeywords: uniqueStrategyValues(generated.exclude, plan.excluded_customers),
+        platforms: generated.connector_preference === 'geoapify-places' ? ['Geoapify Places'] : [],
+        sourcePriority: generated.connector_preference === 'geoapify-places' ? ['Geoapify Places'] : [],
+        positiveSignals: { buyingSignals: [], renovationSignals: [], expansionSignals: [] },
+        exclusionRules: uniqueStrategyValues(generated.exclude, plan.excluded_customers),
+        resultTarget: { expectedCount, minimumQualifiedCount: null },
+        stopConditions: ['Stop when the expected result count is reached'],
+        reasoning: ['Mapped from the human-reviewed Generated Search Plan.'],
+        warnings: [], confidence: 1,
+        discovery: { location: plan.location || null, providerLocationId: plan.location?.provider_location_id || null, locationProvider: plan.location?.location_provider || null, bounds: plan.location?.bounds ?? null, fullLocation: generated.full_location || plan.full_location, countryCode: plan.location?.country_code || null, state: generated.state || plan.state, city: generated.city || plan.city, latitude: plan.location?.latitude ?? null, longitude: plan.location?.longitude ?? null, categoryLabel: generated.category_label || plan.category_label, providerCategory: generated.provider_category || plan.provider_category, connectorPreference: generated.connector_preference || null, connectorSearchSemantics: generated.connector_search_semantics || null, sourceAnalysisRevision: Number(body.source_analysis_revision || discoveryId), planRevision: Number(body.plan_revision || 1), contextRevision: Number(body.context_revision || 1) }
+      };
+    }
+    const created = searchStrategyService.create(user, body);
+    return json(res, 201, { strategy: safeStrategy(searchStrategyService.get(user, created.id), user) });
   },
 
   async updateSearchStrategy(req, res, id) {
@@ -4514,13 +4791,39 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     return json(res, 200, { requests: rows });
   },
 
+  locationProviders(req, res) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    return json(res, 200, { providers: locationProviderRegistry.list(), defaultProvider: 'geoapify' });
+  },
+
+  async locationSuggestions(req, res, query, providerKey) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Opportunity Intelligence access denied.' });
+    try {
+      const suggestions = await locationProviderRegistry.search({ providerKey: providerKey || 'geoapify', text: query, limit: 8, language: 'en' });
+      return json(res, 200, { suggestions });
+    } catch (error) {
+      return json(res, Number(error.status || 502), { error: error.message || 'Location service is unavailable.', code: error.code || 'LOCATION_PROVIDER_ERROR' });
+    }
+  },
+
   async analyzeCustomerDiscovery(req, res, actionName = 'analyze-requirement') {
     const user = currentUser(req);
     const capabilities = opportunityCapabilities(user);
     if (!(capabilities.canRunCustomerIntelligence || capabilities.canImport || capabilities.canRunAi)) return json(res, user ? 403 : 401, { error: 'Customer discovery analysis is not allowed for this role.' });
     const body = await readJson(req);
     const rawRequest = requiredText(body.request_text || body.prompt, 'Discovery request');
-    const { plan, guidance, scoringProfile } = buildDiscoveryPlan(rawRequest);
+    const location = selectedDiscoveryLocation(body.selected_location);
+    const availableCustomerTypes = new Set(discoveryProfiles().map(profile => profile.customer_type));
+    const customerTypes = [...new Set((Array.isArray(body.customer_types) ? body.customer_types : []).map(value => String(value || '').trim()).filter(Boolean))];
+    if (!customerTypes.length) return json(res, 400, { error: 'Select at least one Target Customer Type.' });
+    if (customerTypes.some(value => !availableCustomerTypes.has(value))) return json(res, 400, { error: 'Select Target Customer Types from the Customer Type System.' });
+    const targetQuantity = Number(body.target_quantity);
+    if (!Number.isInteger(targetQuantity) || targetQuantity < 1 || targetQuantity > 1000) return json(res, 400, { error: 'Target Quantity must be an integer between 1 and 1000.' });
+    const categoryLabel = String(body.category_label || '').trim(), providerCategory = String(body.provider_category || '').trim();
+    if (categoryLabel !== 'Furniture and Interior' || providerCategory !== 'commercial.furniture_and_interior') return json(res, 400, { error: 'Select a valid business search category.' });
+    const { plan, guidance, scoringProfile } = buildDiscoveryPlan(rawRequest, { selectedLocation: location, customerTypes, targetQuantity, categoryLabel, providerCategory });
     const row = db.prepare(`INSERT INTO customer_discovery_requests
       (raw_request, status, target_customer_type, industry, region, country, search_plan, guidance, scoring_profile, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`).get(
@@ -4577,7 +4880,7 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
       FROM search_tasks LEFT JOIN users ON users.id = search_tasks.created_by WHERE search_tasks.id = ?`).get(id));
     if (!task) return json(res, 404, { error: 'Search task not found.' });
     const results = searchResultsForTask(id);
-    return json(res, 200, { task: { ...task, search_results: results, search_result_summary: searchResultSummary(results) }, statuses: searchTaskStatuses, searchResultStatuses });
+    return json(res, 200, { task: { ...task, search_results: results, search_result_summary: searchResultSummary(results), qualification_progress: searchResultQualificationProgress(results) }, statuses: searchTaskStatuses, searchResultStatuses });
   },
 
   async createSearchTask(req, res, bodyOverride = null, userOverride = null) {
@@ -4659,7 +4962,81 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
     const task = normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id = ?').get(taskId));
     if (!task) return json(res, 404, { error: 'Search task not found.' });
     const results = searchResultsForTask(taskId);
-    return json(res, 200, { task, summary: searchResultSummary(results), results, statuses: searchResultStatuses });
+    return json(res, 200, { task, summary: searchResultSummary(results), qualification_progress: searchResultQualificationProgress(results), results, statuses: searchResultStatuses });
+  },
+
+  async runSearchTaskQualification(req, res, taskId) {
+    const user = currentUser(req), capabilities = opportunityCapabilities(user);
+    if (!capabilities.canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'AI Qualification is not allowed for this role.' });
+    try {
+      const body = await readJson(req);
+      const result = await runSearchTaskQualificationBatch(taskId, user, { force: body.force === true });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, error.status || 500, { error: error.message || 'Batch AI Qualification failed.' });
+    }
+  },
+
+  searchTaskEnrichment(req, res, taskId) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Lead Enrichment access denied.' });
+    if (!db.prepare('SELECT id FROM search_tasks WHERE id=?').get(taskId)) return json(res, 404, { error: 'Search Task not found.' });
+    const jobs = db.prepare('SELECT id FROM lead_enrichment_jobs WHERE search_task_id=? ORDER BY created_at DESC,id DESC LIMIT 20').all(taskId).map(row => websiteEnrichmentService.readJob(row.id));
+    return json(res, 200, { progress: websiteEnrichmentService.taskProgress(taskId), jobs, statuses: websiteEnrichmentService.statuses, job_statuses: websiteEnrichmentService.jobStatuses });
+  },
+
+  async startSearchTaskEnrichment(req, res, taskId) {
+    const user = currentUser(req), capabilities = opportunityCapabilities(user);
+    if (!capabilities.canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'Lead Enrichment is not allowed for this role.' });
+    try {
+      const body = await readJson(req);
+      const job = websiteEnrichmentService.createJob(taskId, user, { executionId: Number(body.execution_id) || null, retryFailed: body.retry_failed === true });
+      queueMicrotask(() => websiteEnrichmentService.runJob(job.id, user).catch(error => audit(user.id, 'fail_lead_enrichment_job', 'lead_enrichment_jobs', String(job.id), { error: String(error.message).slice(0, 500) })));
+      return json(res, 202, { job, progress: websiteEnrichmentService.taskProgress(taskId) });
+    } catch (error) {
+      return json(res, error.status || 500, { error: error.message || 'Lead Enrichment could not start.' });
+    }
+  },
+
+  enrichmentJobDetail(req, res, id) {
+    const user = currentUser(req);
+    if (!opportunityCapabilities(user).canView) return json(res, user ? 403 : 401, { error: 'Lead Enrichment access denied.' });
+    const job = websiteEnrichmentService.readJob(id);
+    return job ? json(res, 200, { job, progress: websiteEnrichmentService.taskProgress(job.search_task_id) }) : json(res, 404, { error: 'Enrichment Job not found.' });
+  },
+
+  async enrichmentJobAction(req, res, id, action) {
+    const user = currentUser(req), capabilities = opportunityCapabilities(user);
+    if (!capabilities.canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'Lead Enrichment control is not allowed for this role.' });
+    try {
+      if (action === 'pause') return json(res, 200, { job: websiteEnrichmentService.pauseJob(id, user) });
+      const existing = websiteEnrichmentService.readJob(id);
+      if (!existing) return json(res, 404, { error: 'Enrichment Job not found.' });
+      if (action === 'retry') {
+        const retry = websiteEnrichmentService.createJob(existing.search_task_id, user, { executionId: existing.search_execution_id, retryFailed: true });
+        queueMicrotask(() => websiteEnrichmentService.runJob(retry.id, user).catch(error => audit(user.id, 'fail_lead_enrichment_job', 'lead_enrichment_jobs', String(retry.id), { error: String(error.message).slice(0, 500) })));
+        return json(res, 202, { job: retry });
+      }
+      if (action === 'resume') {
+        queueMicrotask(() => websiteEnrichmentService.runJob(id, user).catch(error => audit(user.id, 'fail_lead_enrichment_job', 'lead_enrichment_jobs', String(id), { error: String(error.message).slice(0, 500) })));
+        return json(res, 202, { job: existing });
+      }
+      return json(res, 400, { error: 'Unsupported Enrichment Job action.' });
+    } catch (error) {
+      return json(res, error.status || 500, { error: error.message || 'Lead Enrichment action failed.' });
+    }
+  },
+
+  async enrichSearchResult(req, res, id) {
+    const user = currentUser(req), capabilities = opportunityCapabilities(user);
+    if (!capabilities.canRunCustomerIntelligence) return json(res, user ? 403 : 401, { error: 'Lead Enrichment is not allowed for this role.' });
+    try {
+      const body = await readJson(req);
+      const enrichment = await websiteEnrichmentService.enrichOne(id, user, { retry: body.retry === true, refresh: body.refresh === true });
+      return json(res, 200, { result: searchResultDetail(id), enrichment });
+    } catch (error) {
+      return json(res, error.status || 500, { error: error.message || 'Lead Enrichment failed.', result: searchResultDetail(id) });
+    }
   },
 
   async createSearchResult(req, res, taskId) {
@@ -4742,28 +5119,12 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
   async runSearchResultQualification(req,res,id){
     const user=currentUser(req),capabilities=opportunityCapabilities(user);
     if(!capabilities.canRunCustomerIntelligence)return json(res,user?403:401,{error:'AI Qualification is not allowed for this role.'});
-    const existing=searchResultDetail(id);
-    if(!existing)return json(res,404,{error:'Search Result not found.'});
-    if(existing.status==='converted')return json(res,409,{error:'Converted Search Results cannot run AI Qualification.'});
-    const active=db.prepare("SELECT id,status FROM ai_execution_logs WHERE entity_type='search_result' AND entity_id=? AND action_name='lead-qualification' AND status IN ('pending','running') ORDER BY id DESC LIMIT 1").get(String(id));
-    if(active)return json(res,409,{error:'AI Qualification is already running.',executionLogId:active.id,status:active.status});
-    audit(user.id,'start_ai_qualification','search_results',String(id));
     try{
-      const aiResult=await aiBusinessBrain.runAiAction({moduleName:'opportunity-intelligence',actionName:'lead-qualification',entityType:'search_result',entityId:id,contextType:'search-result-qualification',promptTemplateKey:'v53.foundation.mock.v1',userId:user.id,user,options:{provider:'rules',trackLifecycle:true}});
-      if(aiResult.status!=='completed'){
-        audit(user.id,aiResult.status==='blocked'?'block_ai_qualification':'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:aiResult.executionLogId,status:aiResult.status});
-        return json(res,409,{error:aiResult.result?.reason||`AI Qualification ${aiResult.status}.`,result:searchResultDetail(id),ai:{status:aiResult.status,provider:aiResult.provider,model:aiResult.model,executionLogId:aiResult.executionLogId,cost:aiResult.cost}});
-      }
-      const task=normalizeSearchTask(db.prepare('SELECT * FROM search_tasks WHERE id=?').get(existing.search_task_id));
-      const trustedInput={...existing};
-      for(const field of ['opportunity_score','purchase_potential','qualification_reason','opportunity_summary','why_customer_matters','recommended_next_action','ai_qualification_status','ai_qualification_at'])delete trustedInput[field];
-      const qualification=buildSearchResultQualification(trustedInput,task);
-      db.prepare("UPDATE search_results SET purchase_potential=?,opportunity_score=?,qualification_reason=?,opportunity_summary=?,why_customer_matters=?,recommended_next_action=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(qualification.purchase_potential,qualification.opportunity_score,qualification.qualification_reason,qualification.opportunity_summary,qualification.why_customer_matters,qualification.recommended_next_action,id);
-      audit(user.id,'ai_qualified_search_result','search_results',String(id),{aiExecutionLogId:aiResult.executionLogId,provider:aiResult.provider,model:aiResult.model});
-      return json(res,200,{result:searchResultDetail(id),ai:{status:'completed',provider:aiResult.provider,model:aiResult.model,executionLogId:aiResult.executionLogId,cost:aiResult.cost}});
+      const body=await readJson(req);
+      return json(res,200,await executeSearchResultQualification(id,user,{force:body.force===true}));
     }catch(error){
-      audit(user.id,'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:error.executionLogId||null,error:String(error.message).slice(0,300)});
-      return json(res,error.status||500,{error:error.message||'AI Qualification failed.',result:searchResultDetail(id),ai:{status:'failed',executionLogId:error.executionLogId||null}});
+      audit(user.id,'fail_ai_qualification','search_results',String(id),{aiExecutionLogId:error.executionLogId||error.aiResult?.executionLogId||null,error:String(error.message).slice(0,300)});
+      return json(res,error.status||500,{error:error.message||'AI Qualification failed.',result:searchResultDetail(id),ai:{status:'failed',executionLogId:error.executionLogId||error.aiResult?.executionLogId||null}});
     }
   },
 
@@ -5373,11 +5734,24 @@ async createProductVariant(req,res,productId){const user=currentUser(req);if(!['
 };
 
 function serveStatic(req, res, pathname) {
+  const securityHeaders = {
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Build-Version': buildVersion
+  };
+  const noStoreHeaders = {
+    ...securityHeaders,
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'CDN-Cache-Control': 'no-store',
+    'Surrogate-Control': 'no-store',
+    Pragma: 'no-cache',
+    Expires: '0'
+  };
   const requestedPath = pathname === '/' ? 'index.html' : pathname.slice(1);
   const filePath = normalize(join(publicDir, requestedPath));
   if (!filePath.startsWith(publicDir) || !existsSync(filePath)) {
     const index = readFileSync(join(publicDir, 'index.html'), 'utf8').replaceAll('__BUILD_VERSION__', buildVersion);
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noStoreHeaders });
     return res.end(index);
   }
   const contentTypes = {
@@ -5385,8 +5759,8 @@ function serveStatic(req, res, pathname) {
     '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8'
   };
   const noCache = ['.html', '.js', '.css'].includes(extname(filePath));
-  const cache = noCache ? 'no-cache, no-store, must-revalidate' : 'public, max-age=3600';
-  res.writeHead(200, { 'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream', 'Cache-Control': cache });
+  const cacheHeaders = noCache ? noStoreHeaders : { ...securityHeaders, 'Cache-Control': 'public, max-age=3600' };
+  res.writeHead(200, { 'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream', ...cacheHeaders });
   const content = extname(filePath) === '.html' ? readFileSync(filePath, 'utf8').replaceAll('__BUILD_VERSION__', buildVersion) : readFileSync(filePath);
   res.end(content);
 }
@@ -5394,8 +5768,22 @@ function serveStatic(req, res, pathname) {
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
+    const sensitiveQueryKeys = [...url.searchParams.keys()].filter(key => /^(email|password|passwd)$/i.test(key));
+    if (sensitiveQueryKeys.length) {
+      for (const key of sensitiveQueryKeys) url.searchParams.delete(key);
+      if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+        const location = `${url.pathname}${url.search}${url.hash}`;
+        res.writeHead(303, {
+          Location: location,
+          'Cache-Control': 'no-store',
+          'Referrer-Policy': 'no-referrer'
+        });
+        return res.end();
+      }
+      return json(res, 400, { error: 'Login credentials must be sent in the POST request body, never in the URL.' });
+    }
     if (req.method === 'GET' && url.pathname === '/api/health') {
-      return json(res, 200, { status: 'ok' });
+      return json(res, 200, { status: 'ok', build: buildVersion });
     }
     if (req.method === 'GET' && url.pathname === '/api/debug/db') {
       return json(res, 200, {
@@ -5508,6 +5896,8 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/customer-intelligence/priority') return handlers.customerIntelligencePriority(req, res);
     if (req.method === 'GET' && url.pathname === '/api/customer-discovery/config') return handlers.customerDiscoveryConfig(req, res);
     if (req.method === 'GET' && url.pathname === '/api/customer-discovery/requests') return handlers.customerDiscoveryRequests(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/location-providers') return handlers.locationProviders(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/location-suggestions') return await handlers.locationSuggestions(req, res, url.searchParams.get('text'), url.searchParams.get('provider'));
     if (req.method === 'POST' && url.pathname === '/api/customer-discovery/analyze') return await handlers.analyzeCustomerDiscovery(req, res, 'analyze-requirement');
     if (req.method === 'POST' && url.pathname === '/api/customer-discovery/generate-plan') return await handlers.analyzeCustomerDiscovery(req, res, 'generate-search-plan');
     if (req.method === 'GET' && url.pathname === '/api/search-strategies') return handlers.searchStrategies(req, res);
@@ -5535,6 +5925,11 @@ const server = createServer(async (req, res) => {
     const searchTaskResultsMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/results$/);
     if (searchTaskResultsMatch && req.method === 'GET') return handlers.searchTaskResults(req, res, Number(searchTaskResultsMatch[1]));
     if (searchTaskResultsMatch && req.method === 'POST') return await handlers.createSearchResult(req, res, Number(searchTaskResultsMatch[1]));
+    const searchTaskQualificationMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/run-ai-qualification$/);
+    if (searchTaskQualificationMatch && req.method === 'POST') return await handlers.runSearchTaskQualification(req, res, Number(searchTaskQualificationMatch[1]));
+    const searchTaskEnrichmentMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/enrichment$/);
+    if (searchTaskEnrichmentMatch && req.method === 'GET') return handlers.searchTaskEnrichment(req, res, Number(searchTaskEnrichmentMatch[1]));
+    if (searchTaskEnrichmentMatch && req.method === 'POST') return await handlers.startSearchTaskEnrichment(req, res, Number(searchTaskEnrichmentMatch[1]));
     const searchTaskActionMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)\/(ready)$/);
     if (searchTaskActionMatch && req.method === 'POST') return await handlers.updateSearchTaskStatus(req, res, Number(searchTaskActionMatch[1]), searchTaskActionMatch[2]);
     const searchTaskMatch = url.pathname.match(/^\/api\/search-tasks\/(\d+)$/);
@@ -5545,6 +5940,8 @@ const server = createServer(async (req, res) => {
     if (searchResultActionMatch && req.method === 'POST' && searchResultActionMatch[2] === 'review') return handlers.reviewSearchResult(req, res, Number(searchResultActionMatch[1]));
     const searchResultQualificationMatch=url.pathname.match(/^\/api\/search-results\/(\d+)\/run-ai-qualification$/);
     if(searchResultQualificationMatch&&req.method==='POST')return await handlers.runSearchResultQualification(req,res,Number(searchResultQualificationMatch[1]));
+    const searchResultEnrichmentMatch=url.pathname.match(/^\/api\/search-results\/(\d+)\/enrich$/);
+    if(searchResultEnrichmentMatch&&req.method==='POST')return await handlers.enrichSearchResult(req,res,Number(searchResultEnrichmentMatch[1]));
     const searchResultMatch = url.pathname.match(/^\/api\/search-results\/(\d+)$/);
     if (searchResultMatch && req.method === 'GET') return handlers.searchResultDetail(req, res, Number(searchResultMatch[1]));
     if (searchResultMatch && req.method === 'PUT') return await handlers.updateSearchResult(req, res, Number(searchResultMatch[1]));
@@ -5556,6 +5953,10 @@ const server = createServer(async (req, res) => {
     if(searchExecutionActionMatch&&req.method==='POST')return await handlers.searchExecutionAction(req,res,Number(searchExecutionActionMatch[1]),searchExecutionActionMatch[2]);
     const searchExecutionMatch=url.pathname.match(/^\/api\/search-executions\/(\d+)$/);
     if(searchExecutionMatch&&req.method==='GET')return handlers.searchExecutionDetail(req,res,Number(searchExecutionMatch[1]));
+    const enrichmentJobActionMatch=url.pathname.match(/^\/api\/enrichment-jobs\/(\d+)\/(pause|resume|retry)$/);
+    if(enrichmentJobActionMatch&&req.method==='POST')return await handlers.enrichmentJobAction(req,res,Number(enrichmentJobActionMatch[1]),enrichmentJobActionMatch[2]);
+    const enrichmentJobMatch=url.pathname.match(/^\/api\/enrichment-jobs\/(\d+)$/);
+    if(enrichmentJobMatch&&req.method==='GET')return handlers.enrichmentJobDetail(req,res,Number(enrichmentJobMatch[1]));
     if (req.method === 'GET' && url.pathname === '/api/customers/sales-handoff') return handlers.salesHandoff(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/run-ai-selected') return await handlers.runSelectedCustomerAi(req, res);
     if (req.method === 'POST' && url.pathname === '/api/customers/import') return await handlers.importCustomers(req, res);

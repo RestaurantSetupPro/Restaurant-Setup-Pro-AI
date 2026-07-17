@@ -1,0 +1,114 @@
+{
+  "key": "restaurant-furniture",
+  "version": "1.0.0",
+  "name": "Restaurant Furniture",
+  "targetCustomerTypes": [
+    "Restaurant Furniture Distributor",
+    "Hospitality Furniture Dealer",
+    "Commercial Furniture Supplier",
+    "Restaurant Interior Design Company"
+  ],
+  "evidenceGroups": {
+    "positive_target": [
+      {
+        "type": "restaurant",
+        "terms": ["restaurant", "restaurant furniture", "restaurant seating", "foodservice furniture"]
+      },
+      {
+        "type": "hospitality",
+        "terms": ["hospitality furniture", "hotel furniture", "hotel project", "hospitality project"]
+      },
+      {
+        "type": "commercial_dining",
+        "terms": ["commercial dining", "commercial dining furniture", "commercial dining seating"]
+      },
+      {
+        "type": "booth_seating",
+        "terms": ["booth seating", "restaurant booth", "banquette seating"]
+      },
+      {
+        "type": "contract_furniture",
+        "terms": ["contract furniture", "contract seating", "contract furnishings"]
+      },
+      {
+        "type": "restaurant_project",
+        "terms": ["restaurant project", "restaurant interior", "restaurant installation"]
+      }
+    ],
+    "general_furniture": [
+      {
+        "type": "furniture",
+        "terms": ["furniture", "furnishings"]
+      },
+      {
+        "type": "sofa",
+        "terms": ["sofa", "sectional"]
+      },
+      {
+        "type": "interior_design",
+        "terms": ["interior design", "interiors"]
+      }
+    ],
+    "exclusion": [
+      {
+        "type": "home",
+        "terms": ["home furniture", "for your home", "home decor", "home essentials"]
+      },
+      {
+        "type": "residential",
+        "terms": ["residential", "residential furniture"]
+      },
+      {
+        "type": "bedroom",
+        "terms": ["bedroom", "bed frame", "beds"]
+      },
+      {
+        "type": "living_room",
+        "terms": ["living room"]
+      },
+      {
+        "type": "mattress",
+        "terms": ["mattress", "mattresses"]
+      },
+      {
+        "type": "consumer_retail",
+        "terms": ["consumer retail", "retail store", "shop online", "discount furniture"]
+      },
+      {
+        "type": "non_target_specialty",
+        "terms": ["framing and mirrors", "picture framing", "mirror store"]
+      }
+    ]
+  },
+  "weights": {
+    "base": 28,
+    "verifiedWebsite": 6,
+    "publicContact": 4,
+    "positiveEvidence": 18,
+    "positiveEvidenceMaximum": 54,
+    "generalEvidence": 4,
+    "generalEvidenceMaximum": 8,
+    "exclusionEvidence": -14,
+    "exclusionEvidenceMaximumPenalty": -42
+  },
+  "thresholds": {
+    "recommended": 70,
+    "notRecommendedBelow": 35,
+    "maximumWithoutPositiveEvidence": 69,
+    "maximumWhenEvidenceInsufficient": 55
+  },
+  "missingInformationRules": [
+    {
+      "when": "no_positive_evidence",
+      "message": "缺少餐饮、酒店或商业项目的直接证据"
+    },
+    {
+      "when": "no_verified_website",
+      "message": "缺少已验证官网"
+    },
+    {
+      "when": "no_public_contact",
+      "message": "缺少公开联系方式"
+    }
+  ]
+}

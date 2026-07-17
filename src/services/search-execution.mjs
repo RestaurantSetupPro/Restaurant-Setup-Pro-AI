@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { createGooglePlacesConnector } from './google-places-connector.mjs';
+import { createGeoapifyPlacesConnector } from './geoapify-places-connector.mjs';
 
 const ACTIVE = ['Awaiting Approval', 'Approved', 'Running', 'Paused', 'Interrupted'];
 const ADMIN = new Set(['Admin', 'Owner']);
+const GEOAPIFY_INITIAL_CUSTOMER_TYPE = 'Unclassified / Furniture & Interior Business';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const json = (value, fallback = {}) => { if (value && typeof value === 'object') return value; try { return JSON.parse(value || ''); } catch { return fallback; } };
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -42,7 +45,10 @@ function normalizeRecord(record, context) {
     ? `external:${context.connectorKey}:${externalId}`
     : web.domain ? `domain:${web.domain}` : validEmail ? `email:${validEmail}` : phone ? `phone:${phone.replace(/\D/g, '')}` : `company:${nameKey}|${(country || '').toLowerCase()}|${(city || '').toLowerCase()}`;
   return {
-    company_name: companyName, customer_type: clean(record.customer_type) || context.task.customer_type || null,
+    company_name: companyName,
+    customer_type: context.connectorKey === 'geoapify-places'
+      ? GEOAPIFY_INITIAL_CUSTOMER_TYPE
+      : clean(record.customer_type) || context.task.customer_type || null,
     industry: clean(record.industry) || context.task.industry || 'Hospitality Furniture', country, city,
     website: web.website, canonical_website: web.canonical, address: clean(record.address) || null,
     email: validEmail, phone, contact_person: clean(record.contact_person) || null,
@@ -62,9 +68,9 @@ const fixtures = [
   { external_id: 'mock-005', company_name: 'Northwest Table Base Co', website: 'northwest-base.example', country: 'United States', city: 'Seattle', category: 'Restaurant Furniture Supplier' }
 ];
 
-export function createRulesMockConnector() {
+export function createRulesMockConnector({ enabled = false } = {}) {
   return {
-    key: 'rules-mock', version: '1.0.0', displayName: 'Rules/Mock', enabled: true, approved: true, costType: 'zero-cost', credentialPresent: false,
+    key: 'rules-mock', version: '1.0.0', displayName: 'Rules/Mock', enabled: Boolean(enabled), approved: true, costType: 'zero-cost', credentialPresent: false,
     capabilities: () => ({ pagination: true, checkpoint: true, retry: true, partialSuccess: true, stableExternalId: true }),
     validateConfig: context => Boolean(context?.task && context?.strategy),
     estimate: request => ({ currency: 'USD', low: 0, expected: 0, high: 0, pricingVersion: 'rules-mock-zero-v1', queryCount: request.query.keywords.length, maxPages: request.limits.maxPages, maxResults: request.limits.maxResults, estimatedAt: new Date().toISOString() }),
@@ -88,15 +94,19 @@ export function createRulesMockConnector() {
   };
 }
 
-export function createSearchConnectorRegistry() {
-  const connectors = new Map([['rules-mock', createRulesMockConnector()]]);
+export function createSearchConnectorRegistry(options = {}) {
+  const env = options.env || process.env;
+  const google = createGooglePlacesConnector({ env, fetchImpl: options.fetchImpl, normalize: normalizeRecord });
+  const geoapify = createGeoapifyPlacesConnector({ env, fetchImpl: options.fetchImpl, normalize: normalizeRecord });
+  const rulesMock = createRulesMockConnector({ enabled: env.RULES_MOCK_CONNECTOR_ENABLED === 'true' });
+  const connectors = new Map([[rulesMock.key, rulesMock], [google.key, google], [geoapify.key, geoapify]]);
   return {
     get(key) { const connector = connectors.get(String(key)); return connector?.enabled && connector?.approved ? connector : null; },
-    list() { return [...connectors.values()].map(({ key, version, displayName, enabled, approved, costType, credentialPresent, capabilities }) => ({ key, version, displayName, enabled, approved, costType, credentialPresent: Boolean(credentialPresent), capabilities: capabilities() })); }
+    list() { return [...connectors.values()].filter(connector => connector.key !== 'rules-mock' || connector.enabled).map(({ key, version, displayName, enabled, approved, costType, credentialPresent, capabilities, pricing }) => ({ key, version, displayName, enabled, approved, costType, credentialPresent: Boolean(credentialPresent), capabilities: capabilities(), pricing: pricing || null })); }
   };
 }
 
-export function createSearchExecutionService({ db, audit }) {
+export function createSearchExecutionService({ db, audit, onCompleted = null }) {
   const registry = createSearchConnectorRegistry();
   const admin = user => ADMIN.has(user?.role);
   const readExecution = id => {
@@ -122,9 +132,10 @@ export function createSearchExecutionService({ db, audit }) {
   function estimate(taskId, body, user) {
     gate(user && ['Admin','Owner','Sales'].includes(user.role), 'Execution estimate is not allowed for this role.', 403);
     const { task, strategy } = contextForTask(taskId); gate(task.status === 'Ready', 'Search Task must be Ready before estimation.');
-    const connector = registry.get(body.connectorKey || 'rules-mock'); gate(connector, 'Connector is disabled, missing, or not approved.');
+    const connector = registry.get(body.connectorKey); gate(connector, 'Connector is disabled, missing, or not approved.');
     const request = requestFor(task, strategy, connector, body); gate(connector.validateConfig({ task, strategy }), 'Connector configuration is invalid.');
-    return { connector: { key: connector.key, version: connector.version }, request, estimate: connector.estimate(request, { task, strategy }), approvedCostLimitUsd: 0 };
+    const costEstimate = connector.estimate(request, { task, strategy });
+    return { connector: { key: connector.key, version: connector.version }, request, estimate: costEstimate, approvedCostLimitUsd: Number(costEstimate.high || 0) };
   }
   function create(taskId, body, user) {
     gate(user && ['Admin','Owner','Sales'].includes(user.role), 'Execution estimate is not allowed for this role.', 403);
@@ -134,17 +145,19 @@ export function createSearchExecutionService({ db, audit }) {
     const existing = db.prepare('SELECT id FROM search_executions WHERE idempotency_key=?').get(idempotencyKey);
     if (existing) return readExecution(existing.id);
     gate(!db.prepare(`SELECT id FROM search_executions WHERE search_task_id=? AND status IN (${ACTIVE.map(()=>'?').join(',')})`).get(taskId, ...ACTIVE), 'This Search Task already has an active execution.');
+    const estimatedCost=Number(proposal.estimate.high||0);
     const row = db.prepare(`INSERT INTO search_executions(idempotency_key,search_task_id,search_strategy_id,connector_key,connector_version,status,phase,request_snapshot_json,limits_json,estimate_json,estimated_cost_usd,approved_cost_limit_usd,approval_status,created_by)
-      VALUES(?,?,?,?,?,'Awaiting Approval','Estimating',?,?,?,?,0,'Pending',?) RETURNING id`).get(idempotencyKey,taskId,strategy.id,connector.key,connector.version,JSON.stringify(request),JSON.stringify(request.limits),JSON.stringify(proposal.estimate),0,user.id);
+      VALUES(?,?,?,?,?,'Awaiting Approval','Estimating',?,?,?,?,?,'Pending',?) RETURNING id`).get(idempotencyKey,taskId,strategy.id,connector.key,connector.version,JSON.stringify(request),JSON.stringify(request.limits),JSON.stringify(proposal.estimate),estimatedCost,estimatedCost,user.id);
     db.prepare('UPDATE search_executions SET request_snapshot_json=? WHERE id=?').run(JSON.stringify({ ...request, executionId: row.id }),row.id);
-    audit(user.id,'estimate_search_execution','search_executions',String(row.id),{taskId,connectorKey:connector.key,estimatedCost:0});
+    audit(user.id,'estimate_search_execution','search_executions',String(row.id),{taskId,connectorKey:connector.key,estimatedCost,estimatedRequestCount:proposal.estimate.estimatedRequestCount||proposal.estimate.estimated_request_count||0});
     return readExecution(row.id);
   }
   function approve(id, user) {
     gate(admin(user), 'Only Admin or Owner can approve execution.', 403); const execution=readExecution(id); gate(execution,'Search Execution not found.',404);
     gate(execution.status==='Awaiting Approval','Only an execution awaiting approval can be approved.'); contextForTask(execution.search_task_id);
-    db.prepare("UPDATE search_executions SET status='Approved',phase=NULL,approval_status='Approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approved_cost_limit_usd=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(user.id,id);
-    audit(user.id,'approve_search_execution','search_executions',String(id),{approvedCostLimitUsd:0}); return readExecution(id);
+    const approvedCostLimitUsd=Number(execution.estimated_cost_usd||execution.estimate_json?.high||0);
+    db.prepare("UPDATE search_executions SET status='Approved',phase=NULL,approval_status='Approved',approved_by=?,approved_at=CURRENT_TIMESTAMP,approved_cost_limit_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(user.id,approvedCostLimitUsd,id);
+    audit(user.id,'approve_search_execution','search_executions',String(id),{approvedCostLimitUsd,estimatedRequestCount:execution.estimate_json?.estimatedRequestCount||execution.estimate_json?.estimated_request_count||0,pricingConfigSnapshot:execution.estimate_json?.pricingConfigSnapshot||execution.estimate_json?.pricing_config_snapshot||null}); return readExecution(id);
   }
   function rawPayload(execution, connector, result, record, index) {
     const payload = connector.redactForLog(record), payloadJson=JSON.stringify(payload), payloadHash=hash(payloadJson), captured=clean(record.captured_at)||new Date().toISOString();
@@ -161,7 +174,7 @@ export function createSearchExecutionService({ db, audit }) {
     if(!duplicate&&normalized.email)duplicate=db.prepare('SELECT id FROM search_results WHERE search_task_id=? AND LOWER(email)=LOWER(?) ORDER BY id LIMIT 1').get(execution.search_task_id,normalized.email);
     if(!duplicate&&normalized.phone)duplicate=db.prepare("SELECT id FROM search_results WHERE search_task_id=? AND REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'(','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'(','') ORDER BY id LIMIT 1").get(execution.search_task_id,normalized.phone);
     const safeDedup=duplicate?`${normalized.dedup_key}|review:${execution.id}:${raw.id}`:normalized.dedup_key;
-    const sourceReference=JSON.stringify({source_url:normalized.source_url,reference_note:'Captured by approved Rules/Mock Connector.'});
+    const sourceReference=JSON.stringify({source_url:normalized.source_url,reference_note:`Captured by approved ${connector.displayName} Connector.`,search_query:normalized.search_query||null});
     const row=db.prepare(`INSERT INTO search_results(search_task_id,search_execution_id,company_name,customer_type,industry,country,city,website,email,phone,business_type,source_type,source_reference,status,created_by,connector_key,connector_version,external_id,canonical_website,address,source_category,captured_at,raw_payload_id,normalization_version,dedup_key,duplicate_of_search_result_id,evidence_json)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'new',?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`).get(execution.search_task_id,execution.id,normalized.company_name,normalized.customer_type,normalized.industry,normalized.country,normalized.city,normalized.website,normalized.email,normalized.phone,normalized.business_type,normalized.source_type,sourceReference,user.id,connector.key,connector.version,normalized.external_id,normalized.canonical_website,normalized.address,normalized.source_category,normalized.captured_at,raw.id,normalized.normalization_version,safeDedup,duplicate?.id||null,JSON.stringify(evidence));
     if(duplicate)audit(user.id,'search_execution_duplicate_detected','search_results',String(row.id),{executionId:execution.id,type:'Review Candidate',duplicateOf:duplicate.id});
@@ -179,15 +192,19 @@ export function createSearchExecutionService({ db, audit }) {
       if(execution.page_count>=limits.maxPages){terminal={status:'Completed',reason:'Page Limit'};break;}
       if(execution.inserted_count>=limits.maxResults){terminal={status:'Completed',reason:'Result Limit'};break;}
       if(Date.now()-started>limits.maxDurationSeconds*1000){terminal={status:execution.inserted_count?'Partially Completed':'Failed',reason:'Duration Limit'};break;}
+      const unitPrice=Number(connector.pricing?.unitPrice||0); const projectedCost=Number(execution.provider_request_count||0)*unitPrice+unitPrice;
+      if(projectedCost>Number(execution.approved_cost_limit_usd||0)+1e-9){terminal={status:execution.inserted_count?'Partially Completed':'Failed',reason:'Budget Limit Reached'};break;}
       let pageResult,errorInfo=null;
       for(let attempt=0;attempt<=limits.maxRetriesPerPage;attempt++){
-        try{pageResult=await connector.executePage(request,checkpoint,{scenario,attempt});break;}catch(error){errorInfo=connector.classifyError(error);db.prepare('UPDATE search_executions SET provider_request_count=provider_request_count+1,last_error_code=?,last_error_message=?,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(errorInfo.code,String(error.message).slice(0,1000),id);audit(user.id,'search_execution_page_failure','search_executions',String(id),{code:errorInfo.code,attempt});if(!errorInfo.retryable||attempt>=limits.maxRetriesPerPage)break;db.prepare('UPDATE search_executions SET retry_count=retry_count+1 WHERE id=?').run(id);audit(user.id,'retry_search_execution_page','search_executions',String(id),{code:errorInfo.code,attempt:attempt+1});await sleep(Math.min(25,errorInfo.retryAfterMs||2**attempt*5));}
+        const beforeRequest=readExecution(id);
+        if(Number(beforeRequest.actual_cost_usd||0)+unitPrice>Number(beforeRequest.approved_cost_limit_usd||0)+1e-9){errorInfo={code:'BUDGET_LIMIT_REACHED',retryable:false,retryAfterMs:0};break;}
+        try{pageResult=await connector.executePage(request,checkpoint,{scenario,attempt});break;}catch(error){errorInfo=connector.classifyError(error);const failedExecution=readExecution(id),requestCount=Math.max(0,Number(errorInfo.providerRequestCount||1)),credits=Math.max(0,Number(errorInfo.actualCredits||0)),failedEstimate={...failedExecution.estimate_json,actualCreditCount:Number(failedExecution.estimate_json?.actualCreditCount||0)+credits,freePlanCreditUsage:Number(failedExecution.estimate_json?.freePlanCreditUsage||0)+credits};if(errorInfo.checkpoint)checkpoint=errorInfo.checkpoint;db.prepare('UPDATE search_executions SET provider_request_count=provider_request_count+?,actual_cost_usd=actual_cost_usd+?,estimate_json=?,checkpoint_json=?,last_error_code=?,last_error_message=?,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(requestCount,unitPrice*requestCount,JSON.stringify(failedEstimate),JSON.stringify(checkpoint||{}),errorInfo.code,String(errorInfo.userMessage||error.message).slice(0,1000),id);audit(user.id,'search_execution_page_failure','search_executions',String(id),{code:errorInfo.code,attempt,providerRequestCount:requestCount,usedCredits:credits,calculatedUsageCost:unitPrice*requestCount});if(!errorInfo.retryable||attempt>=limits.maxRetriesPerPage)break;db.prepare('UPDATE search_executions SET retry_count=retry_count+1 WHERE id=?').run(id);audit(user.id,'retry_search_execution_page','search_executions',String(id),{code:errorInfo.code,attempt:attempt+1});await sleep(Math.min(25,errorInfo.retryAfterMs||2**attempt*5));}
       }
-      if(!pageResult){execution=readExecution(id);terminal={status:execution.inserted_count?'Partially Completed':'Failed',reason:errorInfo?.retryable?'Retry Exhausted':errorInfo?.code||'Provider Failure'};break;}
-      db.exec('BEGIN');try{let inserted=0,duplicates=0,failed=0,normalized=0;for(let index=0;index<pageResult.records.length&&readExecution(id).inserted_count+inserted<limits.maxResults;index++){try{const outcome=persistRecord(readExecution(id),connector,pageResult,pageResult.records[index],index,user);normalized++;if(outcome.inserted)inserted++;if(outcome.duplicate)duplicates++;}catch(error){failed++;audit(user.id,'search_execution_normalization_rejected','search_executions',String(id),{recordIndex:index,error:String(error.message).slice(0,300)});}}checkpoint=pageResult.nextCheckpoint||{};db.prepare(`UPDATE search_executions SET phase='Fetching',checkpoint_json=?,provider_request_count=provider_request_count+1,page_count=page_count+1,received_count=received_count+?,normalized_count=normalized_count+?,inserted_count=inserted_count+?,duplicate_count=duplicate_count+?,failed_count=failed_count+?,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(JSON.stringify(checkpoint),pageResult.records.length,normalized,inserted,duplicates,failed,id);db.exec('COMMIT');audit(user.id,'search_execution_page_success','search_executions',String(id),{providerRequestId:pageResult.providerRequestId,received:pageResult.records.length,inserted,duplicates,failed});}catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error;}
+      if(!pageResult){execution=readExecution(id);terminal={status:execution.inserted_count?'Partially Completed':'Failed',reason:errorInfo?.code==='BUDGET_LIMIT_REACHED'?'Budget Limit Reached':errorInfo?.retryable?'Retry Exhausted':errorInfo?.code||'Provider Failure'};break;}
+      db.exec('BEGIN');try{let inserted=0,duplicates=0,failed=0,normalized=0;for(let index=0;index<pageResult.records.length&&readExecution(id).inserted_count+inserted<limits.maxResults;index++){try{const outcome=persistRecord(readExecution(id),connector,pageResult,pageResult.records[index],index,user);normalized++;if(outcome.inserted)inserted++;if(outcome.duplicate)duplicates++;}catch(error){failed++;audit(user.id,'search_execution_normalization_rejected','search_executions',String(id),{recordIndex:index,error:String(error.message).slice(0,300)});}}checkpoint=pageResult.nextCheckpoint||{};const usageCost=Number(pageResult.calculatedUsageCost||unitPrice||0),requestCount=Math.max(1,Number(pageResult.providerRequestCount||1)),credits=Math.max(0,Number(pageResult.actualCredits||0)),currentEstimate=readExecution(id).estimate_json,updatedEstimate={...currentEstimate,actualCreditCount:Number(currentEstimate?.actualCreditCount||0)+credits,freePlanCreditUsage:Number(currentEstimate?.freePlanCreditUsage||0)+credits};db.prepare(`UPDATE search_executions SET phase='Fetching',checkpoint_json=?,estimate_json=?,provider_request_count=provider_request_count+?,page_count=page_count+1,received_count=received_count+?,normalized_count=normalized_count+?,inserted_count=inserted_count+?,duplicate_count=duplicate_count+?,failed_count=failed_count+?,actual_cost_usd=actual_cost_usd+?,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(JSON.stringify(checkpoint),JSON.stringify(updatedEstimate),requestCount,pageResult.records.length,normalized,inserted,duplicates,failed,usageCost,id);db.exec('COMMIT');audit(user.id,'search_execution_page_success','search_executions',String(id),{providerRequestId:pageResult.providerRequestId,providerRequestCount:requestCount,usedCredits:credits,received:pageResult.records.length,inserted,duplicates,failed,calculatedUsageCost:usageCost});}catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error;}
       if(!pageResult.hasMore){terminal={status:'Completed',reason:'Provider Complete'};break;}
     }
-    execution=readExecution(id);const finalStatus=terminal.status,taskStatus=finalStatus==='Completed'?'Completed':'Paused',finalPhase=finalStatus==='Completed'?'Complete':finalStatus==='Partially Completed'?'Partial Complete':finalStatus;const finalSql="UPDATE search_executions SET status=?,phase=?,stop_reason=?,actual_cost_usd=0,completed_at=CASE WHEN ? IN ('Completed','Partially Completed','Failed','Cancelled') THEN CURRENT_TIMESTAMP ELSE completed_at END,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?";try{db.prepare(finalSql).run(finalStatus,finalPhase,terminal.reason,finalStatus,id);}catch(error){if(!/CHECK constraint failed: phase/i.test(String(error.message)))throw error;db.prepare(finalSql).run(finalStatus,'Finalizing',terminal.reason,finalStatus,id);}db.prepare('UPDATE search_tasks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(taskStatus,execution.search_task_id);const event=finalStatus==='Completed'?'complete_search_execution':finalStatus==='Partially Completed'?'partial_complete_search_execution':finalStatus==='Paused'?'pause_search_execution':'fail_search_execution';audit(user.id,event,'search_executions',String(id),{stopReason:terminal.reason,phase:finalPhase});return readExecution(id);
+    execution=readExecution(id);const finalStatus=terminal.status,taskStatus=finalStatus==='Completed'?'Completed':'Paused',finalPhase=finalStatus==='Completed'?'Complete':finalStatus==='Partially Completed'?'Partial Complete':finalStatus;const finalSql="UPDATE search_executions SET status=?,phase=?,stop_reason=?,completed_at=CASE WHEN ? IN ('Completed','Partially Completed','Failed','Cancelled') THEN CURRENT_TIMESTAMP ELSE completed_at END,heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?";try{db.prepare(finalSql).run(finalStatus,finalPhase,terminal.reason,finalStatus,id);}catch(error){if(!/CHECK constraint failed: phase/i.test(String(error.message)))throw error;db.prepare(finalSql).run(finalStatus,'Finalizing',terminal.reason,finalStatus,id);}db.prepare('UPDATE search_tasks SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(taskStatus,execution.search_task_id);const event=finalStatus==='Completed'?'complete_search_execution':finalStatus==='Partially Completed'?'partial_complete_search_execution':finalStatus==='Paused'?'pause_search_execution':'fail_search_execution';audit(user.id,event,'search_executions',String(id),{stopReason:terminal.reason,phase:finalPhase,calculatedUsageCost:readExecution(id).actual_cost_usd});const completedExecution=readExecution(id);if(onCompleted&&['Completed','Partially Completed'].includes(finalStatus)){queueMicrotask(()=>Promise.resolve(onCompleted({execution:completedExecution,user})).catch(error=>audit(user.id,'fail_search_execution_qualification','search_executions',String(id),{error:String(error.message||error).slice(0,500)})));}return completedExecution;
   }
   function pause(id,user){gate(admin(user),'Only Admin or Owner can pause execution.',403);const execution=readExecution(id);gate(execution,'Search Execution not found.',404);gate(execution.status==='Running','Only Running execution can pause.');db.prepare("UPDATE search_executions SET status='Paused',stop_requested_at=CURRENT_TIMESTAMP,stop_reason='Manual Pause',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);db.prepare("UPDATE search_tasks SET status='Paused',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(execution.search_task_id);audit(user.id,'pause_search_execution','search_executions',String(id));return readExecution(id);}
   function stop(id,user){gate(admin(user),'Only Admin or Owner can stop execution.',403);const execution=readExecution(id);gate(execution,'Search Execution not found.',404);gate(['Running','Paused','Interrupted','Approved'].includes(execution.status),'Execution cannot be stopped in its current state.');db.prepare("UPDATE search_executions SET status='Cancelled',stop_requested_at=CURRENT_TIMESTAMP,stop_reason='Manual Stop',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").run(id);db.prepare("UPDATE search_tasks SET status='Paused',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(execution.search_task_id);audit(user.id,'stop_search_execution','search_executions',String(id));return readExecution(id);}

@@ -190,7 +190,8 @@ test('cloud deployment files are safe and complete', () => {
   assert.match(app, /Target Customer Profiles/);
   assert.match(app, /Save Draft/);
   assert.match(app, /Search Strategies/);
-  assert.match(app, /Create Strategy Draft/);
+  assert.match(app, /data-action="create-search-strategy-from-plan"/);
+  assert.match(app, /state\.discoveryFlowState==='creating_strategy'\?c\.creating:c\.create/);
   assert.match(app, /data-action="strategy-archive"/);
   assert.match(app, /Archive Search Strategy\?/);
   assert.match(app, /will not delete the record/);

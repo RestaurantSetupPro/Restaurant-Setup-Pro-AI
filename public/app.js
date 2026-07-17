@@ -14,9 +14,33 @@ const state = {
   team: null,
   foundation: null,
   foundationTab: 'configs',
+  productCategoryDetailId: null,
   debugCenter: null,
   opportunityIntelligence: null,
   opportunityView: 'dashboard',
+  searchConnectors: [],
+  locationProviders: [],
+  locationProviderKey: 'geoapify',
+  searchConnectorKey: 'geoapify-places',
+  leadPoolGroup: 'recommended',
+  leadPoolFilters: { taskId: '', region: '', conclusion: '', score: '', reviewStatus: '' },
+  discoveryFlowState: 'idle',
+  discoveryPrompt: '',
+  discoveryAnalysisRevision: 0,
+  discoveryPlanRevision: 0,
+  discoveryAnalysisCompletedAt: null,
+  discoveryPlanCompletedAt: null,
+  discoveryStale: false,
+  discoveryError: '',
+  discoveryStrategyCreatedId: null,
+  discoveryLocationQuery: '',
+  discoveryLocationSuggestions: [],
+  discoverySelectedLocation: null,
+  discoveryLocationLoading: false,
+  discoveryCustomerTypes: ['Restaurant Furniture Distributor','Hospitality Furniture Dealer','Commercial Furniture Supplier','Restaurant Interior Design Company'],
+  discoveryTargetQuantity: 20,
+  discoveryCategoryLabel: 'Furniture and Interior',
+  discoveryProviderCategory: 'commercial.furniture_and_interior',
   showArchivedStrategies: false,
   customerDetail: null
   ,salesWorkspace: null, salesInquiry: null, salesQuote: null
@@ -107,7 +131,7 @@ const routeAliases = Object.freeze({ crm: 'sales-customers', 'new-inquiry': 'inq
 const roleEmails = {
   Admin: 'admin@rspro.ai', Owner: 'owner@rspro.ai', Sales: 'sales@rspro.ai', Designer: 'designer@rspro.ai', VA: 'va@rspro.ai'
 };
-let demoMode = true;
+let demoMode = false;
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' })[char]);
@@ -293,6 +317,7 @@ async function navigate(route, replace = false) {
   const known = Boolean(routeConfig(route));
   route = known ? route : 'dashboard';
   state.route = route;
+  if (route !== 'product-library-categories') state.productCategoryDetailId = null;
   if (replace) history.replaceState(null, '', `#${route}`);
   else if (location.hash !== `#${route}`) location.hash = route;
   closeSidebar();
@@ -648,10 +673,41 @@ function productSkuPreview(categoryId, style, currentId = 0) {
 
 function productAttributeEditor(attribute,value=''){const options=(attribute.options||[]).filter(option=>option.active).map(option=>option.option_value),base=`data-create-attribute data-attribute-id="${attribute.id}"`,name=getLocale()==='zh-CN'?(attribute.name_zh||attribute.name):(attribute.name_en||attribute.name),required=attribute.category_config?.required?'required':'';if(attribute.data_type==='Boolean')return `<label class="check-field"><input ${base} type="checkbox" ${String(value)==='true'||String(value)==='1'?'checked':''}> <span>${esc(name)}</span></label>`;if(attribute.data_type==='Select')return `<label class="field"><span>${esc(name)}</span><select ${base} ${required}><option value=""></option>${options.map(option=>`<option ${option===value?'selected':''}>${esc(option)}</option>`).join('')}</select></label>`;if(attribute.data_type==='Multi-select')return `<label class="field"><span>${esc(name)}</span><select ${base} multiple ${required}>${options.map(option=>`<option ${String(value).split(',').map(item=>item.trim()).includes(option)?'selected':''}>${esc(option)}</option>`).join('')}</select></label>`;const type=attribute.data_type==='Number'?'number':attribute.data_type==='Color'?'color':attribute.data_type==='Date'?'date':'text',unit=attribute.category_config?.default_unit||attribute.unit;return `<label class="field"><span>${esc(name)}${unit?` (${esc(unit)})`:''}</span><input ${base} type="${type}" value="${esc(value)}" ${required} ${attribute.minimum_value!=null?`min="${esc(attribute.minimum_value)}"`:''} ${attribute.maximum_value!=null?`max="${esc(attribute.maximum_value)}"`:''}></label>`}
 
-function renderProductCategoryAttributes(form,product){const categoryId=Number(form.elements.category_id.value),values=new Map((product.foundation?.attributeValues||[]).filter(value=>!value.variant_id).map(value=>[Number(value.attribute_id),value.value])),attributes=(state.products.attributeDefinitions||[]).filter(attribute=>!attribute.category_ids.length||attribute.category_ids.includes(categoryId));let section=form.querySelector('#product-category-attributes');if(!section){section=document.createElement('section');section.id='product-category-attributes';section.className='product-foundation-fields';form.querySelector('.foundation-form').append(section)}section.innerHTML=`<h3>Category Attributes <small>(optional)</small></h3>${attributes.length?attributes.map(attribute=>productAttributeEditor(attribute,values.get(attribute.id)||'')).join(''):'<p>No attributes configured for this category.</p>'}`}
+function renderProductCategoryAttributes(form, product) {
+  const categoryId = Number(form.elements.category_id.value || 0);
+  const allDefinitions = state.products.attributeDefinitions || [];
+  const baseValues = new Map((product.foundation?.attributeValues || []).filter(value => !value.variant_id).map(value => [Number(value.attribute_id), value]));
+  const currentAttributes = allDefinitions
+    .map(attribute => {
+      const categoryConfig = attribute.category_configs?.find(config => Number(config.category_id) === categoryId);
+      return { ...attribute, category_config: categoryConfig };
+    })
+    .filter(attribute => categoryId && attribute.category_ids.includes(categoryId) && attribute.category_config?.show_on_product !== 0)
+    .sort((left, right) => Number(left.category_config?.sort_order || 0) - Number(right.category_config?.sort_order || 0) || left.name.localeCompare(right.name));
+  const currentIds = new Set(currentAttributes.map(attribute => Number(attribute.id)));
+  const legacyValues = [...baseValues.values()].filter(value => !currentIds.has(Number(value.attribute_id)));
 
-function openProductModal(id = null) {
-  const product = id ? state.products.products.find(item => item.id === Number(id)) : {};
+  let section = form.querySelector('[data-product-category-attributes]');
+  if (!section) {
+    section = document.createElement('section');
+    section.className = 'product-foundation-fields';
+    section.dataset.productCategoryAttributes = '1';
+    form.querySelector('.foundation-form').append(section);
+  }
+
+  const currentMarkup = currentAttributes.length
+    ? `<div class="attribute-value-grid">${currentAttributes.map(attribute => productAttributeEditor(attribute, baseValues.get(Number(attribute.id))?.value || '')).join('')}</div>`
+    : `<p>${t('productFoundation.noAttributes')}</p>`;
+  const legacyMarkup = legacyValues.length
+    ? `<details class="legacy-attributes" open><summary>${t('productFinal.inapplicableAttributes')}</summary><div class="attribute-value-grid">${legacyValues.map(value => `<label class="field"><span>${esc(getLocale() === 'zh-CN' ? (value.name_zh || value.name) : (value.name_en || value.name))}${value.unit ? ` (${esc(value.unit)})` : ''}</span><input data-create-attribute data-attribute-id="${value.attribute_id}" value="${esc(value.value || '')}"></label>`).join('')}</div></details>`
+    : '';
+
+  section.innerHTML = `<h3>${t('productFoundation.categoryAttributes')}</h3>${currentMarkup}${legacyMarkup}`;
+}
+
+async function openProductModal(id = null) {
+  const detail = id ? await api(`/api/products/${id}`) : null;
+  const product = detail?.product || state.products?.products?.find(item => item.id === Number(id)) || {};
   const groups = ['Store Type Tags', 'Style Tags', 'Business Tags'];
   const backdrop = document.createElement('div');
   backdrop.id = 'product-modal';
@@ -661,15 +717,12 @@ function openProductModal(id = null) {
     <div class="field-row"><label class="field"><span>${t('intelligence.subCategory')}</span><input name="sub_category" value="${esc(product.sub_category || '')}" /></label><label class="field"><span>${t('intelligence.productSeries')}</span><input name="product_series" value="${esc(product.product_series || '')}" /></label></div>
 <div class="field-row"><label class="field"><span>${t('products.skuStyle')}</span><select name="sku_style">${Object.keys(state.products.skuRules.styleCodes).map(style => `<option ${product.tag_names?.includes(style) ? 'selected' : ''}>${esc(style)}</option>`).join('')}</select></label><label class="field"><span>${t('fields.sku')}</span><span class="sku-control"><input name="sku" required value="${esc(product.sku || '')}" placeholder="${t('products.autoGenerated')}" /><button type="button" class="button button--compact" data-action="generate-sku">${t('products.generate')}</button></span></label></div>
     <label class="field"><span>${t('products.summary')}</span><textarea name="summary" rows="2">${esc(product.summary || '')}</textarea></label>
-    <div class="field-row"><label class="field"><span>${t('fields.material')}</span><input name="materials" value="${esc(product.materials || '')}" /></label><label class="field"><span>${t('fields.size')}</span><input name="size" value="${esc(product.size || '')}" /></label></div>
-    <div class="field-row"><label class="field"><span>${t('intelligence.color')}</span><input name="color" value="${esc(product.color || '')}" /></label><label class="field"><span>${t('intelligence.finish')}</span><input name="finish" value="${esc(product.finish || '')}" /></label></div>
-    <div class="field-row"><label class="field"><span>${t('intelligence.budgetLevel')}</span><select name="budget_level"><option value="">${t('common.none')}</option>${state.products.intelligenceOptions.budgetLevels.map(level => `<option ${level === product.budget_level ? 'selected' : ''}>${esc(level)}</option>`).join('')}</select></label><label class="field"><span>${t('intelligence.recommendedUsage')}</span><input name="recommended_usage" value="${esc(product.recommended_usage || '')}" /></label></div>
     <div class="field-row"><label class="field"><span>${t('fields.priceRange')}</span><input name="price_range" value="${esc(product.price_range || '')}" /></label><label class="field"><span>${t('fields.status')}</span><select name="status">${['draft','review','approved','archived'].map(status => `<option value="${status}" ${status === product.status ? 'selected' : ''}>${esc(statusLabel(status))}</option>`).join('')}</select></label></div>
     <div class="field-row"><label class="field"><span>${t('fields.leadTime')}</span><input name="lead_time_days" type="number" min="0" value="${esc(product.lead_time_days || '')}" /></label><label class="field"><span>${t('fields.moq')}</span><input name="moq" type="number" min="0" value="${esc(product.moq || '')}" /></label></div>
     <div class="tag-selector">${groups.map(group => `<fieldset><legend>${esc(group)}</legend><div>${state.products.tags.filter(tag => tag.tag_type === group).map(tag => `<label><input type="checkbox" name="tag_ids" value="${tag.id}" ${product.tag_ids?.includes(tag.id) ? 'checked' : ''} /><span>${esc(tag.tag_name)}</span></label>`).join('')}</div></fieldset>`).join('')}</div>
     <p id="product-form-error" class="form-error" role="alert"></p></div><div class="foundation-modal-actions product-modal-actions"><button type="button" class="button" data-action="product-close">Cancel</button><button type="submit" class="button button--soft" data-submit-intent="draft">Save Draft</button><button type="submit" class="button button--primary" data-submit-intent="create">${id?'Save Product':'Create Product'}</button></div></form></div>`;
   document.body.append(backdrop);
-  const foundationFields=document.createElement('section');foundationFields.className='product-foundation-fields';foundationFields.innerHTML=`<h3>${t('productFinal.basicInformation')}</h3><div class="field-row"><label class="field"><span>${t('productFinal.productStatus')}</span><select name="library_status" required>${state.products.intelligenceOptions.libraryStatuses.map(value=>`<option ${value===(product.library_status||'Active')?'selected':''}>${esc(value)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.visibility')}</span><select name="visibility" required>${state.products.intelligenceOptions.visibilities.map(value=>`<option ${value===(product.visibility||'Website + Quote')?'selected':''}>${esc(value)}</option>`).join('')}</select></label></div><label class="field"><span>${t('productFinal.shortDescription')}</span><textarea name="short_description" rows="2">${esc(product.short_description||'')}</textarea></label><label class="field"><span>${t('productFinal.fullDescription')}</span><textarea name="website_description" rows="3">${esc(product.website_description||'')}</textarea></label><label class="field"><span>${t('productFinal.quoteDescription')}</span><textarea name="quote_description" rows="2">${esc(product.quote_description||'')}</textarea></label><div class="field-row"><label class="field"><span>${t('productFinal.salesMode')}</span><select name="sales_mode">${['standard_sale','quote_only','customizable','project_only'].map(value=>`<option value="${value}" ${value===(product.sales_mode||'quote_only')?'selected':''}>${t(`productFinal.salesMode_${value}`)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.publishStatus')}</span><select name="publish_status">${['draft','ready','published','archived'].map(value=>`<option value="${value}" ${value===(product.publish_status||'draft')?'selected':''}>${t(`productFinal.publish_${value}`)}</option>`).join('')}</select></label></div><div class="field-row"><label class="field"><span>${t('productFinal.priceDisplay')}</span><select name="price_display_mode">${['exact_price','starting_from','request_quote','hidden'].map(value=>`<option value="${value}" ${value===(product.price_display_mode||'request_quote')?'selected':''}>${t(`productFinal.price_${value}`)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.minimumOrder')}</span><input name="minimum_order_quantity" type="number" step=".01" value="${esc(product.minimum_order_quantity??product.moq??'')}"></label></div><details><summary>${t('productFinal.channelContent')}</summary><div class="form-grid"><label class="field"><span>${t('productFinal.storefrontTitleEn')}</span><input name="storefront_title_en" value="${esc(product.storefront_title_en||'')}"></label><label class="field"><span>${t('productFinal.storefrontTitleZh')}</span><input name="storefront_title_zh" value="${esc(product.storefront_title_zh||'')}"></label><label class="field"><span>${t('productFinal.storefrontDescriptionEn')}</span><textarea name="storefront_description_en">${esc(product.storefront_description_en||'')}</textarea></label><label class="field"><span>${t('productFinal.storefrontDescriptionZh')}</span><textarea name="storefront_description_zh">${esc(product.storefront_description_zh||'')}</textarea></label><label class="check-field"><input type="checkbox" name="request_quote_enabled" ${product.request_quote_enabled!==0?'checked':''}><span>${t('productFinal.requestQuote')}</span></label><label class="check-field"><input type="checkbox" name="customization_available" ${product.customization_available?'checked':''}><span>${t('productFinal.customization')}</span></label></div></details>`;$('#product-form .foundation-form').append(foundationFields);
+  const foundationFields=document.createElement('section');foundationFields.className='product-foundation-fields';foundationFields.innerHTML=`<h3>${t('productFinal.basicInformation')}</h3><div class="field-row"><label class="field"><span>${t('productFinal.productStatus')}</span><select name="library_status" required>${state.products.intelligenceOptions.libraryStatuses.map(value=>`<option ${value===(product.library_status||'Active')?'selected':''}>${esc(value)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.visibility')}</span><select name="visibility" required>${state.products.intelligenceOptions.visibilities.map(value=>`<option ${value===(product.visibility||'Website + Quote')?'selected':''}>${esc(value)}</option>`).join('')}</select></label></div><label class="field"><span>${t('productFinal.shortDescription')}</span><textarea name="short_description" rows="2">${esc(product.short_description||'')}</textarea></label><label class="field"><span>${t('productFinal.fullDescription')}</span><textarea name="website_description" rows="3">${esc(product.website_description||'')}</textarea></label><label class="field"><span>${t('productFinal.quoteDescription')}</span><textarea name="quote_description" rows="2">${esc(product.quote_description||'')}</textarea></label><div class="field-row"><label class="field"><span>${t('productFinal.salesMode')}</span><select name="sales_mode">${['standard_sale','quote_only','customizable','project_only'].map(value=>`<option value="${value}" ${value===(product.sales_mode||'quote_only')?'selected':''}>${t(`productFinal.salesMode_${value}`)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.publishStatus')}</span><select name="publish_status">${['draft','ready','published','archived'].map(value=>`<option value="${value}" ${value===(product.publish_status||'draft')?'selected':''}>${t(`productFinal.publish_${value}`)}</option>`).join('')}</select></label></div><div class="field-row"><label class="field"><span>${t('productFinal.priceDisplay')}</span><select name="price_display_mode">${['exact_price','starting_from','request_quote','hidden'].map(value=>`<option value="${value}" ${value===(product.price_display_mode||'request_quote')?'selected':''}>${t(`productFinal.price_${value}`)}</option>`).join('')}</select></label><label class="field"><span>${t('productFinal.minimumOrder')}</span><input name="minimum_order_quantity" type="number" step=".01" value="${esc(product.minimum_order_quantity??product.moq??'')}"></label></div><section class="product-foundation-fields" data-product-category-attributes></section><details><summary>${t('productFinal.channelContent')}</summary><div class="form-grid"><label class="field"><span>${t('productFinal.storefrontTitleEn')}</span><input name="storefront_title_en" value="${esc(product.storefront_title_en||'')}"></label><label class="field"><span>${t('productFinal.storefrontTitleZh')}</span><input name="storefront_title_zh" value="${esc(product.storefront_title_zh||'')}"></label><label class="field"><span>${t('productFinal.storefrontDescriptionEn')}</span><textarea name="storefront_description_en">${esc(product.storefront_description_en||'')}</textarea></label><label class="field"><span>${t('productFinal.storefrontDescriptionZh')}</span><textarea name="storefront_description_zh">${esc(product.storefront_description_zh||'')}</textarea></label><label class="check-field"><input type="checkbox" name="request_quote_enabled" ${product.request_quote_enabled!==0?'checked':''}><span>${t('productFinal.requestQuote')}</span></label><label class="check-field"><input type="checkbox" name="customization_available" ${product.customization_available?'checked':''}><span>${t('productFinal.customization')}</span></label></div></details>`;$('#product-form .foundation-form').append(foundationFields);
   $('#product-form').noValidate=true;
   renderProductCategoryAttributes($('#product-form'),product);
   if(state.products?.capabilities?.canViewSensitive){const supplierFields=document.createElement('details');supplierFields.className='product-foundation-fields';supplierFields.innerHTML=`<summary>${t('productFoundation.commercialSupplier')}</summary><div class="form-grid"><label class="field"><span>Default Supplier</span><input name="default_supplier" value="${esc(product.default_supplier||'')}"></label><label class="field"><span>Supplier SKU</span><input name="supplier_sku" value="${esc(product.supplier_sku||'')}"></label><label class="field"><span>Supplier Cost</span><input name="supplier_cost" type="number" step=".01" value="${esc(product.supplier_cost??'')}"></label><label class="field"><span>Supplier Lead Time (days)</span><input name="supplier_lead_time_days" type="number" value="${esc(product.supplier_lead_time_days??'')}"></label><label class="field"><span>Supplier MOQ</span><input name="supplier_moq" type="number" step=".01" value="${esc(product.supplier_moq??'')}"></label><label class="field"><span>Supplier Notes</span><textarea name="supplier_notes">${esc(product.supplier_notes||'')}</textarea></label></div>`;$('#product-form .foundation-form').append(supplierFields)}
@@ -1220,12 +1273,37 @@ async function renderProductLibraryTags(){const data=await api('/api/product-tag
 async function renderProductLibraryCategories(){const data=await api('/api/product-categories');const attributeRows=category=>data.attribute_options.map(attribute=>{const config=category.attributes.find(item=>item.id===attribute.id);return `<div class="category-attribute-row" data-category-attribute="${attribute.id}"><label class="check-field"><input name="enabled" type="checkbox" ${config?'checked':''}><span>${esc(getLocale()==='zh-CN'?(attribute.name_zh||attribute.name):(attribute.name_en||attribute.name))}</span></label>${[['required','productFoundation.required'],['filterable','productFoundation.filterable'],['show_on_quote','productFoundation.showQuote'],['show_on_pi','productFoundation.showPi'],['can_be_variant_axis','productFoundation.axisEligible']].map(([name,key])=>`<label class="check-field"><input name="${name}" type="checkbox" ${config?.[name]?'checked':''}><span>${t(key)}</span></label>`).join('')}<label class="field compact-field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="${config?.sort_order??0}"></label></div>`}).join('');$('#page').innerHTML=`${pageHeader(t('productFoundation.categories'),t('productFoundation.categoriesHelp'))}<section class="library-management-grid"><article class="panel"><h2>${t('productFoundation.newCategory')}</h2><form id="library-category-create" class="foundation-form"><label class="field"><span>${t('fields.name')}</span><input name="name" required></label><label class="field"><span>Slug</span><input name="slug"></label><label class="field"><span>${t('fields.description')}</span><textarea name="description"></textarea></label><label class="field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="0"></label><label class="check-field"><input name="active" type="checkbox" checked><span>${t('productFoundation.active')}</span></label><button class="button button--primary">${t('productFoundation.create')}</button></form></article><article class="panel category-list-panel"><h2>${t('productFoundation.categories')}</h2>${data.categories.map(category=>`<details class="category-config-card"><summary><span><strong>${esc(category.name)}</strong><small>${category.product_count} ${t('productFoundation.products')} · ${t(category.active?'productFoundation.active':'productFoundation.disabled')}</small></span></summary><div class="row-actions"><button class="button button--compact" data-action="library-edit-category" data-id="${category.id}" data-name="${esc(category.name)}" data-slug="${esc(category.slug)}" data-sort="${category.sort_order||0}">${t('productFoundation.edit')}</button><button class="button button--compact" data-action="library-toggle-category" data-id="${category.id}" data-active="${category.active?1:0}">${t(category.active?'productFoundation.disabled':'productFoundation.active')}</button></div><h3>${t('productFoundation.categoryAttributes')}</h3><form data-category-attributes-form="${category.id}">${attributeRows(category)}<button class="button button--primary">${t('productFoundation.save')}</button></form></details>`).join('')}</article></section>`;$('#library-category-create').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,body=Object.fromEntries(new FormData(form));body.active=form.active.checked;await api('/api/product-categories',{method:'POST',body:JSON.stringify(body)});state.products=null;await renderProductLibraryCategories()});document.querySelectorAll('[data-category-attributes-form]').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const attributes=[...form.querySelectorAll('[data-category-attribute]')].filter(row=>row.querySelector('[name="enabled"]').checked).map(row=>({attribute_id:Number(row.dataset.categoryAttribute),required:row.querySelector('[name="required"]').checked,filterable:row.querySelector('[name="filterable"]').checked,show_on_product:true,show_on_quote:row.querySelector('[name="show_on_quote"]').checked,show_on_pi:row.querySelector('[name="show_on_pi"]').checked,can_be_variant_axis:row.querySelector('[name="can_be_variant_axis"]').checked,sort_order:Number(row.querySelector('[name="sort_order"]').value||0)}));await api(`/api/product-categories/${form.dataset.categoryAttributesForm}/attributes`,{method:'PUT',body:JSON.stringify({attributes})});toast(t('productFoundation.save'));await renderProductLibraryCategories()}))}
 
 async function renderProductLibraryCategoriesV2(){
-  const data=await api('/api/product-categories'),name=category=>getLocale()==='zh-CN'?(category.name_zh||category.name):(category.name_en||category.name);
-  const attributeConfig=(category,attribute)=>{const config=category.attributes.find(item=>item.id===attribute.id);return `<div class="category-attribute-row" data-category-attribute="${attribute.id}"><label class="check-field"><input name="enabled" type="checkbox" ${config?'checked':''}><span>${esc(getLocale()==='zh-CN'?(attribute.name_zh||attribute.name):(attribute.name_en||attribute.name))}</span></label>${[['required','productFoundation.required'],['searchable','productFinal.searchable'],['filterable','productFoundation.filterable'],['show_on_quote','productFoundation.showQuote'],['show_on_pi','productFoundation.showPi'],['show_on_storefront','productFinal.storefront'],['can_be_variant_axis','productFoundation.axisEligible']].map(([field,key])=>`<label class="check-field"><input name="${field}" type="checkbox" ${config?.[field]?'checked':''}><span>${t(key)}</span></label>`).join('')}<label class="field compact-field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="${config?.sort_order??0}"></label></div>`};
-  $('#page').innerHTML=`${pageHeader(t('productFoundation.categories'),t('productFoundation.categoriesHelp'))}<section class="library-management-grid"><article class="panel"><h2>${t('productFoundation.newCategory')}</h2><form id="category-create-v2" class="foundation-form"><div class="field-row"><label class="field"><span>${t('productFoundation.nameEn')}</span><input name="name_en" required></label><label class="field"><span>${t('productFoundation.nameZh')}</span><input name="name_zh" required></label></div><div class="field-row"><label class="field"><span>${t('productFinal.categoryCode')}</span><input name="category_code"></label><label class="field"><span>Slug</span><input name="slug"></label></div><label class="field"><span>${t('productFinal.descriptionEn')}</span><textarea name="description_en"></textarea></label><label class="field"><span>${t('productFinal.descriptionZh')}</span><textarea name="description_zh"></textarea></label><label class="field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="0"></label><button class="button button--primary">${t('common.create')}</button></form></article><article class="panel category-list-panel"><h2>${t('productFoundation.categories')}</h2>${data.categories.map(category=>`<details class="category-config-card"><summary><span class="category-summary-name"><strong>${esc(name(category))}</strong><code>${esc(category.category_code||category.slug)}</code></span><span class="category-summary-count"><strong>${Number(category.product_count)}</strong><small>${t('productFinal.productCount')}</small></span><span class="category-summary-count"><strong>${Number(category.attribute_count)}</strong><small>${t('productFinal.attributeCount')}</small></span>${badge(category.active?t('productFoundation.active'):t('productFoundation.disabled'))}</summary><form class="foundation-form category-edit-v2" data-category-id="${category.id}"><div class="field-row"><label class="field"><span>${t('productFoundation.nameEn')}</span><input name="name_en" value="${esc(category.name_en||category.name)}" required></label><label class="field"><span>${t('productFoundation.nameZh')}</span><input name="name_zh" value="${esc(category.name_zh||category.name)}" required></label></div><div class="field-row"><label class="field"><span>${t('productFinal.categoryCode')}</span><input name="category_code" value="${esc(category.category_code||'')}"></label><label class="field"><span>Slug</span><input name="slug" value="${esc(category.slug)}"></label></div><label class="check-field"><input type="checkbox" name="active" ${category.active?'checked':''}><span>${t('productFoundation.active')}</span></label><button class="button">${t('common.save')}</button></form><h3>${t('productFoundation.categoryAttributes')}</h3><form class="category-attributes-v2" data-category-id="${category.id}">${data.attribute_options.map(attribute=>attributeConfig(category,attribute)).join('')}<button class="button button--primary">${t('common.save')}</button></form></details>`).join('')}</article></section>`;
-  $('#category-create-v2').addEventListener('submit',async event=>{event.preventDefault();await api('/api/product-categories',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))});await renderProductLibraryCategoriesV2()});
+  const data = await api('/api/product-categories');
+  const categories = data.categories || [];
+  const attributeOptions = data.attribute_options || [];
+  const name = category => getLocale() === 'zh-CN' ? (category.name_zh || category.name) : (category.name_en || category.name);
+  const activeCategory = state.productCategoryDetailId ? categories.find(category => Number(category.id) === Number(state.productCategoryDetailId)) : null;
+  const attributeConfig = (category, attribute) => {
+    const config = category.attributes.find(item => item.id === attribute.id);
+    return `<tr data-category-attribute="${attribute.id}">
+      <td><label class="check-field"><input name="enabled" type="checkbox" ${config ? 'checked' : ''}><span>${esc(getLocale()==='zh-CN' ? (attribute.name_zh || attribute.name) : (attribute.name_en || attribute.name))}</span></label></td>
+      <td><label class="check-field"><input name="required" type="checkbox" ${config?.required ? 'checked' : ''}><span>${t('productFoundation.required')}</span></label></td>
+      <td><label class="check-field"><input name="searchable" type="checkbox" ${config?.searchable ? 'checked' : ''}><span>${t('productFinal.searchable')}</span></label></td>
+      <td><label class="check-field"><input name="filterable" type="checkbox" ${config?.filterable ? 'checked' : ''}><span>${t('productFoundation.filterable')}</span></label></td>
+      <td><label class="check-field"><input name="show_on_product" type="checkbox" ${config?.show_on_product !== 0 ? 'checked' : ''}><span>${t('productFoundation.productLibrary')}</span></label></td>
+      <td><label class="check-field"><input name="show_on_quote" type="checkbox" ${config?.show_on_quote ? 'checked' : ''}><span>${t('productFoundation.showQuote')}</span></label></td>
+      <td><label class="check-field"><input name="show_on_pi" type="checkbox" ${config?.show_on_pi ? 'checked' : ''}><span>${t('productFoundation.showPi')}</span></label></td>
+      <td><label class="check-field"><input name="show_on_storefront" type="checkbox" ${config?.show_on_storefront ? 'checked' : ''}><span>${t('productFinal.storefront')}</span></label></td>
+      <td><label class="check-field"><input name="internal_only" type="checkbox" ${config?.internal_only ? 'checked' : ''}><span>${t('productFoundation.internalOnly')}</span></label></td>
+      <td><label class="check-field"><input name="can_be_variant_axis" type="checkbox" ${config?.can_be_variant_axis ? 'checked' : ''}><span>${t('productFoundation.axisEligible')}</span></label></td>
+      <td><input name="sort_order" type="number" value="${config?.sort_order ?? 0}" class="compact-input"></td>
+      <td><input name="default_unit" value="${esc(config?.default_unit || '')}" class="compact-input"></td>
+    </tr>`;
+  };
+
+  const listMarkup = `<section class="library-management-grid"><article class="panel"><h2>${t('productFoundation.newCategory')}</h2><form id="category-create-v2" class="foundation-form"><div class="field-row"><label class="field"><span>${t('productFoundation.nameEn')}</span><input name="name_en" required></label><label class="field"><span>${t('productFoundation.nameZh')}</span><input name="name_zh" required></label></div><div class="field-row"><label class="field"><span>${t('productFinal.categoryCode')}</span><input name="category_code"></label><label class="field"><span>Slug</span><input name="slug"></label></div><label class="field"><span>${t('productFinal.descriptionEn')}</span><textarea name="description_en"></textarea></label><label class="field"><span>${t('productFinal.descriptionZh')}</span><textarea name="description_zh"></textarea></label><label class="field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="0"></label><button class="button button--primary">${t('common.create')}</button></form></article><article class="panel category-list-panel"><h2>${t('productFoundation.categories')}</h2><div class="foundation-manager-list">${categories.map(category=>`<article class="category-config-card"><div class="category-card-summary"><div><strong>${esc(name(category))}</strong><small>${esc(category.category_code||category.slug)}</small></div><div><strong>${Number(category.product_count)}</strong><small>${t('productFinal.productCount')}</small></div><div><strong>${Number(category.attribute_count)}</strong><small>${t('productFinal.attributeCount')}</small></div>${badge(category.active?t('productFoundation.active'):t('productFoundation.disabled'))}</div><div class="row-actions"><button class="button button--compact" data-action="open-product-category" data-id="${category.id}">${t('common.open')}</button><button class="button button--compact" data-action="library-toggle-category" data-id="${category.id}" data-active="${category.active?1:0}">${t(category.active?'productFoundation.disabled':'productFoundation.active')}</button></div></article>`).join('')}</div></article></section>`;
+
+  const detailMarkup = activeCategory ? `<section class="library-management-grid"><article class="panel category-detail-panel"><div class="panel-header"><div class="panel-title"><h2>${name(activeCategory)}</h2><p>${t('productFoundation.categoriesHelp')}</p></div><div class="row-actions"><button class="button" data-action="back-product-categories">${t('common.back')}</button><button class="button button--compact" data-action="library-toggle-category" data-id="${activeCategory.id}" data-active="${activeCategory.active?1:0}">${t(activeCategory.active?'productFoundation.disabled':'productFoundation.active')}</button></div></div><div class="category-detail-grid"><section class="panel nested-panel"><h3>${t('productFoundation.basicInformation')}</h3><form class="foundation-form category-edit-v2" data-category-id="${activeCategory.id}"><div class="field-row"><label class="field"><span>${t('productFoundation.nameEn')}</span><input name="name_en" value="${esc(activeCategory.name_en||activeCategory.name)}" required></label><label class="field"><span>${t('productFoundation.nameZh')}</span><input name="name_zh" value="${esc(activeCategory.name_zh||activeCategory.name)}" required></label></div><div class="field-row"><label class="field"><span>${t('productFinal.categoryCode')}</span><input name="category_code" value="${esc(activeCategory.category_code||'')}"></label><label class="field"><span>Slug</span><input name="slug" value="${esc(activeCategory.slug)}"></label></div><label class="field"><span>${t('productFinal.descriptionEn')}</span><textarea name="description_en">${esc(activeCategory.description_en || activeCategory.description || '')}</textarea></label><label class="field"><span>${t('productFinal.descriptionZh')}</span><textarea name="description_zh">${esc(activeCategory.description_zh || '')}</textarea></label><label class="field"><span>${t('productFoundation.sortOrder')}</span><input name="sort_order" type="number" value="${activeCategory.sort_order||0}"></label><label class="check-field"><input type="checkbox" name="active" ${activeCategory.active?'checked':''}><span>${t('productFoundation.active')}</span></label><button class="button button--primary">${t('common.save')}</button></form></section><section class="panel nested-panel"><h3>${t('productFoundation.categoryAttributes')}</h3><form class="category-attributes-v2" data-category-id="${activeCategory.id}"><div class="table-scroll"><table class="data-table category-attributes-table"><thead><tr><th>${t('fields.name')}</th><th>${t('productFoundation.required')}</th><th>${t('productFinal.searchable')}</th><th>${t('productFoundation.filterable')}</th><th>${t('productFoundation.productLibrary')}</th><th>${t('productFoundation.showQuote')}</th><th>${t('productFoundation.showPi')}</th><th>${t('productFinal.storefront')}</th><th>${t('productFoundation.internalOnly')}</th><th>${t('productFoundation.axisEligible')}</th><th>${t('productFoundation.sortOrder')}</th><th>${t('fields.unit')}</th></tr></thead><tbody>${attributeOptions.map(attribute=>attributeConfig(activeCategory,attribute)).join('') || `<tr><td colspan="12">${t('productFoundation.noAttributes')}</td></tr>`}</tbody></table></div><button class="button button--primary">${t('common.save')}</button></form></section></div></article></section>` : '';
+
+  $('#page').innerHTML = `${pageHeader(t('productFoundation.categories'), t('productFoundation.categoriesHelp'))}${activeCategory ? detailMarkup : listMarkup}`;
+  $('#category-create-v2')?.addEventListener('submit',async event=>{event.preventDefault();await api('/api/product-categories',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(event.currentTarget)))});await renderProductLibraryCategoriesV2()});
   document.querySelectorAll('.category-edit-v2').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const body=Object.fromEntries(new FormData(form));body.active=form.active.checked;await api(`/api/product-categories/${form.dataset.categoryId}`,{method:'PUT',body:JSON.stringify(body)});await renderProductLibraryCategoriesV2()}));
-  document.querySelectorAll('.category-attributes-v2').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const attributes=[...form.querySelectorAll('[data-category-attribute]')].filter(row=>row.querySelector('[name="enabled"]').checked).map(row=>({attribute_id:Number(row.dataset.categoryAttribute),required:row.querySelector('[name="required"]').checked,searchable:row.querySelector('[name="searchable"]').checked,filterable:row.querySelector('[name="filterable"]').checked,show_on_product:true,show_on_quote:row.querySelector('[name="show_on_quote"]').checked,show_on_pi:row.querySelector('[name="show_on_pi"]').checked,show_on_storefront:row.querySelector('[name="show_on_storefront"]').checked,can_be_variant_axis:row.querySelector('[name="can_be_variant_axis"]').checked,sort_order:Number(row.querySelector('[name="sort_order"]').value||0)}));await api(`/api/product-categories/${form.dataset.categoryId}/attributes`,{method:'PUT',body:JSON.stringify({attributes})});await renderProductLibraryCategoriesV2()}));
+  document.querySelectorAll('.category-attributes-v2').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const attributes=[...form.querySelectorAll('[data-category-attribute]')].filter(row=>row.querySelector('[name="enabled"]').checked).map(row=>({attribute_id:Number(row.dataset.categoryAttribute),required:row.querySelector('[name="required"]').checked,searchable:row.querySelector('[name="searchable"]').checked,filterable:row.querySelector('[name="filterable"]').checked,show_on_product:row.querySelector('[name="show_on_product"]').checked,show_on_quote:row.querySelector('[name="show_on_quote"]').checked,show_on_pi:row.querySelector('[name="show_on_pi"]').checked,show_on_storefront:row.querySelector('[name="show_on_storefront"]').checked,internal_only:row.querySelector('[name="internal_only"]').checked,can_be_variant_axis:row.querySelector('[name="can_be_variant_axis"]').checked,sort_order:Number(row.querySelector('[name="sort_order"]').value||0),default_unit:String(row.querySelector('[name="default_unit"]').value||'').trim()||null}));await api(`/api/product-categories/${form.dataset.categoryId}/attributes`,{method:'PUT',body:JSON.stringify({attributes})});await renderProductLibraryCategoriesV2()}));
 }
 
 function attributeCodePreview(value=''){return String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80)}
@@ -1275,49 +1353,50 @@ function customerTable(customers, capabilities, queue = false) {
 }
 
 function leadPoolTable(leads) {
-  const sourceLink=lead=>/^https?:\/\//i.test(String(lead.source_url||''))?`<a class="evidence-link" href="${esc(lead.source_url)}" target="_blank" rel="noopener noreferrer">View Source</a>`:`<span class="lead-muted">${esc(lead.reference_note||lead.website||'Not provided')}</span>`;
-  return `<div class="table-scroll lead-pool-scroll"><table class="data-table lead-pool-table" id="opportunity-lead-table"><colgroup><col class="lead-col"><col class="source-col"><col class="location-col"><col class="type-col"><col class="score-col"><col class="potential-col"><col class="recommendation-col"><col class="evidence-col"><col class="status-col"><col class="actions-col"></colgroup><thead><tr>
-    <th>Lead</th><th>Source</th><th>Location</th><th>Customer Type</th><th>Score</th><th>Potential</th><th>AI Recommendation</th><th>Evidence</th><th>Status</th><th></th>
-  </tr></thead><tbody>${leads.map(lead => `<tr data-search="${esc(`${lead.company_name || ''} ${lead.customer_type || ''} ${lead.country || ''} ${lead.city || ''} ${lead.source_type || ''} ${lead.status || ''}`.toLowerCase())}">
-    <td class="primary-cell lead-name-cell"><strong>${esc(lead.company_name)}</strong><small>${esc(lead.task_name || 'Search Result Lead')}</small></td>
-    <td>${badge(lead.source_type || 'Manual')}</td><td>${esc([lead.country, lead.city].filter(Boolean).join(' / ') || '—')}</td><td>${esc(lead.customer_type || '—')}</td>
-    <td>${Number(lead.opportunity_score || 0)}</td><td>${esc(lead.purchase_potential || 'Unknown')}</td><td class="lead-recommendation">${esc(lead.recommended_next_action || 'Review lead')}</td>
-    <td class="lead-evidence-cell">${sourceLink(lead)}</td><td>${badge(lead.status || 'reviewed')}</td>
-    <td class="lead-actions-cell"><button class="button button--compact" data-action="view-search-result" data-id="${lead.id}">Open</button></td>
-  </tr>`).join('') || '<tr><td colspan="10"><div class="empty-state">No leads yet. Create Search Results from Search Tasks first.</div></td></tr>'}</tbody></table></div>`;
+  const q=key=>t(`salesOs.qualificationFlow.${key}`),f=state.leadPoolFilters||{},conclusionKey=lead=>lead.ai_qualification_status!=='Qualified'?'needs_confirmation':lead.ai_recommendation_group,conclusion=lead=>conclusionKey(lead)==='recommended'?q('recommended'):conclusionKey(lead)==='needs_confirmation'?q('needsConfirmation'):q('notRecommended');
+  const taskOptions=[...new Map(leads.map(lead=>[String(lead.search_task_id),lead.task_name])).entries()];
+  const regionOptions=[...new Set(leads.map(lead=>[lead.city,lead.country].filter(Boolean).join(' / ')).filter(Boolean))].sort();
+  const base=leads.filter(lead=>(!f.taskId||String(lead.search_task_id)===String(f.taskId))&&(!f.region||[lead.city,lead.country].filter(Boolean).join(' / ')===f.region)&&(!f.conclusion||conclusionKey(lead)===f.conclusion)&&(!f.score||(f.score==='high'&&Number(lead.opportunity_score)>=70)||(f.score==='medium'&&Number(lead.opportunity_score)>=40&&Number(lead.opportunity_score)<70)||(f.score==='low'&&Number(lead.opportunity_score)<40))&&(!f.reviewStatus||lead.status===f.reviewStatus));
+  const row=lead=>`<tr><td class="primary-cell readable-list-primary"><button class="readable-list-link" data-action="view-search-result" data-id="${lead.id}" title="${esc(lead.company_name)}">${esc(lead.company_name)}</button></td><td>${badge(conclusion(lead))}</td><td><strong>${Number(lead.opportunity_score||0)}</strong></td><td><span class="readable-list-clamp" title="${esc(lead.qualification_reason||q('waiting'))}">${esc(lead.qualification_reason||q('waiting'))}</span></td><td>${esc((lead.missing_information||[]).join(' / ')||q('none'))}</td><td><button class="button button--compact button--primary" data-action="review-search-result" data-id="${lead.id}" ${lead.status==='reviewed'?'disabled':''}>${lead.status==='reviewed'?q('kept'):q('keep')}</button></td><td><button class="button button--compact" data-action="discard-search-result" data-id="${lead.id}">${q('abandon')}</button></td><td><button class="button button--compact" data-action="view-search-result" data-id="${lead.id}">${q('viewEvidence')}</button></td></tr>`;
+  const groups=[['recommended',q('recommended')],['needs_confirmation',q('needsConfirmation')],['not_recommended',q('notRecommended')]],active=state.leadPoolGroup||'recommended',items=base.filter(lead=>conclusionKey(lead)===active);
+  return `<div class="lead-pool-review"><div class="lead-pool-group-tabs" role="tablist">${groups.map(([key,label])=>`<button class="${active===key?'is-active':''}" data-action="lead-pool-group" data-group="${key}" role="tab">${label}<span>${base.filter(lead=>conclusionKey(lead)===key).length}</span></button>`).join('')}</div><div class="lead-pool-filters"><label><span>${t('salesOs.terms.searchTask')}</span><select data-lead-filter="taskId"><option value="">${t('salesOs.leadReview.allTasks')}</option>${taskOptions.map(([id,name])=>`<option value="${id}" ${String(f.taskId)===id?'selected':''}>${esc(name)}</option>`).join('')}</select></label><label><span>${t('salesOs.terms.location')}</span><select data-lead-filter="region"><option value="">${t('salesOs.leadReview.allRegions')}</option>${regionOptions.map(value=>`<option ${f.region===value?'selected':''}>${esc(value)}</option>`).join('')}</select></label><label><span>${q('aiConclusion')}</span><select data-lead-filter="conclusion"><option value="">${t('salesOs.leadReview.allConclusions')}</option>${groups.map(([key,label])=>`<option value="${key}" ${f.conclusion===key?'selected':''}>${label}</option>`).join('')}</select></label><label><span>${q('score')}</span><select data-lead-filter="score"><option value="">${t('salesOs.leadReview.allScores')}</option><option value="high" ${f.score==='high'?'selected':''}>70–100</option><option value="medium" ${f.score==='medium'?'selected':''}>40–69</option><option value="low" ${f.score==='low'?'selected':''}>0–39</option></select></label><label><span>${t('salesOs.listUi.reviewStatus')}</span><select data-lead-filter="reviewStatus"><option value="">${t('salesOs.leadReview.allStatuses')}</option><option value="new" ${f.reviewStatus==='new'?'selected':''}>${statusLabel('new')}</option><option value="reviewed" ${f.reviewStatus==='reviewed'?'selected':''}>${statusLabel('reviewed')}</option></select></label></div><p class="lead-pool-count">${t('salesOs.leadReview.filteredCount',{count:base.length})}</p><div class="table-scroll readable-list-scroll"><table class="data-table readable-list-table lead-pool-table qualification-lead-table"><thead><tr><th>${q('companyName')}</th><th>${q('aiConclusion')}</th><th>${q('score')}</th><th>${q('oneSentenceReason')}</th><th>${q('missingInfo')}</th><th>${t('salesOs.listUi.source')}</th><th>${q('keep')}</th><th>${q('abandon')}</th><th>${t('common.view')}</th></tr></thead><tbody>${items.map(lead=>row(lead).replace(`<td><button class="button button--compact button--primary"`,`<td><span class="readable-list-clamp" title="${esc(lead.connector_key||lead.source_type||'')}">${esc(lead.connector_key||lead.source_type||'—')}</span></td><td><button class="button button--compact button--primary"`).replace(q('viewEvidence'),t('common.view'))).join('')||`<tr><td colspan="9"><div class="empty-state">${q('noLeads')}</div></td></tr>`}</tbody></table></div></div>`;
 }
 
 function renderLeadDetail(lead) {
   if (!lead) return '';
+  const q=key=>t(`salesOs.qualificationFlow.${key}`),d=key=>t(`salesOs.leadDetailIa.${key}`);
   const taskLabel = /^Search Task #(\d+)$/i.test(String(lead.task_name || '')) ? `${t('salesOs.terms.searchTask')} #${String(lead.task_name).match(/\d+/)?.[0]}` : esc(lead.task_name || t('salesOs.terms.searchResult'));
-  const contact = [lead.contact_person, lead.email, lead.phone, lead.linkedin, lead.instagram].filter(Boolean).join(' · ') || 'No contact information yet';
-  const evidence=lead.evidence_json||{},aiStatus=lead.ai_qualification_status||'Pending';
+  const contact = [lead.contact_person, lead.email, lead.phone, lead.linkedin, lead.instagram].filter(Boolean).join(' · ') || t('salesOs.searchUi.noContact');
+  const evidence=lead.evidence_json||{},enrichment=evidence.enrichment||lead.enrichment?.evidence_json||{},aiStatus=lead.ai_qualification_status||'Pending';
   const sourceUrl=lead.source_url||evidence.sourceUrl||'';
-  const sourceLink=/^https?:\/\//i.test(String(sourceUrl))?`<a class="evidence-link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">View Source</a>`:'Not provided';
-  const websiteLink=/^https?:\/\//i.test(String(lead.website||''))?`<a class="detail-value-link" href="${esc(lead.website)}" target="_blank" rel="noopener noreferrer">${esc(lead.website)}</a>`:esc(lead.website||'Missing');
-  const aiLabel=aiStatus==='Qualified'?t('salesOs.status.aiQualified'):aiStatus==='Failed'?t('salesOs.status.aiFailed'):aiStatus==='Blocked'?t('salesOs.status.aiBlocked'):aiStatus==='Running'?t('salesOs.status.aiRunning'):t('salesOs.status.aiPending');
-  const qualificationSource = lead.qualification_source === 'Formal AI Qualification' ? t('salesOs.leadUi.formalAi') : lead.qualification_source === 'Initial Rules / Manual Data' ? t('salesOs.leadUi.initialRules') : lead.qualification_source || t('salesOs.leadUi.initialRules');
+  const sourceLink=/^https?:\/\//i.test(String(sourceUrl))?`<a class="evidence-link" href="${esc(sourceUrl)}" target="_blank" rel="noopener noreferrer">${t('salesOs.actions.viewSource')}</a>`:t('salesOs.messages.notProvided');
+  const websiteLink=/^https?:\/\//i.test(String(lead.website||''))?`<a class="detail-value-link" href="${esc(lead.website)}" target="_blank" rel="noopener noreferrer">${esc(lead.website)}</a>`:t('salesOs.searchUi.missing');
+  const conclusion=lead.ai_recommendation_group==='recommended'?q('recommended'):lead.ai_recommendation_group==='not_recommended'?q('notRecommended'):q('needsConfirmation');
+  const missing=(lead.missing_information||[]);
+  const enrichmentSources=Array.isArray(enrichment.sourceUrls)?enrichment.sourceUrls:[];
+  const enrichmentSignals=Array.isArray(enrichment.businessEvidence)?enrichment.businessEvidence:[];
+  const qualification=evidence.qualification||{},positiveEvidence=Array.isArray(qualification.keyEvidence)?qualification.keyEvidence:enrichmentSignals.filter(item=>item.evidenceType==='positive_target').slice(0,3);
+  const negativeEvidence=Array.isArray(qualification.negativeEvidence)?qualification.negativeEvidence:enrichmentSignals.filter(item=>item.evidenceType==='exclusion');
+  const enrichmentEmails=Array.isArray(enrichment.publicEmails)?enrichment.publicEmails:(lead.enrichment?.public_emails_json||[]);
+  const safeEnrichmentLink=value=>/^https?:\/\//i.test(String(value||''))?`<a class="detail-value-link" href="${esc(value)}" target="_blank" rel="noopener noreferrer">${esc(value)}</a>`:t('salesOs.messages.notProvided');
   const history = [
     [t('salesOs.history.leadCreated'), lead.created_at],
-    [aiLabel, lead.ai_qualification_at || lead.created_at]
+    [t('salesOs.history.aiCompleted'), lead.ai_qualification_at || lead.created_at]
   ];
   if(lead.review_audit_id)history.push([t('salesOs.history.reviewedBy',{name:lead.reviewed_by||'User'}),lead.reviewed_at]);
   else history.push([lead.status==='reviewed'?`${statusLabel('reviewed')} · ${t('salesOs.history.legacy')}`:statusLabel(lead.status||'new'),lead.updated_at||lead.created_at]);
   if (lead.status === 'converted') history.push([t('salesOs.history.converted'), lead.updated_at]);
   return `<article class="panel lead-detail-panel">
     <div class="panel-header"><div class="panel-title"><h2>${esc(lead.company_name)}</h2><p>${t('salesOs.terms.leadDetail')} · ${taskLabel}</p></div><div class="row-actions">${badge(lead.status || 'reviewed')}<button class="button" data-action="back-lead-pool">${t('salesOs.leadUi.backPool')}</button></div></div>
-    <section class="detail-grid">
-      <article><h3>AI Summary</h3>${badge(aiLabel)}<small class="qualification-source">${esc(qualificationSource)}${lead.ai_qualification_provider?` · ${esc(lead.ai_qualification_provider)}`:''}</small><p>${esc(lead.opportunity_summary || (aiStatus==='Failed'?'AI qualification failed. Review the lead or retry.':'AI qualification summary is pending.'))}</p><dl class="lead-field-list"><div><dt>Score</dt><dd>${Number(lead.opportunity_score || 0)}</dd></div><div><dt>Purchase Potential</dt><dd>${esc(lead.purchase_potential || 'Unknown')}</dd></div></dl></article>
-      <article><h3>Website & Contact</h3><dl class="lead-field-list"><div><dt>Website</dt><dd>${websiteLink}</dd></div><div><dt>Contact</dt><dd>${esc(contact)}</dd></div></dl></article>
-      <article><h3>Product Matching</h3><p>${esc(lead.recommended_product_reason || 'Run qualification to prepare product direction.')}</p></article>
-    </section>
-    <details class="source-evidence-card section-gap" open><summary>Source & Evidence</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>Connector Version</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||'—')}</dd></div><div><dt>External ID</dt><dd>${esc(lead.external_id||evidence.externalId||'—')}</dd></div><div><dt>Source URL</dt><dd>${sourceLink}</dd></div><div><dt>Captured Time</dt><dd>${formatLocalDateTime(lead.captured_at||evidence.capturedTime)}</dd></div><div><dt>Search Execution</dt><dd>${lead.search_execution_id?`#${Number(lead.search_execution_id)}`:'—'}</dd></div><div><dt>Normalization Version</dt><dd>${esc(lead.normalization_version||evidence.normalizationVersion||'—')}</dd></div><div><dt>Duplicate Status</dt><dd>${lead.duplicate_of_search_result_id?`Review candidate · Result #${Number(lead.duplicate_of_search_result_id)}`:'No duplicate detected'}</dd></div><div class="evidence-note-row"><dt>Reference Note</dt><dd>${esc(lead.reference_note||'—')}</dd></div></dl></details>
-    <section class="detail-grid section-gap">
-      <article><h3>AI Recommendation</h3><p>${esc(lead.recommended_next_action || 'Review the lead and decide whether to convert.')}</p><h3>Qualification Reason</h3><p>${esc(lead.qualification_reason || 'No qualification reason yet.')}</p></article>
-      <article><h3>Customer Intelligence</h3><p>This lead is still before CRM conversion. Use AI qualification, evidence, and product matching to decide whether it should become a Customer.</p><div class="row-actions"><button class="button" data-action="run-lead-ai" data-id="${lead.id}" ${aiStatus==='Running'?'disabled':''}>${aiStatus==='Running'?'AI Running…':'Run AI'}</button><button class="button" data-action="edit-search-result" data-id="${lead.id}">Update Intelligence</button></div></article>
-    </section>
-    <article class="panel section-gap">${panelHeader('Activity History', 'Lead workflow history before CRM conversion')}<div class="activity-list">${history.map(([label, date]) => `<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${formatLocalDateTime(date)}</p></div></div>`).join('')}</div></article>
-    <div class="row-actions section-gap">${lead.status !== 'converted' ? `${!['reviewed','discarded'].includes(lead.status)?`<button class="button" data-action="review-search-result" data-id="${lead.id}">Mark Reviewed</button>`:''}<button class="button button--primary" data-action="convert-search-result" data-id="${lead.id}">Convert to Customer</button><button class="button" data-action="discard-search-result" data-id="${lead.id}">Discard</button>` : `<button class="button button--primary" data-action="view-customer" data-id="${lead.customer_id}">Open Customer</button>`}</div>
+    <section class="lead-decision-card section-gap"><div class="lead-decision-card__main"><span>${d('decisionCard')}</span><h3>${esc(lead.company_name)}</h3><div class="lead-decision-result">${badge(conclusion)}<strong>${Number(lead.opportunity_score||0)}</strong><small>/100</small></div><p>${esc(lead.qualification_reason||q('waiting'))}</p></div><dl><div><dt>${d('recommendedAction')}</dt><dd>${esc(lead.recommended_next_action||conclusion)}</dd></div><div><dt>${q('missingInfo')}</dt><dd>${esc(missing.join(' / ')||q('none'))}</dd></div><div><dt>${d('lastAnalyzed')}</dt><dd>${formatLocalDateTime(lead.ai_qualification_at||lead.updated_at)}</dd></div></dl><div class="lead-decision-actions">${lead.status!=='reviewed'?`<button class="button button--primary" data-action="review-search-result" data-id="${lead.id}">${q('keep')}</button>`:`<button class="button" disabled>${q('kept')}</button>`}${lead.status!=='discarded'?`<button class="button" data-action="discard-search-result" data-id="${lead.id}">${q('abandon')}</button>`:`<button class="button" disabled>${q('abandoned')}</button>`}<button class="button" data-action="show-lead-evidence">${q('viewEvidence')}</button></div></section>
+    <section class="lead-detail-section"><h3>${d('aiConclusion')}</h3><p>${esc(lead.opportunity_summary||lead.qualification_reason||q('waiting'))}</p></section>
+    <section class="lead-detail-section"><h3>${d('reasonRisk')}</h3><p>${esc(lead.why_customer_matters||lead.qualification_reason||q('waiting'))}</p>${positiveEvidence.length?`<h4>${d('positiveEvidence')}</h4><ul class="compact-list">${positiveEvidence.slice(0,3).map(item=>`<li><strong>${esc(item.type||item.matchedTerm||'Evidence')}</strong> · ${esc(item.snippet||'')}<small>${d('evidenceSource')}：${safeEnrichmentLink(item.url)}</small></li>`).join('')}</ul>`:''}${negativeEvidence.length?`<h4>${d('negativeEvidence')}</h4><ul class="compact-list">${negativeEvidence.map(item=>`<li><strong>${esc(item.type||item.matchedTerm||'Evidence')}</strong> · ${esc(item.snippet||'')}<small>${d('evidenceSource')}：${safeEnrichmentLink(item.url)}</small></li>`).join('')}</ul>`:''}${qualification.scoringReason?`<h4>${d('scoringReason')}</h4><p>${esc(qualification.scoringReason)}</p>`:''}<small>${t('salesOs.qualificationFlow.noAutoCustomer')}</small></section>
+    <section class="lead-detail-section"><h3>${q('missingInfo')}</h3><div class="missing-info-list">${missing.length?missing.map(item=>`<span>${esc(item)}</span>`).join(''):`<span class="is-complete">${q('none')}</span>`}</div></section>
+    <section class="lead-detail-section"><h3>${d('enrichment')}</h3><dl class="lead-field-list"><div><dt>${d('enrichmentStatus')}</dt><dd>${badge(lead.enrichment_status||enrichment.status||'Pending')}</dd></div><div><dt>${d('officialWebsite')}</dt><dd>${safeEnrichmentLink(enrichment.officialWebsite||lead.website)}</dd></div><div><dt>${d('publicEmail')}</dt><dd>${esc(enrichmentEmails.join(' / ')||lead.email||t('salesOs.messages.notProvided'))}</dd></div><div><dt>${d('contactPage')}</dt><dd>${safeEnrichmentLink(enrichment.contactPage)}</dd></div><div><dt>${d('businessDescription')}</dt><dd>${esc(enrichment.businessDescription||t('salesOs.messages.notProvided'))}</dd></div></dl>${enrichmentSignals.length?`<h4>${d('businessEvidence')}</h4><ul class="compact-list">${enrichmentSignals.slice(0,8).map(item=>`<li><strong>${esc(item.type||'Evidence')}</strong> · ${esc(item.snippet||'')}</li>`).join('')}</ul>`:''}${enrichmentSources.length?`<h4>${d('sourcePages')}</h4><ul class="compact-list">${enrichmentSources.map(item=>`<li>${safeEnrichmentLink(item.url)} · ${formatLocalDateTime(item.capturedAt)}</li>`).join('')}</ul>`:''}</section>
+    <section class="detail-grid section-gap"><article><h3>${d('providerFacts')}</h3><dl class="lead-field-list"><div><dt>${d('providerCategory')}</dt><dd>${esc(lead.source_category||t('salesOs.terms.unknown'))}</dd></div><div><dt>${d('providerAddress')}</dt><dd>${esc(lead.address||t('salesOs.terms.unknown'))}</dd></div><div><dt>${d('providerPhone')}</dt><dd>${esc(lead.phone||t('salesOs.terms.unknown'))}</dd></div><div><dt>${t('salesOs.terms.source')}</dt><dd>${sourceLink}</dd></div></dl></article><article><h3>${d('standardizedFields')}</h3><dl class="lead-field-list"><div><dt>${q('companyName')}</dt><dd>${esc(lead.company_name)}</dd></div><div><dt>${d('initialType')}</dt><dd>${esc(lead.customer_type||'Unclassified / Furniture & Interior Business')}</dd></div><div><dt>${t('salesOs.terms.countryCity')}</dt><dd>${esc([lead.country,lead.city].filter(Boolean).join(' / ')||t('salesOs.terms.unknown'))}</dd></div><div><dt>${t('salesOs.terms.website')}</dt><dd>${websiteLink}</dd></div><div><dt>${t('salesOs.terms.contact')}</dt><dd>${esc(contact)}</dd></div><div><dt>${d('evaluationTarget')}</dt><dd>${esc(lead.target_customer_type||t('salesOs.messages.notProvided'))}</dd></div></dl></article></section>
+    <details id="lead-evidence-details" class="source-evidence-card section-gap"><summary>${q('evidenceTech')}</summary><dl class="lead-field-list evidence-field-list"><div><dt>Connector</dt><dd>${esc(lead.connector_key||lead.source_type||'Manual')}</dd></div><div><dt>${t('salesOs.terms.connectorVersion')}</dt><dd>${esc(lead.connector_version||evidence.connectorVersion||t('salesOs.terms.unknown'))}</dd></div><div><dt>${t('salesOs.terms.externalId')}</dt><dd>${esc(lead.external_id||evidence.externalId||t('salesOs.terms.unknown'))}</dd></div><div><dt>${t('salesOs.connectorUi.coordinates')}</dt><dd>${Number.isFinite(Number(evidence.locationResolution?.latitude))?`${Number(evidence.locationResolution.latitude)}, ${Number(evidence.locationResolution.longitude)}`:t('salesOs.terms.unknown')}</dd></div><div><dt>Datasource JSON</dt><dd>${esc(JSON.stringify(evidence.datasource||evidence.attribution||t('salesOs.terms.unknown')))}</dd></div><div><dt>Provider Payload</dt><dd>${lead.raw_payload_id?`#${Number(lead.raw_payload_id)}`:t('salesOs.terms.unknown')}</dd></div><div><dt>${t('salesOs.terms.sourceUrl')}</dt><dd>${sourceLink}</dd></div><div><dt>${t('salesOs.terms.capturedTime')}</dt><dd>${formatLocalDateTime(lead.captured_at||evidence.capturedTime)}</dd></div></dl></details>
+    <details class="source-evidence-card section-gap"><summary>${t('salesOs.terms.activityHistory')}</summary><div class="activity-list">${history.map(([label,date])=>`<div class="activity-item"><span></span><div><strong>${esc(label)}</strong><p>${formatLocalDateTime(date)}</p></div></div>`).join('')}</div></details>
+    <div class="lead-secondary-actions section-gap"><button class="button" data-action="enrich-search-result" data-id="${lead.id}">${q('refreshReanalyze')}</button></div>
   </article>`;
 }
 
@@ -1345,135 +1424,131 @@ function applyCustomerListFilters() {
   });
 }
 
+const discoveryCopy = () => {
+  const keys=['describe','example','target','analyze','analyzing','analyzed','generate','generating','generated','create','creating','open','connected','noApi','cost','empty','stale','reanalyze','error','discoveryPlan','guidance','generatedPlan','ready','needs','type','types','industry','country','state','city','fullLocation','region','size','confidence','keywords','sources','exclude','filters','next','profile','objective','category','providerCategory','quantity','fields','semantics','priority','reason','revision','planRevision','basedOn','completed','customerSystem','customerSystemHelp','notConfigured','locationSearch','locationHelp','locationSearching','locationSelect','locationSelected','locationRequired','locationService','businessSearchSource','customerTypeHelp','customerTypeRequired'];
+  const copy=Object.fromEntries(keys.map(key=>[key,t(`salesOs.discovery.${key}`)]));
+  copy.customerTypeHelp=t('salesOs.discoveryCustomerType.help');copy.customerTypeRequired=t('salesOs.discoveryCustomerType.required');copy.viewCustomerRules=t('salesOs.discoveryCustomerType.viewRules');copy.companyUnit=t('salesOs.discoveryCustomerType.companyUnit');copy.categoryFurniture=t('salesOs.discoveryCustomerType.categoryFurniture');
+  copy.created=id=>t('salesOs.discovery.created').replace('{id}',id);return copy;
+};
+// Stable English discovery labels retained for regression contracts: Describe your ideal customer; Customer Discovery Plan; Generated Search Plan; Recommended Data Fields; Recommended Search Volume.
+
 function discoveryPlanResult(result) {
-  if (!result) return `<div class="empty-state">Describe your ideal customer, then click Analyze Requirement to create a structured Customer Discovery Plan.</div>`;
+  const c=discoveryCopy();
+  if (!result) return `<div class="empty-state" data-discovery-empty>${c.empty}</div>`;
   const plan = result.plan || {};
   const guidance = result.guidance || {};
   const scoring = result.scoring_profile || {};
   const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
   const generated = result.generated_search_plan || null;
   return `<section class="discovery-result-grid">
-    <article class="panel discovery-plan-card"><div class="panel-header"><div class="panel-title"><h2>Customer Discovery Plan</h2><p>AI/rules generated, human-reviewed before search execution.</p></div>${badge(guidance.needs_more_information ? 'Needs More Info' : 'Ready to Search')}</div>
-      <div class="debug-list discovery-fields">
-        <div><span>Target Customer Type</span><strong>${esc(plan.target_customer_type || 'Needs Clarification')}</strong></div>
-        <div><span>Industry</span><strong>${esc(plan.industry || 'Hospitality Furniture')}</strong></div>
-        <div><span>Country</span><strong>${esc(plan.country || 'Needs Clarification')}</strong></div>
-        <div><span>Region / City</span><strong>${esc(plan.region_city || 'Needs Clarification')}</strong></div>
-        <div><span>Company Size</span><strong>${esc(plan.company_size || 'Unknown')}</strong></div>
-        <div><span>Confidence</span><strong>${Number(plan.confidence_score || 0)}%</strong></div>
+    <article id="customer-discovery-plan" class="panel ui-card discovery-plan-card ${state.discoveryStale?'is-stale':''}"><div class="panel-header ui-card__header"><div class="panel-title"><h2>${c.discoveryPlan}</h2><p>${state.discoveryStale?c.reanalyze:`${c.completed}: ${formatDateTime(state.discoveryAnalysisCompletedAt)} · ${c.revision} ${state.discoveryAnalysisRevision}`}</p></div>${badge(state.discoveryStale?c.stale:(guidance.needs_more_information?c.needs:c.ready))}</div><div class="ui-card__body">
+      <div class="debug-list discovery-fields ui-definition-grid">
+         <div><span>${c.types}</span><strong>${esc((plan.customer_types||[]).join(', ') || plan.target_customer_type || c.needs)}</strong></div>
+         <div><span>${c.industry}</span><strong>${esc(plan.industry || c.needs)}</strong></div>
+         <div><span>${c.country}</span><strong>${esc(plan.country || c.needs)}</strong></div>
+         <div><span>${c.state}</span><strong>${esc(plan.state || c.needs)}</strong></div><div><span>${c.city}</span><strong>${esc(plan.city || c.needs)}</strong></div>
+         <div><span>${c.fullLocation}</span><strong>${esc(plan.full_location || c.needs)}</strong></div><div><span>${c.quantity}</span><strong>${plan.target_quantity?`${plan.target_quantity} ${c.companyUnit}`:c.needs}</strong></div>
+         <div><span>${c.category}</span><strong>${esc(plan.category_label || c.needs)}</strong></div><div><span>${c.providerCategory}</span><strong>${esc(plan.provider_category || c.needs)}</strong></div>
+         <div><span>${c.size}</span><strong>${esc(plan.company_size || c.needs)}</strong></div><div><span>${c.confidence}</span><strong>${Number(plan.confidence_score || 0)}%</strong></div>
       </div>
-      <h3>Recommended Keywords</h3><ul class="compact-list">${list(plan.recommended_keywords)}</ul>
-      <h3>Recommended Search Sources</h3><ul class="compact-list">${list(plan.recommended_search_sources)}</ul>
-      <h3>Exclude</h3><ul class="compact-list">${list(plan.excluded_customers)}</ul></article>
-    <article class="panel discovery-plan-card"><h2>Search Guidance</h2><p>${esc(guidance.message || '')}</p>
-      <h3>Suggested Filters</h3><ul class="compact-list">${list(guidance.suggestions)}</ul>
-      <h3>Recommended Next Step</h3><p>${esc(guidance.recommended_next_step || '')}</p>
-      <h3>Dynamic Scoring Profile</h3><p><strong>${esc(scoring.customer_type || plan.target_customer_type || 'Needs Clarification')}</strong></p>
-      <div class="score-dimension-list">${(scoring.dimensions || []).map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight || 0)}%</strong></div>`).join('') || '<p>No scoring profile selected yet.</p>'}</div></article>
-  </section>${generated ? generatedSearchPlanSection(generated) : ''}`;
+       <h3>${c.keywords}</h3><ul class="compact-list">${list(plan.recommended_keywords)}</ul><h3>${c.sources}</h3><ul class="compact-list">${list(plan.recommended_search_sources)}</ul><h3>${c.exclude}</h3><ul class="compact-list">${list(plan.excluded_customers)}</ul></div></article>
+    <article class="panel ui-card discovery-plan-card"><div class="ui-card__body"><h2>${c.guidance}</h2><p>${esc(guidance.message || '')}</p><h3>${c.filters}</h3><ul class="compact-list">${list(guidance.suggestions)}</ul><h3>${c.next}</h3><p>${esc(guidance.recommended_next_step || '')}</p><h3>${c.profile}</h3><p><strong>${esc(scoring.customer_type || plan.target_customer_type || c.needs)}</strong></p><div class="score-dimension-list">${(scoring.dimensions || []).map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight || 0)}%</strong></div>`).join('') || `<p>${c.needs}</p>`}</div></div></article>
+  </section>${generated && state.discoveryPlanRevision && !state.discoveryStale ? generatedSearchPlanSection(generated) : ''}`;
 }
 
 function generatedSearchPlanSection(plan) {
+  const c=discoveryCopy();
   const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
-  const createAction = state.discoveryPlan?.request?.id ? '<button class="button button--primary" data-action="create-search-strategy-from-plan">Create Strategy Draft</button>' : '';
-  return `<article class="panel generated-search-plan"><div class="panel-header"><div class="panel-title"><h2>Generated Search Plan</h2><p>Review this draft before any future customer discovery execution.</p></div><div class="row-actions">${badge(plan.status || 'Draft Search Plan')}${createAction}</div></div>
-    <div class="debug-list discovery-fields">
-      <div><span>Target Customer</span><strong>${esc(plan.target_customer || 'Needs Clarification')}</strong></div>
-      <div><span>Customer Type</span><strong>${esc(plan.customer_type || 'Needs Clarification')}</strong></div>
-      <div><span>Industry</span><strong>${esc(plan.industry || 'Hospitality Furniture')}</strong></div>
-      <div><span>Location</span><strong>${esc(plan.location || 'Needs Clarification')}</strong></div>
-      <div><span>Company Size</span><strong>${esc(plan.company_size || 'Unknown')}<br><small>${esc(plan.company_size_detail || '')}</small></strong></div>
-      <div><span>Recommended Search Volume</span><strong>${esc(plan.recommended_search_volume || '50 companies')}</strong></div>
-      <div><span>Priority</span><strong>${esc(plan.priority || 'Medium')}</strong></div>
+  const createAction = state.discoveryPlan?.request?.id ? `<button class="button button--primary" data-action="create-search-strategy-from-plan" ${state.discoveryFlowState==='creating_strategy'||state.discoveryStrategyCreatedId?'disabled':''}>${state.discoveryFlowState==='creating_strategy'?c.creating:c.create}</button>` : '';
+  return `<article id="generated-search-plan" class="panel ui-card generated-search-plan"><div class="panel-header ui-card__header"><div class="panel-title"><h2>${c.generatedPlan}</h2><p>${c.completed}: ${formatDateTime(state.discoveryPlanCompletedAt)} · ${c.planRevision} ${state.discoveryPlanRevision} · ${c.basedOn} ${state.discoveryAnalysisRevision}</p></div><div class="row-actions">${badge(plan.status==='Ready for Search'?c.ready:c.needs)}${createAction}</div></div><div class="ui-card__body">
+    <div class="debug-list discovery-fields ui-definition-grid">
+       <div><span>${c.country}</span><strong>${esc(plan.country||c.needs)}</strong></div><div><span>${c.state}</span><strong>${esc(plan.state||c.needs)}</strong></div><div><span>${c.city}</span><strong>${esc(plan.city||c.needs)}</strong></div><div><span>${c.fullLocation}</span><strong>${esc(plan.full_location||c.needs)}</strong></div>
+       <div><span>${c.types}</span><strong>${esc((plan.customer_types||[]).join(', ')||c.needs)}</strong></div><div><span>${c.category}</span><strong>${esc(plan.category_label||c.needs)}</strong></div><div><span>${c.providerCategory}</span><strong>${esc(plan.provider_category||c.needs)}</strong></div><div><span>${c.quantity}</span><strong>${plan.target_quantity?`${plan.target_quantity} ${c.companyUnit}`:c.needs}</strong></div><div><span>${c.semantics}</span><strong>${esc(plan.connector_search_semantics||c.needs)}</strong></div>
     </div>
-    <h3>Reason</h3><ul class="compact-list">${list(plan.priority_reasons)}</ul>
-    <h3>Search Objective</h3><p>${esc(plan.search_objective || '')}</p>
+    <h3>${c.reason}</h3><ul class="compact-list">${list(plan.priority_reasons)}</ul><h3>${c.objective}</h3><p>${esc(plan.search_objective || '')}</p>
     <section class="generated-search-grid">
-      <div><h3>Recommended Filters</h3><ul class="compact-list">${list(plan.recommended_filters)}</ul></div>
-      <div><h3>Search Keywords</h3><ul class="compact-list">${list(plan.search_keywords)}</ul></div>
-      <div><h3>Recommended Data Fields</h3><ul class="compact-list">${list(plan.recommended_data_fields)}</ul></div>
-      <div><h3>Exclude</h3><ul class="compact-list">${list(plan.exclude)}</ul></div>
-    </section></article>`;
+      <div><h3>${c.filters}</h3><ul class="compact-list">${list(plan.recommended_filters)}</ul></div><div><h3>${c.keywords}</h3><ul class="compact-list">${list(plan.search_keywords)}</ul></div><div><h3>${c.fields}</h3><ul class="compact-list">${list(plan.recommended_data_fields)}</ul></div><div><h3>${c.exclude}</h3><ul class="compact-list">${list(plan.exclude)}</ul></div>
+    </section></div></article>`;
 }
 
 function renderCustomerDiscoveryPane(data) {
-  const latest = state.discoveryPlan || data.discoveryRequests?.[0] && { plan: data.discoveryRequests[0].search_plan, guidance: data.discoveryRequests[0].guidance, scoring_profile: data.discoveryRequests[0].scoring_profile };
+  const c=discoveryCopy(), latest=state.discoveryPlan;
+  const connector=(state.searchConnectors||[]).find(item=>item.key==='geoapify-places');
+  const locationProvider=(state.locationProviders||[]).find(item=>item.key===state.locationProviderKey)||(state.locationProviders||[])[0];
+  const busy=['analyzing','generating_plan','creating_strategy'].includes(state.discoveryFlowState);
+  const analyzeLabel=state.discoveryFlowState==='analyzing'?c.analyzing:(state.discoveryFlowState==='analyzed'?c.analyzed:c.analyze);
+  const generateLabel=state.discoveryFlowState==='generating_plan'?c.generating:(state.discoveryFlowState==='plan_generated'?c.generated:c.generate);
+  const location=state.discoverySelectedLocation;
+  const hasCustomerTypes=state.discoveryCustomerTypes.length>0;
+  const customerTypeOptions=(data.discoveryConfig?.customerTypes||[]).map(profile=>`<label><input type="checkbox" name="customer-discovery-type" value="${esc(profile.customer_type)}" ${state.discoveryCustomerTypes.includes(profile.customer_type)?'checked':''}><span>${esc(profile.customer_type)}</span></label>`).join('');
+  const locationResults=state.discoveryLocationLoading?`<p class="ui-status ui-status--loading">${c.locationSearching}</p>`:(state.discoveryLocationSuggestions||[]).map((item,index)=>`<button type="button" class="location-suggestion-card" data-action="select-discovery-location" data-index="${index}"><strong>${esc(item.formatted_location)}</strong><small>${esc([item.city,item.state,item.country].filter(Boolean).join(', '))}</small></button>`).join('');
   return `<section class="discovery-assistant">
-    <article class="panel"><div class="panel-header"><div class="panel-title"><h2>Describe your ideal customer</h2><p>Example: I want to find small restaurant furniture distributors in California.</p></div>${badge('No external search API')}</div>
-      <label class="field"><span>Target customer description</span><textarea id="customer-discovery-input" rows="5" placeholder="I want to find small restaurant furniture distributors in California.&#10;I want to find restaurant design companies in Texas.&#10;I want to find coffee shop owners planning renovation.">${esc(state.discoveryPrompt || '')}</textarea></label>
-      <div class="button-row"><button class="button button--primary" data-action="analyze-discovery-requirement">Analyze Requirement</button><button class="button" data-action="generate-discovery-plan">Generate Search Plan</button></div>
-      <p class="muted">AI Cost Control is active. The system only analyzes when you click a button; page loading does not call external AI.</p></article>
+    <article class="panel ui-card discovery-setup-card"><div class="panel-header ui-card__header"><div class="panel-title"><h2>${c.describe}</h2><p>${c.example}</p></div><div class="row-actions discovery-service-status">${badge(locationProvider?`${c.locationService}: ${locationProvider.displayName} ${locationProvider.enabled&&locationProvider.credentialPresent?c.connected:c.noApi}`:`${c.locationService}: ${c.noApi}`)}${badge(connector?`${c.businessSearchSource}: ${connector.displayName} ${connector.enabled&&connector.credentialPresent?c.connected:c.noApi}`:`${c.businessSearchSource}: ${c.noApi}`)}</div></div><div class="ui-card__body discovery-form">
+      <div class="discovery-control-grid">
+        <section class="ui-field-group discovery-location-field"><label class="ui-field"><span>${c.locationSearch}</span><input id="customer-discovery-location" autocomplete="off" value="${esc(state.discoveryLocationQuery||location?.formatted_location||'')}"><small>${c.locationHelp}</small></label><div id="customer-discovery-location-results" class="location-suggestion-list">${locationResults}</div>${location?`<div id="customer-discovery-location-selected" class="discovery-selected-location ui-definition-grid"><div><span>${c.locationSelected}</span><strong>${esc(location.formatted_location)}</strong></div><div><span>${c.country}</span><strong>${esc(location.country)}</strong></div><div><span>${c.state}</span><strong>${esc(location.state||c.notConfigured)}</strong></div><div><span>${c.city}</span><strong>${esc(location.city||c.notConfigured)}</strong></div></div>`:`<p class="ui-status ui-status--warning">${c.locationRequired}</p>`}</section>
+        <fieldset class="ui-field-group discovery-type-field"><legend>${c.types}</legend><small>${c.customerTypeHelp}</small><div class="discovery-type-options">${customerTypeOptions}</div>${hasCustomerTypes?'':`<p class="ui-status ui-status--error">${c.customerTypeRequired}</p>`}</fieldset>
+        <label class="ui-field"><span>${c.quantity}</span><input id="customer-discovery-quantity" type="number" min="1" max="1000" value="${Number(state.discoveryTargetQuantity||20)}"></label>
+        <label class="ui-field"><span>${c.category}</span><select id="customer-discovery-category"><option value="commercial.furniture_and_interior" data-label="Furniture and Interior" selected>${c.categoryFurniture}</option></select><small>${c.providerCategory}: commercial.furniture_and_interior</small></label>
+      </div>
+      <label class="ui-field discovery-description-field"><span>${c.target}</span><textarea id="customer-discovery-input" rows="5">${esc(state.discoveryPrompt || '')}</textarea></label>
+      <div class="button-row discovery-actions"><button class="button button--primary ${state.discoveryFlowState==='analyzing'?'is-loading':state.discoveryFlowState==='analyzed'?'is-complete':''}" data-action="analyze-discovery-requirement" aria-busy="${state.discoveryFlowState==='analyzing'}" ${busy||!location||!hasCustomerTypes?'disabled':''}>${analyzeLabel}</button><button class="button button--secondary ${state.discoveryFlowState==='generating_plan'?'is-loading':state.discoveryFlowState==='plan_generated'?'is-complete':''}" data-action="generate-discovery-plan" aria-busy="${state.discoveryFlowState==='generating_plan'}" ${busy||!location||!hasCustomerTypes||!latest||state.discoveryStale||!state.discoveryAnalysisRevision?'disabled':''}>${generateLabel}</button></div>
+      ${state.discoveryError?`<div class="ui-status ui-status--error" role="alert"><strong>${c.error}:</strong> ${esc(state.discoveryError)}</div>`:''}${state.discoveryStale?`<p class="ui-status ui-status--warning">${c.reanalyze}</p>`:''}${state.discoveryStrategyCreatedId?`<div class="ui-status ui-status--success"><strong>${c.created(state.discoveryStrategyCreatedId)}</strong> <button class="button button--compact" data-action="open-created-strategy">${c.open}</button></div>`:''}
+      <p class="ui-help-text">${c.cost}</p></div></article>
     ${discoveryPlanResult(latest)}
-    <article class="panel"><h2>Customer Type System</h2><p>Dynamic customer categories and scoring weights prepared for future expansion.</p>
-      <div class="opportunity-card-grid">${(data.discoveryConfig?.customerTypes || []).map(profile => `<div class="opportunity-card"><strong>${esc(profile.customer_type)}</strong><small>${esc(profile.industry)}</small><div class="score-dimension-list">${profile.dimensions.map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight)}%</strong></div>`).join('')}</div></div>`).join('')}</div></article>
+    <details class="panel ui-card ui-disclosure discovery-customer-system"><summary>${c.viewCustomerRules}</summary><div class="ui-card__body"><h2>${c.customerSystem}</h2><p>${c.customerSystemHelp}</p><div class="opportunity-card-grid">${(data.discoveryConfig?.customerTypes || []).map(profile => `<div class="opportunity-card"><strong>${esc(profile.customer_type)}</strong><small>${esc(profile.industry)}</small><div class="score-dimension-list">${profile.dimensions.map(dimension => `<div><span>${esc(dimension.name)}</span><strong>${Number(dimension.weight)}%</strong></div>`).join('')}</div></div>`).join('')}</div></div></details>
   </section>`;
 }
 
+let discoveryLocationSearchTimer;
+function staleDiscoveryInputs(){
+  if(state.discoveryPlan){state.discoveryStale=true;state.discoveryFlowState='idle';state.discoveryStrategyCreatedId=null;}
+  document.querySelector('[data-action="generate-discovery-plan"]')?.setAttribute('disabled','');
+  const stalePlan=document.querySelector('#customer-discovery-plan');stalePlan?.classList.add('is-stale');stalePlan?.querySelector('.stage')?.replaceChildren(document.createTextNode(discoveryCopy().stale));
+  document.querySelector('#generated-search-plan')?.remove();
+}
+
+async function searchDiscoveryLocations(query){
+  const expected=String(query||'').trim();if(expected.length<2){state.discoveryLocationSuggestions=[];state.discoveryLocationLoading=false;return;}
+  try{const result=await api(`/api/location-suggestions?provider=${encodeURIComponent(state.locationProviderKey)}&text=${encodeURIComponent(expected)}`);if(state.discoveryLocationQuery.trim()!==expected)return;state.discoveryLocationSuggestions=result.suggestions||[];state.discoveryLocationLoading=false;}
+  catch(error){if(state.discoveryLocationQuery.trim()!==expected)return;state.discoveryLocationSuggestions=[];state.discoveryLocationLoading=false;state.discoveryError=error.message;}
+  await renderOpportunityIntelligence();
+}
+
 function searchTaskRows(tasks) {
-  return tasks.map(task => `<tr><td class="primary-cell"><strong>${esc(task.task_name)}</strong><small>Target: ${esc(task.target_customer || task.customer_type || '—')}</small></td>
-    <td>${esc(task.customer_type || '—')}</td><td>${esc(task.location || '—')}</td><td>${esc(task.company_size || '—')}</td><td>${Number(task.target_quantity || 0)} companies</td>
-    <td>${badge(task.priority || 'Medium')}</td><td>${badge(task.status || 'Draft')}</td><td>${formatDateTime(task.created_at)}</td>
-    <td><div class="row-actions"><button class="button button--compact" data-action="view-search-task" data-id="${task.id}">View</button>${task.status === 'Draft' && ['Admin','Owner'].includes(state.user?.role) ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}<button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">Cancel</button></div></td></tr>`).join('');
+  return tasks.map(task => `<tr>
+    <td class="primary-cell readable-list-primary"><button class="readable-list-link" data-action="view-search-task" data-id="${task.id}" title="${esc(task.task_name)}">${esc(task.task_name)}</button></td>
+    <td><span class="readable-list-clamp" title="${esc(task.customer_type || '—')}">${esc(task.customer_type || '—')}</span></td>
+    <td><span class="readable-list-clamp" title="${esc(task.location || '—')}">${esc(task.location || '—')}</span></td>
+    <td>${formatLocalQuantity(task.target_quantity || 0)}</td><td>${badge(task.status || 'Draft')}</td><td>${formatLocalDateTime(task.created_at)}</td>
+    <td class="readable-list-actions"><div class="row-actions">${task.status === 'Draft' && ['Admin','Owner'].includes(state.user?.role) ? `<button class="button button--compact button--primary" data-action="start-search-task" data-id="${task.id}">${t('salesOs.actions.markReady')}</button>` : ''}<button class="button button--compact" data-action="view-search-task" data-id="${task.id}">${t('common.view')}</button><button class="button button--compact" data-action="cancel-search-task" data-id="${task.id}">${t('common.cancel')}</button></div></td>
+  </tr>`).join('');
 }
 
 function renderSearchTaskDetail(task) {
   if (state.searchResultDetail && !state.searchResultEdit) return renderLeadDetail(state.searchResultDetail);
-  const list = values => (values || []).map(value => `<li>${esc(value)}</li>`).join('');
   const results = task.search_results || [];
-  const summary = task.search_result_summary || { total: results.length };
   const editing = state.searchResultEdit || null;
-  const executions=task.executions||[],execution=executions[0]||null,isAdmin=['Admin','Owner'].includes(state.user?.role);
-  const resultRows = results.map(result => `<tr><td class="primary-cell"><strong>${esc(result.company_name)}</strong><small>${esc(result.website || result.email || 'No website/contact yet')}</small></td>
-    <td>${esc(result.customer_type || '-')}<small>${badge(result.connector_key||result.source_type||'Manual')}</small></td><td>${esc([result.city, result.country].filter(Boolean).join(', ') || '-')}</td><td>${Number(result.opportunity_score || 0)}</td><td>${esc(result.purchase_potential || '-')}</td><td>${badge(result.status || 'new')}</td>
-    <td><div class="row-actions"><button class="button button--compact button--primary" data-action="view-search-result" data-id="${result.id}">Open</button><button class="button button--compact" data-action="edit-search-result" data-id="${result.id}">Edit</button>${result.status !== 'converted' ? `<button class="button button--compact" data-action="discard-search-result" data-id="${result.id}">Discard</button>` : ''}</div></td></tr>`).join('');
-  const detail = state.searchResultDetail ? `<article class="panel soft-panel"><div class="panel-header"><div class="panel-title"><h3>${esc(state.searchResultDetail.company_name)}</h3><p>${esc(state.searchResultDetail.opportunity_summary || '')}</p></div><div class="row-actions">${badge('AI Analysis Completed')}${badge(state.searchResultDetail.status)}</div></div><div class="debug-list"><div><span>Why this customer matters</span><strong>${esc(state.searchResultDetail.why_customer_matters || '-')}</strong></div><div><span>Recommended products</span><strong>${esc(state.searchResultDetail.recommended_product_reason || '-')}</strong></div><div><span>Recommended next action</span><strong>${esc(state.searchResultDetail.recommended_next_action || '-')}</strong></div><div><span>Qualification reason</span><strong>${esc(state.searchResultDetail.qualification_reason || '-')}</strong></div><div><span>Source URL</span><strong>${esc(state.searchResultDetail.source_url || '-')}</strong></div><div><span>Reference Note</span><strong>${esc(state.searchResultDetail.reference_note || '-')}</strong></div></div></article>` : '';
+  const execution=(task.executions||[])[0]||null;
+  const isAdmin=['Admin','Owner'].includes(state.user?.role);
+  const q=key=>t(`salesOs.qualificationFlow.${key}`),s=key=>t(`salesOs.taskSummary.${key}`);
+  const progress=task.qualification_progress||{found:results.length,analyzed:results.filter(item=>item.ai_qualification_status==='Qualified').length,complete:false,groups:{}};
+  const conclusion=result=>result.ai_qualification_status!=='Qualified'?q('analyzing'):result.ai_recommendation_group==='recommended'?q('recommended'):result.ai_recommendation_group==='needs_confirmation'?q('needsConfirmation'):q('notRecommended');
   const value = name => esc(editing?.[name] || '');
-  const sourceTypes = ['Google Maps','Website','Instagram','Facebook','LinkedIn','Manual','Other'];
-  const executionActions=task.status==='Ready'&&!execution?`<button class="button button--primary" data-action="estimate-execution" data-id="${task.id}">Estimate Execution</button>`:'';
-  const lifecycle=execution?`${execution.status==='Awaiting Approval'&&isAdmin?`<button class="button button--primary" data-action="execution-approve" data-id="${execution.id}">Approve</button>`:''}${execution.status==='Approved'&&isAdmin?`<button class="button button--primary" data-action="execution-start" data-id="${execution.id}">Start</button>`:''}${['Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--primary" data-action="execution-resume" data-id="${execution.id}">Resume</button>`:''}${execution.status==='Running'&&isAdmin?`<button class="button" data-action="execution-pause" data-id="${execution.id}">Pause</button>`:''}${['Approved','Running','Paused','Interrupted'].includes(execution.status)&&isAdmin?`<button class="button button--risk" data-action="execution-stop" data-id="${execution.id}">Stop</button>`:''}`:'';
-  const displayPhase=execution?.status==='Completed'?'Complete':execution?.status==='Partially Completed'?'Partial Complete':execution?.phase||'-';
-  const executionPanel=`<section class="panel execution-panel section-gap"><div class="panel-header"><div class="panel-title"><h3>Search Execution</h3><p>Controlled Rules/Mock execution. No external platform is called.</p></div><div class="row-actions">${execution?badge(execution.status):badge('Not Estimated')}${executionActions}${lifecycle}</div></div>${execution?`<dl class="execution-stat-grid"><div><dt>Connector</dt><dd>${esc(execution.connector_key)}</dd></div><div><dt>Version</dt><dd>${esc(execution.connector_version)}</dd></div><div><dt>Phase</dt><dd>${esc(displayPhase)}</dd></div><div><dt>Pages</dt><dd>${Number(execution.page_count)}</dd></div><div><dt>Received</dt><dd>${Number(execution.received_count)}</dd></div><div><dt>Normalized</dt><dd>${Number(execution.normalized_count)}</dd></div><div><dt>Inserted</dt><dd>${Number(execution.inserted_count)}</dd></div><div><dt>Duplicates</dt><dd>${Number(execution.duplicate_count)}</dd></div><div><dt>Estimated Cost</dt><dd>${formatLocalMoney(execution.estimated_cost_usd||0)}</dd></div><div><dt>Approved Limit</dt><dd>${formatLocalMoney(execution.approved_cost_limit_usd||0)}</dd></div></dl><div class="debug-list execution-summary"><div><span>Last heartbeat</span><strong>${formatLocalDateTime(execution.heartbeat_at)}</strong></div><div><span>Stop reason</span><strong>${esc(execution.stop_reason||'-')}</strong></div><details><summary>Checkpoint and last error</summary><p>${esc(JSON.stringify(execution.checkpoint_json||{}))}</p><p>${esc(execution.last_error_message||'No error')}</p></details></div>`:`<div class="empty-state">Complete Task Review, then create a zero-cost execution estimate.</div>`}</section>`;
-  return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">Back to Search Tasks</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">Mark Ready</button>` : ''}</div></div>
-    <section class="detail-grid">
-      <article><h3>${t('salesOs.terms.searchCriteria')}</h3><dl class="search-criteria-grid"><div><dt>${t('salesOs.terms.customerType')}</dt><dd>${esc(task.customer_type || '—')}</dd></div><div><dt>${t('salesOs.terms.location')}</dt><dd>${esc(task.location || '—')}</dd></div><div><dt>${t('salesOs.terms.companySize')}</dt><dd>${esc(task.company_size || '—')}</dd></div><div><dt>${t('salesOs.terms.priority')}</dt><dd>${esc(task.priority || 'Medium')}</dd></div><div><dt>${t('salesOs.terms.targetVolume')}</dt><dd>${formatLocalQuantity(task.target_quantity || 0)}</dd></div></dl></article>
-      <article><h3>Keywords</h3><ul class="compact-list">${list(task.keywords)}</ul></article>
-      <article><h3>Required Data Fields</h3><ul class="compact-list">${list(task.required_data_fields)}</ul></article>
-      <article><h3>Filters</h3><ul class="compact-list">${list(task.filters)}</ul></article>
-    </section>
-    ${executionPanel}
-    <section class="section-gap">${panelHeader('Search Results', 'Store manually discovered leads before they enter the Lead Pool')}
-      <dl class="search-result-stat-grid"><div><dt>${t('salesOs.terms.totalResults')}</dt><dd class="search-result-stat-value">${Number(summary.total || 0)}</dd><dd class="search-result-stat-note">${t('salesOs.terms.storedCandidates')}</dd></div><div><dt>${t('salesOs.terms.converted')}</dt><dd class="search-result-stat-value">${Number(summary.converted || 0)}</dd><dd class="search-result-stat-note">${t('salesOs.terms.movedCustomers')}</dd></div><div><dt>${t('salesOs.tabs.leads')}</dt><dd class="search-result-stat-value">${Number((summary.new || 0) + (summary.reviewed || 0))}</dd><dd class="search-result-stat-note">${t('salesOs.terms.openLeads')}</dd></div></dl>
-      ${detail}
-      <form id="search-result-form" class="foundation-form section-gap" data-edit-id="${editing?.id || ''}">
-        <div class="panel-header"><div class="panel-title"><h3>${editing ? 'Edit Search Result' : 'Add Search Result'}</h3><p>30-second entry. AI Qualification runs after saving; no external search API is connected.</p></div>${editing ? '<button class="button" type="button" data-action="cancel-search-result-edit">Cancel Edit</button>' : ''}</div>
-        <label class="field"><span>Company Name *</span><input name="company_name" required value="${value('company_name')}"></label>
-        <label class="field"><span>Customer Type *</span><input name="customer_type" required value="${value('customer_type') || esc(task.customer_type || '')}"></label>
-        <label class="field"><span>Country *</span><input name="country" required value="${value('country')}"></label>
-        <label class="field"><span>City *</span><input name="city" required value="${value('city')}"></label>
-        <label class="field"><span>Source Type *</span><select name="source_type" required>${sourceTypes.map(type => `<option ${((editing?.source_type || 'Manual') === type) ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></label>
-        <label class="field"><span>Website</span><input name="website" value="${value('website')}"></label>
-        <details class="field field--full optional-section"><summary>Contact Information (Optional)</summary><div class="foundation-form">
-          <label class="field"><span>Contact Person</span><input name="contact_person" value="${value('contact_person')}"></label>
-          <label class="field"><span>Email</span><input name="email" type="email" value="${value('email')}"></label>
-          <label class="field"><span>Phone</span><input name="phone" value="${value('phone')}"></label>
-          <label class="field"><span>LinkedIn</span><input name="linkedin" value="${value('linkedin')}"></label>
-          <label class="field"><span>Instagram</span><input name="instagram" value="${value('instagram')}"></label>
-        </div></details>
-        <fieldset class="field field--full evidence-card"><legend>Customer Evidence</legend>
-          <label class="field"><span>Source URL</span><input name="source_url" value="${value('source_url') || value('source_reference')}" placeholder="Google Maps, Instagram, Website, or LinkedIn URL"></label>
-          <label class="field"><span>Reference Note</span><input name="reference_note" value="${value('reference_note')}" placeholder="Short note for future handoff"></label>
-          <p class="form-hint">Screenshot / Attachment: future. Save the source link or note here for now.</p>
-        </fieldset>
-        <button class="button button--primary" type="submit">Save Search Result</button>
-      </form>
-      <div class="table-scroll section-gap"><table class="data-table"><thead><tr><th>Company</th><th>Customer Type</th><th>Location</th><th>Score</th><th>Potential</th><th>Status</th><th>Actions</th></tr></thead><tbody>${resultRows || '<tr><td colspan="7"><div class="empty-state">Total Results: 0. Click Save Search Result after manually finding a company.</div></td></tr>'}</tbody></table></div>
-    </section></article>`;
+  if(editing)return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${q('refreshReanalyze')}</h2><p>${esc(editing.company_name)}</p></div><button class="button" data-action="cancel-search-result-edit">${t('common.cancel')}</button></div><form id="search-result-form" class="foundation-form section-gap" data-edit-id="${editing.id}"><label class="field"><span>${t('salesOs.terms.website')}</span><input name="website" value="${value('website')}"></label><label class="field"><span>${t('salesOs.terms.contact')}</span><input name="phone" value="${value('phone')}"></label><label class="field field--full"><span>${t('salesOs.terms.sourceUrl')}</span><input name="source_url" value="${value('source_url')}"></label><label class="field field--full"><span>${t('salesOs.terms.referenceNote')}</span><textarea name="reference_note" rows="4">${value('reference_note')}</textarea></label><button class="button button--primary" type="submit">${q('refreshReanalyze')}</button></form></article>`;
+  const preview=results.slice(0,5).map(result=>`<article class="task-lead-preview"><button data-action="view-search-result" data-id="${result.id}">${esc(result.company_name)}</button><span>${badge(conclusion(result))}</span><strong>${Number(result.opportunity_score||0)}</strong><p title="${esc(result.qualification_reason||q('waiting'))}">${esc(result.qualification_reason||q('waiting'))}</p></article>`).join('');
+  const credits=Number(execution?.estimate_json?.actualCreditCount||0);
+  return `<article class="panel search-task-detail"><div class="panel-header"><div class="panel-title"><h2>${esc(task.task_name)}</h2><p>${esc(task.search_objective || '')}</p></div><div class="row-actions">${badge(task.status)}<button class="button" data-action="back-search-tasks">${t('salesOs.searchUi.backTasks')}</button>${task.status === 'Draft'&&isAdmin ? `<button class="button button--primary" data-action="start-search-task" data-id="${task.id}">${t('salesOs.actions.markReady')}</button>` : ''}</div></div>
+    <section class="task-summary-grid section-gap"><article><h3>${t('salesOs.terms.searchCriteria')}</h3><dl class="lead-field-list"><div><dt>${t('salesOs.terms.customerType')}</dt><dd>${esc(task.customer_type||'—')}</dd></div><div><dt>${t('salesOs.terms.location')}</dt><dd>${esc(task.location||'—')}</dd></div><div><dt>${t('salesOs.terms.targetVolume')}</dt><dd>${formatLocalQuantity(task.target_quantity||0)}</dd></div><div><dt>${t('salesOs.terms.keywords')}</dt><dd>${esc((task.keywords||[]).join(', ')||'—')}</dd></div></dl></article><article><h3>${s('connectorCredits')}</h3><dl class="lead-field-list"><div><dt>Connector</dt><dd>${esc(execution?.connector_key||'—')}</dd></div><div><dt>Credits</dt><dd>${credits}</dd></div><div><dt>${t('fields.status')}</dt><dd>${badge(execution?.status||task.status)}</dd></div></dl></article></section>
+    <section class="task-kpi-grid section-gap"><article><span>${s('found')}</span><strong>${Number(progress.found||0)}</strong></article><article><span>${s('analyzed')}</span><strong>${Number(progress.analyzed||0)}</strong></article><article><span>${q('recommended')}</span><strong>${Number(progress.groups?.recommended||0)}</strong></article><article><span>${q('needsConfirmation')}</span><strong>${Number(progress.groups?.needs_confirmation||0)}</strong></article><article><span>${q('notRecommended')}</span><strong>${Number(progress.groups?.not_recommended||0)}</strong></article></section>
+    <div class="qualification-progress" role="status"><span class="is-complete">${t('salesOs.qualificationFlow.found',{count:Number(progress.found||0)})}</span><i>→</i><span class="${progress.analyzed?'is-active':''}">${t('salesOs.qualificationFlow.analyzed',{analyzed:Number(progress.analyzed||0),total:Number(progress.found||0)})}</span><i>→</i><span class="${progress.complete?'is-complete':''}">${progress.complete?q('complete'):q('analyzing')}</span></div>
+    <section class="task-preview-section section-gap"><div class="panel-header"><div class="panel-title"><h3>${s('preview')}</h3><p>${s('previewHelp')}</p></div><button class="button button--primary" data-action="view-task-leads" data-id="${task.id}">${s('viewLeads')}</button></div><div class="task-lead-preview-list">${preview||`<div class="empty-state">${q('noLeads')}</div>`}</div></section>
+  </article>`;
 }
 
 function renderSearchTasksPane(data) {
   if (state.searchTaskDetail) return renderSearchTaskDetail(state.searchTaskDetail);
-  return `<article class="panel">${panelHeader('Search Tasks', 'Convert AI Search Plans into executable discovery tasks. External search execution is not connected in this MVP.')}
-    <div class="table-scroll"><table class="data-table"><thead><tr><th>Task</th><th>Customer Type</th><th>Location</th><th>Company Size</th><th>Volume</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>${searchTaskRows(data.searchTasks || []) || '<tr><td colspan="9"><div class="empty-state">No search tasks yet. Generate a Search Plan, then click Create Search Task.</div></td></tr>'}</tbody></table></div></article>`;
+  return `<article class="panel">${panelHeader(t('salesOs.tabs.tasks'),t('salesOs.listUi.searchTasksSubtitle'))}
+    <div class="table-scroll readable-list-scroll"><table class="data-table readable-list-table search-task-list-table"><colgroup><col class="name-col"><col class="type-col"><col class="location-col"><col class="quantity-col"><col class="status-col"><col class="created-col"><col class="actions-col"></colgroup><thead><tr><th>${t('salesOs.listUi.taskName')}</th><th>${t('salesOs.terms.customerType')}</th><th>${t('salesOs.terms.location')}</th><th>${t('salesOs.listUi.quantity')}</th><th>${t('fields.status')}</th><th>${t('salesOs.listUi.createdAt')}</th><th>${t('productFoundation.actions')}</th></tr></thead><tbody>${searchTaskRows(data.searchTasks || []) || `<tr><td colspan="7"><div class="empty-state">${t('salesOs.listUi.noSearchTasks')}</div></td></tr>`}</tbody></table></div></article>`;
 }
 
 function strategyCsv(value) { return esc((Array.isArray(value) ? value : []).join(', ')); }
@@ -1495,7 +1570,8 @@ function renderSearchStrategyDetail(strategy, capabilities, contextOutdated = fa
       <label class="field"><span>Platforms</span><input name="platforms" value="${strategyCsv(data.platforms)}" ${draft ? '' : 'disabled'}></label>
       <label class="field field--full"><span>Search Keywords</span>${draft ? `<textarea name="searchKeywords" rows="6" placeholder="One keyword per line">${strategyLines(data.searchKeywords)}</textarea><small class="field-help">Use one focused search phrase per line.</small>` : strategyKeywordTags(data.searchKeywords)}</label>
       <label class="field"><span>Expected Results</span><input name="expectedCount" type="number" min="0" value="${Number(data.resultTarget?.expectedCount || 0)}" ${draft ? '' : 'disabled'}></label>
-      <label class="field"><span>Minimum Qualified</span><input name="minimumQualifiedCount" type="number" min="0" value="${Number(data.resultTarget?.minimumQualifiedCount || 0)}" ${draft ? '' : 'disabled'}></label>
+      <label class="field"><span>Minimum Qualified</span><input name="minimumQualifiedCount" type="number" min="0" value="${data.resultTarget?.minimumQualifiedCount==null?'':Number(data.resultTarget.minimumQualifiedCount)}" placeholder="${discoveryCopy().notConfigured}" ${draft ? '' : 'disabled'}></label>
+      ${data.discovery?`<section class="field field--full"><span>Discovery Plan</span><small>${esc([data.discovery.fullLocation,data.discovery.categoryLabel,data.discovery.providerCategory,data.discovery.connectorPreference].filter(Boolean).join(' · '))}</small></section>`:''}
       ${draft ? '<button class="button button--primary" type="submit">Save Draft</button>' : ''}
     </form>
     <section class="detail-grid section-gap"><article><h3>Knowledge & Context</h3><p>${strategy.knowledge_references_json?.length || 0} fixed references</p><small>Snapshot ${esc(strategy.context_snapshot_id || 'Not generated')} · ${contextOutdated ? 'Updated context available' : 'Current at last check'}</small></article><article><h3>AI Cost</h3><p>USD ${Number(strategy.ai_cost_estimate || 0).toFixed(6)}</p><small>All AI calls pass Cost Control</small></article><article><h3>Search Planning Estimate</h3><p>USD ${Number(strategy.search_cost_estimate || 0).toFixed(6)}</p><small>Planning only. No connector or actual charge.</small></article><article><h3>Review</h3><p>${esc(strategy.review_note || 'No review note')}</p><small>${strategy.linked_search_task_id ? `Linked Search Task #${strategy.linked_search_task_id}` : 'No linked Search Task'}</small></article></section></article>`;
@@ -1525,7 +1601,7 @@ function renderOpportunityPane(data) {
     ? renderSearchTaskDetail(state.searchTaskDetail)
     : state.searchResultDetail
     ? renderLeadDetail(state.searchResultDetail)
-    : `<article class="panel">${panelHeader('Lead Pool', 'Review AI-qualified leads before converting them into CRM customers')}${leadPoolTable(data.leads || [])}</article>`;
+    : `<article class="panel">${panelHeader(t('salesOs.tabs.leads'),t('salesOs.messages.leadPoolSubtitle'))}${leadPoolTable(data.leads || [])}</article>`;
   if (view === 'import') return `<section class="opportunity-import-grid">
     <form id="customer-manual-form" class="panel opportunity-form"><h2>Manual Customer</h2><p>Create one sourced customer record.</p>
       <div class="foundation-form"><label class="field"><span>Company Name</span><input name="company_name" required /></label><label class="field"><span>Business Type</span><input name="business_type" placeholder="Coffee Shop" /></label>
@@ -1535,7 +1611,8 @@ function renderOpportunityPane(data) {
     <form id="customer-csv-form" class="panel opportunity-form"><h2>CSV Paste Import</h2><p>Header example: company_name,business_type,city,country,email,website</p><label class="field"><span>Source</span><select name="source"><option>CSV</option>${sourceOptions}</select></label><label class="field"><span>CSV Data</span><textarea name="csv" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import CSV</button></form>
     <form id="customer-text-form" class="panel opportunity-form"><h2>Batch Text Import</h2><p>One line: Company | Type | City | Country | Email | Website</p><label class="field"><span>Source</span><select name="source">${sourceOptions}</select></label><label class="field"><span>Customer Lines</span><textarea name="text" rows="10" required></textarea></label><button class="button button--primary" type="submit">Import Text</button></form>
     </section>`;
-  if (view === 'customers') return `<article class="panel">${panelHeader('Customers', 'CRM records after lead conversion. Use this page for sales follow-up, quotes, PI, orders, and customer work.')}
+  if (view === 'customers') return `<article class="panel">${panelHeader(t('salesOs.tabs.customers'), t('salesOs.customerPage.subtitle'))}
+    ${!data.customers.length?`<div class="empty-state formal-customer-empty">${t('salesOs.customerPage.empty')}</div>`:`
     <div class="filter-bar">
       <label class="filter-search">${icon('search')}<input id="customer-search-filter" placeholder="Search customers" /></label>
       <select id="customer-source-filter" class="select-control"><option value="">All Sources</option>${customerFilterOptions('customer_source')}</select>
@@ -1543,8 +1620,7 @@ function renderOpportunityPane(data) {
       <select id="customer-grade-filter" class="select-control"><option value="">All Grades</option>${customerFilterOptions('opportunity_grade')}</select>
       <select id="customer-priority-filter" class="select-control"><option value="">All Sales Priority</option><option value="high">High 75+</option><option value="medium">Medium 40-74</option><option value="low">Low Below 40</option></select>
       <select id="customer-status-filter" class="select-control"><option value="">All Statuses</option>${customerFilterOptions('opportunity_status')}</select>
-      ${capabilities.canRunAi ? '<button class="button button--primary" data-action="run-selected-customers">Analyze Selected Customers</button>' : ''}
-    </div>${customerTable(data.customers, capabilities)}</article>`;
+    </div>${customerTable(data.customers, capabilities)}`}</article>`;
   if (view === 'priority') return `<article class="panel">${panelHeader('Customer Intelligence Priority View', 'Sorted by Sales Priority Score from Phase 2A dual scoring')}${customerTable(data.priority, capabilities, true)}</article>`;
   if (view === 'queue') return `<article class="panel">${panelHeader('AI Opportunity Queue', 'A+/A opportunities ordered by score, contactability, decision maker, and due date')}${customerTable(data.queue, capabilities, true)}</article>`;
   if (view === 'outreach') return `<article class="panel">${panelHeader('Outreach Drafts', 'Draft-only messages; sending always requires a human and happens outside this platform')}
@@ -1553,10 +1629,12 @@ function renderOpportunityPane(data) {
 }
 
 async function renderOpportunityIntelligence() {
-  const [dashboard, customersData, priorityData, queueData, handoffData, discoveryConfig, discoveryHistory, searchTasksData, strategyData] = await Promise.all([
+  const [dashboard, customersData, priorityData, queueData, handoffData, discoveryConfig, discoveryHistory, searchTasksData, strategyData, connectorData, locationProviderData] = await Promise.all([
     api('/api/opportunity/dashboard'), api('/api/customers'), api('/api/customer-intelligence/priority'), api('/api/opportunity-queue'), api('/api/customers/sales-handoff'),
-    api('/api/customer-discovery/config'), api('/api/customer-discovery/requests'), api('/api/search-tasks'), api('/api/search-strategies')
+    api('/api/customer-discovery/config'), api('/api/customer-discovery/requests'), api('/api/search-tasks'), api('/api/search-strategies'), api('/api/search-connectors'), api('/api/location-providers')
   ]);
+  state.searchConnectors=connectorData.connectors||[];
+  state.locationProviders=locationProviderData.providers||[];state.locationProviderKey=locationProviderData.defaultProvider||state.locationProviders[0]?.key||'';
   const searchTaskDetails = await Promise.all((searchTasksData.tasks || []).slice(0, 50).map(task => api(`/api/search-tasks/${task.id}`)));
   const leads = searchTaskDetails.flatMap(detail => (detail.task.search_results || []).map(result => ({
     ...result,
@@ -1580,6 +1658,26 @@ async function renderOpportunityIntelligence() {
   $('#search-result-form')?.addEventListener('submit', submitSearchResult);
   $('#search-strategy-create')?.addEventListener('submit', createBlankSearchStrategy);
   $('#search-strategy-form')?.addEventListener('submit', saveSearchStrategy);
+  $('#customer-discovery-input')?.addEventListener('input', event=>{
+    const value=event.currentTarget.value;
+    if(value===state.discoveryPrompt)return;
+    state.discoveryPrompt=value;staleDiscoveryInputs();
+  });
+  $('#customer-discovery-location')?.addEventListener('input',event=>{
+    state.discoveryLocationQuery=event.currentTarget.value;state.discoverySelectedLocation=null;state.discoveryLocationSuggestions=[];state.discoveryError='';staleDiscoveryInputs();
+    document.querySelector('#customer-discovery-location-selected')?.remove();
+    clearTimeout(discoveryLocationSearchTimer);const container=$('#customer-discovery-location-results');
+    if(state.discoveryLocationQuery.trim().length<2){state.discoveryLocationLoading=false;if(container)container.innerHTML='';return;}
+    state.discoveryLocationLoading=true;if(container)container.innerHTML=`<p class="muted">${discoveryCopy().locationSearching}</p>`;
+    discoveryLocationSearchTimer=setTimeout(()=>searchDiscoveryLocations(state.discoveryLocationQuery),300);
+  });
+  document.querySelectorAll('input[name="customer-discovery-type"]').forEach(input=>input.addEventListener('change',async()=>{
+    state.discoveryCustomerTypes=[...document.querySelectorAll('input[name="customer-discovery-type"]:checked')].map(item=>item.value);staleDiscoveryInputs();await renderOpportunityIntelligence();
+  }));
+  $('#customer-discovery-quantity')?.addEventListener('input',event=>{state.discoveryTargetQuantity=Number(event.currentTarget.value);staleDiscoveryInputs();});
+  $('#customer-discovery-category')?.addEventListener('change',event=>{state.discoveryProviderCategory=event.currentTarget.value;state.discoveryCategoryLabel=event.currentTarget.selectedOptions[0]?.dataset.label||event.currentTarget.selectedOptions[0]?.textContent||'';staleDiscoveryInputs();});
+  $('#search-connector-select')?.addEventListener('change',event=>{state.searchConnectorKey=event.currentTarget.value;});
+  document.querySelectorAll('[data-lead-filter]').forEach(control=>control.addEventListener('change',async event=>{state.leadPoolFilters={...(state.leadPoolFilters||{}),[event.currentTarget.dataset.leadFilter]:event.currentTarget.value};await renderOpportunityIntelligence();}));
   ['customer-search-filter','customer-source-filter','customer-type-filter','customer-grade-filter','customer-priority-filter','customer-status-filter']
     .forEach(id => $(`#${id}`)?.addEventListener(id === 'customer-search-filter' ? 'input' : 'change', applyCustomerListFilters));
 }
@@ -1600,33 +1698,46 @@ async function submitCustomerImport(event, type) {
 
 async function runCustomerDiscovery(action) {
   const prompt = String($('#customer-discovery-input')?.value || '').trim();
-  if (!prompt) return toast('Please describe your ideal customer first.');
+  const c=discoveryCopy();
+  if (!prompt) return toast(c.empty);
+  if(!state.discoverySelectedLocation)return toast(c.locationRequired);
+  if(!state.discoveryCustomerTypes.length)return toast(c.customerTypeRequired);
+  if(!Number.isInteger(Number(state.discoveryTargetQuantity))||Number(state.discoveryTargetQuantity)<1)return toast(c.quantity);
+  if(['analyzing','generating_plan','creating_strategy'].includes(state.discoveryFlowState))return;
+  if(action==='generate'&&(!state.discoveryPlan||state.discoveryStale||!state.discoveryAnalysisRevision))return toast(c.reanalyze);
   state.discoveryPrompt = prompt;
-  const endpoint = action === 'generate' ? '/api/customer-discovery/generate-plan' : '/api/customer-discovery/analyze';
-  const result = await api(endpoint, { method: 'POST', body: JSON.stringify({ request_text: prompt }) });
-  state.discoveryPlan = result;
-  toast(action === 'generate' ? 'Search plan generated.' : 'Requirement analyzed.');
+  state.discoveryError='';state.discoveryFlowState=action==='generate'?'generating_plan':'analyzing';
   await renderOpportunityIntelligence();
+  const endpoint = action === 'generate' ? '/api/customer-discovery/generate-plan' : '/api/customer-discovery/analyze';
+  try{
+    const result=await api(endpoint,{method:'POST',body:JSON.stringify({request_text:prompt,selected_location:state.discoverySelectedLocation,customer_types:state.discoveryCustomerTypes,target_quantity:Number(state.discoveryTargetQuantity),category_label:state.discoveryCategoryLabel,provider_category:state.discoveryProviderCategory})});
+    if(action==='generate'){
+      state.discoveryPlan={...result,plan:state.discoveryPlan?.plan||result.plan,guidance:state.discoveryPlan?.guidance||result.guidance};state.discoveryPlanRevision+=1;state.discoveryPlanCompletedAt=new Date().toISOString();state.discoveryFlowState='plan_generated';
+    }else{
+      state.discoveryPlan={...result,generated_search_plan:null};state.discoveryAnalysisRevision+=1;state.discoveryPlanRevision=0;state.discoveryAnalysisCompletedAt=new Date().toISOString();state.discoveryFlowState='analyzed';state.discoveryStale=false;state.discoveryStrategyCreatedId=null;
+    }
+    await renderOpportunityIntelligence();
+    const target=document.querySelector(action==='generate'?'#generated-search-plan':'#customer-discovery-plan');target?.scrollIntoView({behavior:'smooth',block:'start'});target?.animate([{backgroundColor:'rgba(46, 160, 67, .2)'},{backgroundColor:'transparent'}],{duration:1400});
+    toast(action==='generate'?c.generated:c.analyzed);
+  }catch(error){state.discoveryFlowState='error';state.discoveryError=error.message||c.error;await renderOpportunityIntelligence();toast(state.discoveryError);}
 }
 
 async function createSearchStrategyFromPlan() {
+  const c=discoveryCopy();
   const discoveryId = state.discoveryPlan?.request?.id;
-  if (!discoveryId) return toast('Generate a Search Plan first.');
+  if(!discoveryId||!state.discoveryPlanRevision||state.discoveryStale)return toast(c.reanalyze);
+  if(state.discoveryFlowState==='creating_strategy'||state.discoveryStrategyCreatedId)return;
   const plan=state.discoveryPlan.generated_search_plan||{};
-  const result = await api('/api/search-strategies', {
-    method: 'POST',
-    body: JSON.stringify({ customer_discovery_request_id: discoveryId, title: `Search Strategy - ${plan.target_customer||'Target Market'}`, objective: plan.search_objective||'Build an approved search strategy' })
-  });
-  state.searchStrategyDetail = result.strategy;
-  state.opportunityView = 'search-strategies';
-  toast('Strategy Draft created.');
-  await renderOpportunityIntelligence();
+  state.discoveryFlowState='creating_strategy';state.discoveryError='';await renderOpportunityIntelligence();
+  try{const result=await api('/api/search-strategies',{method:'POST',body:JSON.stringify({customer_discovery_request_id:discoveryId,strategy_key:`discovery-${discoveryId}-analysis-${state.discoveryAnalysisRevision}-plan-${state.discoveryPlanRevision}`,title:`Search Strategy - ${plan.target_customer||'Target Market'}`,objective:plan.search_objective,generated_search_plan:plan,source_analysis_revision:state.discoveryAnalysisRevision,plan_revision:state.discoveryPlanRevision,context_revision:state.discoveryAnalysisRevision})});
+    const persisted=await api(`/api/search-strategies/${result.strategy.id}`);state.searchStrategyDetail=persisted.strategy;state.discoveryStrategyCreatedId=persisted.strategy.id;state.discoveryFlowState='strategy_created';toast(c.created(persisted.strategy.id));await renderOpportunityIntelligence();
+  }catch(error){state.discoveryFlowState='error';state.discoveryError=error.message||c.error;await renderOpportunityIntelligence();toast(state.discoveryError);}
 }
 
 const strategyList=value=>String(value||'').split(/\r?\n|,/).map(item=>item.trim()).filter(Boolean);
 async function createBlankSearchStrategy(event){event.preventDefault();const body=Object.fromEntries(new FormData(event.currentTarget));const result=await api('/api/search-strategies',{method:'POST',body:JSON.stringify(body)});state.searchStrategyDetail=result.strategy;await renderOpportunityIntelligence()}
 async function viewSearchStrategy(id){const result=await api(`/api/search-strategies/${id}`);state.searchStrategyDetail=result.strategy;state.searchStrategyContextOutdated=result.context_outdated;await renderOpportunityIntelligence()}
-async function saveSearchStrategy(event){event.preventDefault();const strategy=state.searchStrategyDetail,current=strategy.strategy_data_json||{},form=Object.fromEntries(new FormData(event.currentTarget));const expected=Number(form.expectedCount||0),minimum=Number(form.minimumQualifiedCount||0);const data={...current,targetMarket:{...(current.targetMarket||{}),countries:strategyList(form.countries),cities:strategyList(form.cities),regions:current.targetMarket?.regions||[]},targetCustomerProfile:{...(current.targetCustomerProfile||{}),customerTypes:strategyList(form.customerTypes)},searchObjective:form.searchObjective,searchKeywords:strategyList(form.searchKeywords),platforms:strategyList(form.platforms),resultTarget:{expectedCount:expected,minimumQualifiedCount:Math.min(minimum,expected)}};const result=await api(`/api/search-strategies/${strategy.id}`,{method:'PUT',body:JSON.stringify({title:form.title,objective:form.searchObjective,strategy_data_json:data})});state.searchStrategyDetail=result.strategy;toast('Strategy Draft saved.');await renderOpportunityIntelligence()}
+async function saveSearchStrategy(event){event.preventDefault();const strategy=state.searchStrategyDetail,current=strategy.strategy_data_json||{},form=Object.fromEntries(new FormData(event.currentTarget));const expected=Number(form.expectedCount||0),minimum=String(form.minimumQualifiedCount||'').trim()===''?null:Math.min(Number(form.minimumQualifiedCount),expected);const data={...current,targetMarket:{...(current.targetMarket||{}),countries:strategyList(form.countries),cities:strategyList(form.cities),regions:current.targetMarket?.regions||[]},targetCustomerProfile:{...(current.targetCustomerProfile||{}),customerTypes:strategyList(form.customerTypes)},searchObjective:form.searchObjective,searchKeywords:strategyList(form.searchKeywords),platforms:strategyList(form.platforms),resultTarget:{expectedCount:expected,minimumQualifiedCount:minimum}};const result=await api(`/api/search-strategies/${strategy.id}`,{method:'PUT',body:JSON.stringify({title:form.title,objective:form.searchObjective,strategy_data_json:data})});state.searchStrategyDetail=result.strategy;toast('Strategy Draft saved.');await renderOpportunityIntelligence()}
 async function searchStrategyAction(id,action,body={}){const result=await api(`/api/search-strategies/${id}/${action}`,{method:'POST',body:JSON.stringify(body)});if(result.strategy)state.searchStrategyDetail=result.strategy;if(result.task){state.searchTaskDetail=result.task;state.searchStrategyDetail=null;state.opportunityView='search-tasks'}toast(action.replaceAll('-',' '));await renderOpportunityIntelligence()}
 function openStrategyArchiveConfirmation(id){const modal=document.createElement('div');modal.className='modal-backdrop';modal.id='strategy-archive-modal';modal.innerHTML=`<div class="command-modal strategy-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="strategy-archive-title"><div class="strategy-confirm-body"><span class="strategy-risk-mark">${icon('document')}</span><div><h2 id="strategy-archive-title">Archive Search Strategy?</h2><p>This action will not delete the record. It will archive the Strategy and preserve its complete history.</p></div></div><div class="strategy-confirm-actions"><button class="button" data-action="strategy-archive-cancel">Cancel</button><button class="button button--risk" data-action="strategy-archive-confirm" data-id="${id}">Archive Strategy</button></div></div>`;document.body.append(modal)}
 
@@ -1635,16 +1746,32 @@ async function viewSearchTask(id) {
   state.searchTaskDetail = result.task;
   state.searchTaskDetail.executions=executionData.executions||[];
   await renderOpportunityIntelligence();
+  scheduleQualificationProgressRefresh(id,0);
+}
+
+function scheduleQualificationProgressRefresh(taskId,attempt){
+  clearTimeout(state.qualificationProgressTimer);
+  const progress=state.searchTaskDetail?.qualification_progress;
+  if(!progress?.found||progress.complete||attempt>=20)return;
+  state.qualificationProgressTimer=setTimeout(async()=>{
+    if(Number(state.searchTaskDetail?.id)!==Number(taskId))return;
+    const result=await api(`/api/search-tasks/${taskId}`).catch(()=>null);
+    if(!result?.task)return;
+    result.task.executions=state.searchTaskDetail.executions||[];
+    state.searchTaskDetail=result.task;
+    await renderOpportunityIntelligence();
+    scheduleQualificationProgressRefresh(taskId,attempt+1);
+  },750);
 }
 
 async function startSearchTask(id) {
-  const result = await api(`/api/search-tasks/${id}/ready`, { method: 'POST', body: JSON.stringify({connectorKey:'rules-mock'}) });
+  const result = await api(`/api/search-tasks/${id}/ready`, { method: 'POST', body: JSON.stringify({connectorKey:state.searchConnectorKey}) });
   state.searchTaskDetail = result.task;
   toast('Search Task marked Ready.');
   await renderOpportunityIntelligence();
 }
 
-async function estimateExecution(taskId){await api(`/api/search-tasks/${taskId}/estimate-execution`,{method:'POST',body:JSON.stringify({connectorKey:'rules-mock'})});const created=await api(`/api/search-tasks/${taskId}/create-execution`,{method:'POST',body:JSON.stringify({connectorKey:'rules-mock'})});toast('Zero-cost execution estimate created. Approval is still required.');await viewSearchTask(taskId);return created;}
+async function estimateExecution(taskId){const connectorKey=$('#search-connector-select')?.value||state.searchConnectorKey;state.searchConnectorKey=connectorKey;await api(`/api/search-tasks/${taskId}/estimate-execution`,{method:'POST',body:JSON.stringify({connectorKey})});const created=await api(`/api/search-tasks/${taskId}/create-execution`,{method:'POST',body:JSON.stringify({connectorKey})});toast('Execution estimate created. Admin/Owner approval is still required.');await viewSearchTask(taskId);return created;}
 async function executionAction(id,action){await api(`/api/search-executions/${id}/${action}`,{method:'POST',body:'{}'});toast(`Execution ${action} completed.`);await viewSearchTask(state.searchTaskDetail.id);}
 
 async function submitSearchResult(event) {
@@ -1655,11 +1782,12 @@ async function submitSearchResult(event) {
   const result = editId
     ? await api(`/api/search-results/${editId}`, { method: 'PUT', body: JSON.stringify(body) })
     : await api(`/api/search-tasks/${taskId}/results`, { method: 'POST', body: JSON.stringify(body) });
+  if(editId)await api(`/api/search-results/${editId}/run-ai-qualification`,{method:'POST',body:JSON.stringify({force:true})});
   const detail = await api(`/api/search-tasks/${taskId}`);
   state.searchTaskDetail = detail.task;
   state.searchResultEdit = null;
   state.searchResultDetail = result.result;
-  toast(editId ? 'Search Result updated. AI Analysis Completed.' : 'Search Result saved. AI Analysis Completed.');
+  toast(editId ? t('salesOs.qualificationFlow.refreshed') : 'Search Result saved. AI Analysis Completed.');
   await renderOpportunityIntelligence();
 }
 
@@ -1697,6 +1825,19 @@ async function runLeadAi(id) {
     const refreshed=await api(`/api/search-results/${id}`).catch(()=>null);
     if(refreshed?.result)state.searchResultDetail=refreshed.result;
     toast(error.message||'AI Qualification failed.');
+    await renderOpportunityIntelligence();
+  }
+}
+
+async function runLeadEnrichment(id) {
+  const button=document.querySelector(`[data-action="enrich-search-result"][data-id="${id}"]`);
+  if(button){button.disabled=true;button.classList.add('is-loading');}
+  try {
+    const response=await api(`/api/search-results/${id}/enrich`,{method:'POST',body:JSON.stringify({retry:true,refresh:true})});
+    state.searchResultDetail=response.result;
+    state.searchResultEdit=null;
+    toast(t('salesOs.qualificationFlow.refreshed'));
+  } finally {
     await renderOpportunityIntelligence();
   }
 }
@@ -2591,8 +2732,13 @@ async function handleAction(action, node) {
     await runCustomerDiscovery('analyze');
   } else if (action === 'generate-discovery-plan') {
     await runCustomerDiscovery('generate');
+  } else if (action === 'select-discovery-location') {
+    const selected=state.discoveryLocationSuggestions[Number(node.dataset.index)];
+    if(selected){state.discoverySelectedLocation={...selected};state.discoveryLocationQuery=selected.formatted_location;state.discoveryLocationSuggestions=[];state.discoveryLocationLoading=false;state.discoveryError='';staleDiscoveryInputs();await renderOpportunityIntelligence();}
   } else if (action === 'create-search-strategy-from-plan') {
     await createSearchStrategyFromPlan();
+  } else if (action === 'open-created-strategy') {
+    state.opportunityView='search-strategies'; await viewSearchStrategy(state.discoveryStrategyCreatedId);
   } else if (action === 'strategy-view') {
     await viewSearchStrategy(node.dataset.id);
   } else if (action === 'strategy-back') {
@@ -2621,6 +2767,10 @@ async function handleAction(action, node) {
     const result=await api(`/api/search-strategies/${node.dataset.id}/history`);alert(result.history.map(item=>`v${item.revision_no} · ${item.status} · ${item.updated_at}`).join('\n'));
   } else if (action === 'view-search-task') {
     await viewSearchTask(node.dataset.id);
+  } else if (action === 'view-task-leads') {
+    state.searchTaskDetail=null;state.searchResultDetail=null;state.searchResultEdit=null;state.opportunityView='lead-pool';state.leadPoolFilters={taskId:String(node.dataset.id),region:'',conclusion:'',score:'',reviewStatus:''};await renderOpportunityIntelligence();
+  } else if (action === 'lead-pool-group') {
+    state.leadPoolGroup=node.dataset.group;await renderOpportunityIntelligence();
   } else if (action === 'start-search-task') {
     await startSearchTask(node.dataset.id);
   } else if(action==='estimate-execution'){
@@ -2641,8 +2791,12 @@ async function handleAction(action, node) {
     toast('Use Stop inside the controlled Search Execution panel.');
   } else if (action === 'view-search-result') {
     await viewSearchResult(node.dataset.id);
+  } else if (action === 'show-lead-evidence') {
+    const details=$('#lead-evidence-details');if(details){details.open=true;details.scrollIntoView({behavior:'smooth',block:'start'});}
   } else if (action === 'edit-search-result') {
     await editSearchResult(node.dataset.id);
+  } else if (action === 'enrich-search-result') {
+    await runLeadEnrichment(node.dataset.id);
   } else if (action === 'cancel-search-result-edit') {
     state.searchResultEdit = null;
     await renderOpportunityIntelligence();
@@ -2743,7 +2897,7 @@ async function handleAction(action, node) {
       node.disabled = false;
     }
   } else if (action === 'add-product') {
-    openProductModal();
+    await openProductModal();
   } else if(action==='open-library-product'){
     await renderLibraryProductDetail(node.dataset.id,'general');
   } else if(action==='library-product-tab'){
@@ -2759,11 +2913,17 @@ async function handleAction(action, node) {
   } else if(action==='library-delete-tag'){
     if(!window.confirm('Delete this unused tag?'))return;await api(`/api/product-tags/${node.dataset.id}`,{method:'DELETE'});state.products=null;await renderProductLibraryTags();
   } else if(action==='library-edit-category'){
-    const name=window.prompt('Category name',node.dataset.name);if(!name)return;const slug=window.prompt('Category slug',node.dataset.slug);if(!slug)return;const sort_order=Number(window.prompt('Sort order',node.dataset.sort)||0);await api(`/api/product-categories/${node.dataset.id}`,{method:'PUT',body:JSON.stringify({name,slug,sort_order})});state.products=null;await renderProductLibraryCategories();
+    const name=window.prompt('Category name',node.dataset.name);if(!name)return;const slug=window.prompt('Category slug',node.dataset.slug);if(!slug)return;const sort_order=Number(window.prompt('Sort order',node.dataset.sort)||0);await api(`/api/product-categories/${node.dataset.id}`,{method:'PUT',body:JSON.stringify({name,slug,sort_order})});state.products=null;await renderProductLibraryCategoriesV2();
   } else if(action==='library-toggle-category'){
-    await api(`/api/product-categories/${node.dataset.id}`,{method:'PUT',body:JSON.stringify({active:node.dataset.active!=='1'})});state.products=null;await renderProductLibraryCategories();
+    await api(`/api/product-categories/${node.dataset.id}`,{method:'PUT',body:JSON.stringify({active:node.dataset.active!=='1'})});state.products=null;await renderProductLibraryCategoriesV2();
   } else if(action==='library-delete-category'){
-    if(!window.confirm('Delete this unused category?'))return;await api(`/api/product-categories/${node.dataset.id}`,{method:'DELETE'});state.products=null;await renderProductLibraryCategories();
+    if(!window.confirm('Delete this unused category?'))return;await api(`/api/product-categories/${node.dataset.id}`,{method:'DELETE'});state.products=null;state.productCategoryDetailId=null;await renderProductLibraryCategoriesV2();
+  } else if(action==='open-product-category'){
+    state.productCategoryDetailId = Number(node.dataset.id);
+    await renderProductLibraryCategoriesV2();
+  } else if(action==='back-product-categories'){
+    state.productCategoryDetailId = null;
+    await renderProductLibraryCategoriesV2();
   } else if(action==='library-edit-attribute'){
     const [data,categories]=await Promise.all([api('/api/product-attributes'),api('/api/product-categories')]),attribute=data.attributes.find(item=>item.id===Number(node.dataset.id));if(!attribute)return;const name_en=window.prompt(t('productFoundation.nameEn'),attribute.name_en||attribute.name);if(!name_en)return;const name_zh=window.prompt(t('productFoundation.nameZh'),attribute.name_zh||attribute.name);if(!name_zh)return;const data_type=window.prompt('Text, Number, Select, Multi-select, Boolean, Color, Dimension, Date',attribute.data_type);if(!data_type)return;const options=window.prompt(t('fields.options'),attribute.options.map(option=>option.option_value).join(', '));if(options===null)return;const categoryHelp=categories.categories.map(category=>`${category.id}=${category.name}`).join(', '),categoryInput=window.prompt(`${t('productFoundation.applicableCategories')}: ${categoryHelp}`,attribute.category_ids.join(','));if(categoryInput===null)return;const selected=new Set(categoryInput.split(',').map(Number).filter(Boolean)),category_configs=[...(attribute.category_configs||[]).filter(config=>selected.has(Number(config.category_id))),...[...selected].filter(categoryId=>!(attribute.category_configs||[]).some(config=>Number(config.category_id)===categoryId)).map(category_id=>({category_id,show_on_product:true}))];await api(`/api/product-attributes/${node.dataset.id}`,{method:'PUT',body:JSON.stringify({name_en,name_zh,data_type,category_configs,options:options.split(',').map(value=>value.trim()).filter(Boolean)})});await renderProductLibraryAttributes();
   } else if(action==='library-delete-attribute'){
@@ -2787,7 +2947,7 @@ async function handleAction(action, node) {
   } else if (action === 'view-product') {
     await renderProductDetail(node.dataset.id);
   } else if (action === 'edit-product') {
-    openProductModal(node.dataset.id);
+    await openProductModal(node.dataset.id);
   } else if (action === 'product-close') {
     $('#product-modal')?.remove();
   } else if (action === 'generate-sku') {
